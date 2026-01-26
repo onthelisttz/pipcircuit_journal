@@ -9,31 +9,33 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 
 **Total Estimated Duration**: 8-12 weeks
 
-| Phase | Name | Duration | Dependencies |
-|-------|------|----------|--------------|
-| 0 | Foundation & Architecture | 3-5 days | None |
-| 1 | Domain & Data Layer | 5-7 days | Phase 0 |
-| 2 | cTrader API Integration | 5-8 days | Phase 1 |
-| 3 | Charts & Visualization | 6-10 days | Phase 2 |
-| 4 | Sync Engine | 5-8 days | Phase 1 |
-| 5 | Analytics Dashboard | 8-12 days | Phase 2 |
-| 6 | Journal & Tagging | 5-8 days | Phase 2 |
-| 7 | Trade List & Filters | 5-7 days | Phase 2 |
-| 8 | Calendar & Daily Journal | 4-6 days | Phase 5 |
-| 9 | Accounts & Multi-Device | 4-6 days | Phase 4 |
-| 10 | Polish & QA | 5-8 days | All |
-| 11 | Deployment | 2-4 days | Phase 10 |
+| Phase | Name                      | Duration  | Dependencies |
+| ----- | ------------------------- | --------- | ------------ |
+| 0     | Foundation & Architecture | 3-5 days  | None         |
+| 1     | Domain & Data Layer       | 5-7 days  | Phase 0      |
+| 2     | cTrader API Integration   | 5-8 days  | Phase 1      |
+| 3     | Charts & Visualization    | 6-10 days | Phase 2      |
+| 4     | Sync Engine               | 5-8 days  | Phase 1      |
+| 5     | Analytics Dashboard       | 8-12 days | Phase 2      |
+| 6     | Journal & Tagging         | 5-8 days  | Phase 2      |
+| 7     | Trade List & Filters      | 5-7 days  | Phase 2      |
+| 8     | Calendar & Daily Journal  | 4-6 days  | Phase 5      |
+| 9     | Accounts & Multi-Device   | 4-6 days  | Phase 4      |
+| 10    | Polish & QA               | 5-8 days  | All          |
+| 11    | Deployment                | 2-4 days  | Phase 10     |
 
 ---
 
 ## Phase 0 - Foundation & Architecture (3-5 days)
 
 ### Goals
+
 - Establish project scaffolding with strict architecture boundaries.
 - Create design system and base layout.
 - Configure PWA for offline capability.
 
 ### Key Tasks
+
 1. **Project Setup**
    - Initialize Next.js 14 with App Router + TypeScript.
    - Configure Tailwind CSS + CSS variables for theming.
@@ -69,12 +71,14 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
    - Create loading and error boundary components.
 
 ### Deliverables
+
 - Running app shell with navigation layout.
 - Architecture documentation with folder structure.
 - PWA installable with offline landing page.
 - Design tokens and theme configuration.
 
 ### Exit Criteria
+
 - `npm run dev` starts without errors.
 - App installs as PWA.
 - Clean Architecture boundaries enforced via linting.
@@ -84,14 +88,18 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 ## Phase 1 - Domain & Data Layer (5-7 days)
 
 ### Goals
+
 - Define domain entities and business rules.
 - Implement local database schema.
 - Create repository interfaces and implementations.
 
 ### Key Tasks
+
 1. **Domain Entities**
    - `Trade`: Core trading record with all fields.
    - `TradeNote`: Journal entry linked to trade.
+   - `Observation`: Market observation entry.
+   - `ObservationCategory`: Category for observations.
    - `Tag`: User-defined tag with category and color.
    - `ChartBar`: OHLCV bar data.
    - `Account`: Trading account credentials/metadata.
@@ -113,22 +121,26 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
    - `PlacedBy`: Algo, Dealer, Manual, Mobile.
 
 4. **Dexie Schema**
+
    ```javascript
-   trades: '++id, accountId, symbol, direction, openTime, closeTime, [symbol+openTime]'
-   trade_notes: '++id, tradeId, createdAt'
-   tags: '++id, category, name, color'
-   trade_tags: '++id, tradeId, tagId, [tradeId+tagId]'
-   chart_bars: '++id, [symbol+timeframe+timestamp], symbol, timeframe'
-   accounts: '++id, accountNumber, platform'
-   sync_queue: '++id, action, table, entityId, timestamp, retryCount'
-   sync_meta: 'accountId, lastSyncTime, lastTradeId'
-   settings: 'key, value'
-   daily_summaries: '++id, accountId, date, [accountId+date]'
+   trades: "++id, accountId, symbol, direction, openTime, closeTime, [symbol+openTime]";
+   trade_notes: "++id, tradeId, createdAt";
+   tags: "++id, category, name, color";
+   trade_tags: "++id, tradeId, tagId, [tradeId+tagId]";
+   observations: "++id, categoryId, title, createdAt";
+   observation_categories: "++id, name, color";
+   chart_bars: "++id, [symbol+timeframe+timestamp], symbol, timeframe";
+   accounts: "++id, accountNumber, platform";
+   sync_queue: "++id, action, table, entityId, timestamp, retryCount";
+   sync_meta: "accountId, lastSyncTime, lastTradeId";
+   settings: "key, value";
+   daily_summaries: "++id, accountId, date, [accountId+date]";
    ```
 
 5. **Repository Interfaces** (Application Layer)
    - `ITradeRepository`: CRUD + queries for trades.
    - `INoteRepository`: CRUD for trade notes.
+   - `IObservationRepository`: CRUD for observations.
    - `ITagRepository`: CRUD + bulk operations for tags.
    - `IChartBarRepository`: Windowed loading queries.
    - `IAccountRepository`: Account management.
@@ -137,84 +149,102 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 6. **Dexie Implementations** (Infrastructure Layer)
    - `DexieTradeRepository`
    - `DexieNoteRepository`
+   - `DexieObservationRepository`
    - `DexieTagRepository`
    - `DexieChartBarRepository`
    - `DexieAccountRepository`
    - `DexieSyncQueueRepository`
 
 ### Deliverables
+
 - Complete domain model with all entities.
 - Working Dexie database with migrations.
 - Repository implementations with full CRUD.
 - Offline detection hook and status indicator.
 
 ### Exit Criteria
+
 - All CRUD operations work offline.
 - Unit tests pass for domain logic.
 - Schema migrations work correctly.
 
 ---
 
-## Phase 2 - cTrader API Integration (5-8 days)
+## Phase 2 - Authentication & Accounts (5-8 days)
 
 ### Goals
-- Implement OAuth authentication with cTrader.
-- Build trade import pipeline.
-- Handle rate limiting and retries.
+
+- Implement Google Sign-In.
+- Build cTrader account linking flow.
+- Handle active account context switching.
 
 ### Key Tasks
-1. **OAuth Flow**
-   - Implement cTrader OAuth 2.0 authorization.
-   - Build callback handler for token exchange.
-   - Secure token storage (encrypted).
-   - Token refresh mechanism.
 
-2. **cTrader API Client** (Infrastructure)
+1. **Primary Authentication**
+   - Setup Supabase Auth with Google Provider.
+   - Create Login page.
+   - Create Protected Route wrapper.
+   - Handle session persistence.
+
+2. **cTrader Account Linking**
+   - "Add Account" button -> cTrader OAuth redirect.
+   - Callback handler: Exchange code for token.
+   - Store cTrader token against user ID (not just local).
+   - Fetch trading account details (ID, Broker, Type).
+
+3. **Active Account Context**
+   - Global `useActiveAccount` hook/store.
+   - Changing account triggers data refresh/filtering.
+   - UI indicator for current active account.
+
+4. **cTrader API Integration**
    - `CTraderAuthClient`: OAuth operations.
-   - `CTraderTradeClient`: Fetch trades by date range.
+   - `CTraderTradeClient`: Fetch trades for _linked_ account.
    - `CTraderHistoryClient`: Fetch OHLCV bars.
    - Rate limiter utility (≤100 requests/minute).
    - Retry logic with exponential backoff.
 
-3. **Trade Import Use Case**
+5. **Trade Import Use Case**
    - `ImportTradesUseCase`: Orchestrate full import.
    - Batch fetching by date range (chunks).
    - Map cTrader response to domain entities.
    - Detect duplicates by ticket ID.
    - Progress reporting callback.
 
-4. **Chart Data Import Use Case**
+6. **Chart Data Import Use Case**
    - `ImportChartWindowUseCase`: Fetch bars for trade.
    - Calculate window: entry - 2 days to exit + 2 days.
    - Request bars in chunks (≤ 5000 per request).
    - Deduplicate by symbol + timeframe + timestamp.
 
-5. **Account Connection Flow**
+7. **Account Connection Flow**
    - Add account UI wizard.
    - Validate credentials.
    - Initial sync trigger.
 
 ### Deliverables
-- Working OAuth login with cTrader.
-- One-click full sync from cTrader history.
-- Progress UI with cancellation support.
-- Error handling with user-friendly messages.
+
+- Google Sign-In working.
+- Ability to link multiple cTrader accounts.
+- Account switcher in navbar updates view.
+- Offline support for multiple accounts.
 
 ### Exit Criteria
-- Can authenticate and fetch trades from cTrader.
-- Trades are stored locally and work offline.
-- Chart windows are fetched for each trade.
+
+- User can sign in, link cTrader, and switch between accounts.
 
 ---
 
 ## Phase 3 - Charts & Visualization (6-10 days)
 
 ### Goals
+
 - Implement high-performance trade charting.
 - Add profit timeline and MAE/MFE overlays.
 - Enable timeframe switching with lazy loading.
 
 ### Key Tasks
+
 1. **Chart Component**
    - Integrate TradingView Lightweight Charts.
    - Candlestick series with OHLCV data.
@@ -253,12 +283,14 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
    - Reset View button.
 
 ### Deliverables
+
 - Fast-loading trade charts with context.
 - Profit timeline with MAE/MFE.
 - Smooth infinite scroll for history.
 - Timeframe switching.
 
 ### Exit Criteria
+
 - Chart renders in < 1 second from cache.
 - Scrolling loads more data seamlessly.
 - Memory stays within 5000 bar limit.
@@ -268,11 +300,13 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 ## Phase 4 - Sync Engine (5-8 days)
 
 ### Goals
+
 - Implement bidirectional sync with Supabase.
 - Handle conflicts gracefully.
 - Enable multi-device consistency.
 
 ### Key Tasks
+
 1. **Supabase Schema**
    - Mirror Dexie tables in PostgreSQL.
    - Row Level Security policies.
@@ -303,12 +337,14 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
    - Manual sync button.
 
 ### Deliverables
+
 - Reliable sync queue with retries.
 - Conflict resolution working.
 - Multi-device data consistency.
 - Sync status indicators.
 
 ### Exit Criteria
+
 - Offline edits sync when back online.
 - No data loss during conflicts.
 - Sync does not block UI.
@@ -318,11 +354,13 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 ## Phase 5 - Analytics Dashboard (8-12 days)
 
 ### Goals
+
 - Build comprehensive analytics dashboard.
 - Implement all charts and metrics from requirements.
 - Optimize for performance with large datasets.
 
 ### Key Tasks
+
 1. **Analytics Use Cases**
    - `CalculateEquityCurveUseCase`
    - `CalculateDrawdownUseCase`
@@ -382,12 +420,14 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
     - Three radar charts: Count, P&L, Win Rate by Session.
 
 ### Deliverables
+
 - Complete dashboard with all widgets.
 - Global filters working across all charts.
 - Responsive layout.
 - Optimized computations.
 
 ### Exit Criteria
+
 - All analytics match requirements.
 - Dashboard loads in < 2 seconds.
 - Filters update all charts reactively.
@@ -397,11 +437,13 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 ## Phase 6 - Journal & Tagging (5-8 days)
 
 ### Goals
+
 - Implement rich trade journaling.
 - Build comprehensive tagging system.
 - Add rating and mindset features.
 
 ### Key Tasks
+
 1. **Trade Detail Modal/Page**
    - Tab navigation: Metrics, Journal, AI Insights, Trade Tags, Charts.
    - Trade navigation (prev/next trade arrows).
@@ -441,26 +483,73 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
    - Future: API integration for analysis.
 
 ### Deliverables
+
 - Complete trade detail view with all tabs.
 - Working rich text journal.
 - Full tagging system with colors.
 - Rating and mindset capture.
 
 ### Exit Criteria
+
 - Can journal any trade with rich formatting.
 - Tags are searchable and filterable.
 - All journal data syncs offline/online.
 
 ---
 
-## Phase 7 - Trade List & Filters (5-7 days)
+## Phase 7 - Market Observations (4-6 days)
 
 ### Goals
+
+- Create standalone observations module.
+- Build categorization system.
+- Implement rich text editor with image support.
+
+### Key Tasks
+
+1. **Observation Domain**
+   - Define entities: `Observation`, `ObservationCategory`.
+   - Setup Dexie/Supabase tables.
+
+2. **Category Management**
+   - Sidebar/Modal for managing categories.
+   - Create/Edit/Delete categories.
+   - Color coding for categories.
+
+3. **Observation List**
+   - List view filtered by category.
+   - Search by title/content.
+   - Sort by date created/updated.
+
+4. **Observation Editor**
+   - Reuse Tiptap editor from Journal.
+   - Add Title input.
+   - Add Category selector.
+   - Image upload handler (Storage bucket integration).
+
+### Deliverables
+
+- Full Observations section in sidebar.
+- Rich text editor with image support.
+- Category management.
+
+### Exit Criteria
+
+- Can create, edit, and view observations with images.
+- Categories organize content effectively.
+
+---
+
+## Phase 8 - Trade List & Filters (5-7 days)
+
+### Goals
+
 - Build high-performance trade list table.
 - Implement comprehensive filtering.
 - Add inline editing capabilities.
 
 ### Key Tasks
+
 1. **Trade List Table**
    - Virtualized table for large datasets (TanStack Table + Virtual).
    - Sortable columns.
@@ -499,26 +588,30 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
    - Apply/Cancel buttons.
 
 ### Deliverables
+
 - Fast, searchable trade list.
 - All filter options working.
 - Inline editing functional.
 - Column customization.
 
 ### Exit Criteria
+
 - 1000+ trades scroll smoothly.
 - Filters apply instantly.
 - Inline edits sync correctly.
 
 ---
 
-## Phase 8 - Calendar & Daily Journal (4-6 days)
+## Phase 9 - Calendar & Daily Journal (4-6 days)
 
 ### Goals
+
 - Implement calendar-based daily journal.
 - Build daily summary view.
 - Add yearly performance grid.
 
 ### Key Tasks
+
 1. **Daily Journal Calendar**
    - Monthly grid view.
    - Per-day P&L display (amount + percent).
@@ -554,35 +647,41 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
    - Clickable for drill-down.
 
 ### Deliverables
+
 - Full calendar interface.
 - Day detail with stats and chart.
 - Yearly performance overview.
 
 ### Exit Criteria
+
 - Can navigate any month/year.
 - Day details accurate.
 - Links to full journal work.
 
 ---
 
-## Phase 9 - Accounts & Multi-Device (4-6 days)
+## Phase 10 - Accounts & Multi-Device (4-6 days)
 
 ### Goals
+
 - Build account management interface.
 - Enable multi-account support.
 - Ensure multi-device sync works.
 
 ### Key Tasks
+
 1. **Accounts Page**
    - Accounts table with all columns.
+   - Google Profile section (Sign out).
    - Demo/Live badge styling.
    - Connection status indicators.
    - Last sync display.
    - Action buttons (sync, edit, delete).
 
 2. **Add Account Flow**
-   - OAuth redirect to cTrader.
-   - Handle callback.
+   - "Link cTrader Account" button.
+   - OAuth redirect.
+   - Handle callback and store token.
    - Initial sync trigger.
    - Progress display.
 
@@ -603,25 +702,29 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
    - Validate data consistency.
 
 ### Deliverables
+
 - Complete accounts management.
 - Working account switcher.
 - Sync health monitoring.
 
 ### Exit Criteria
+
 - Multiple accounts can be connected.
 - Switching accounts updates UI.
 - Sync works across devices.
 
 ---
 
-## Phase 10 - Polish & QA (5-8 days)
+## Phase 11 - Polish & QA (5-8 days)
 
 ### Goals
+
 - Refine UX and performance.
 - Fix bugs and edge cases.
 - Ensure production readiness.
 
 ### Key Tasks
+
 1. **UX Polish**
    - Loading states for all async operations.
    - Empty states with guidance.
@@ -660,25 +763,29 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
    - Contribution guidelines.
 
 ### Deliverables
+
 - Polished, stable application.
 - Comprehensive test coverage.
 - User documentation.
 
 ### Exit Criteria
+
 - No critical bugs.
 - Performance targets met.
 - Tests passing.
 
 ---
 
-## Phase 11 - Deployment (2-4 days)
+## Phase 12 - Deployment (2-4 days)
 
 ### Goals
+
 - Deploy to production.
 - Configure monitoring.
 - Go live.
 
 ### Key Tasks
+
 1. **Vercel Deployment**
    - Configure project.
    - Set environment variables.
@@ -703,11 +810,13 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
    - Security audit.
 
 ### Deliverables
+
 - Live production environment.
 - Monitoring configured.
 - Documentation updated.
 
 ### Exit Criteria
+
 - App is live and stable.
 - PWA installable from production.
 - All critical paths working.
@@ -716,15 +825,15 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 
 ## Performance Targets Summary
 
-| Metric | Target |
-|--------|--------|
-| Trade list load (Dexie cache) | < 300ms |
-| Chart load (cached window) | < 1s |
-| Dashboard load | < 2s |
-| Bars in memory per chart | ≤ 5000 |
-| Sync queue processing | Non-blocking |
-| Time to First Contentful Paint | < 1.5s |
-| Time to Interactive | < 3s |
+| Metric                         | Target       |
+| ------------------------------ | ------------ |
+| Trade list load (Dexie cache)  | < 300ms      |
+| Chart load (cached window)     | < 1s         |
+| Dashboard load                 | < 2s         |
+| Bars in memory per chart       | ≤ 5000       |
+| Sync queue processing          | Non-blocking |
+| Time to First Contentful Paint | < 1.5s       |
+| Time to Interactive            | < 3s         |
 
 ---
 
@@ -740,13 +849,13 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 
 ## Risk Mitigation
 
-| Risk | Mitigation |
-|------|------------|
-| cTrader API rate limits | Implement request queue with throttling |
-| Large dataset performance | Virtualization, pagination, lazy loading |
-| Offline sync conflicts | Last-write-wins with optional user review |
-| IndexedDB storage limits | Data compression, cleanup old data |
-| OAuth token expiry | Proactive refresh, graceful re-auth |
+| Risk                      | Mitigation                                |
+| ------------------------- | ----------------------------------------- |
+| cTrader API rate limits   | Implement request queue with throttling   |
+| Large dataset performance | Virtualization, pagination, lazy loading  |
+| Offline sync conflicts    | Last-write-wins with optional user review |
+| IndexedDB storage limits  | Data compression, cleanup old data        |
+| OAuth token expiry        | Proactive refresh, graceful re-auth       |
 
 ---
 

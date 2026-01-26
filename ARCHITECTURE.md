@@ -19,24 +19,29 @@ independent from frameworks, databases, and UI concerns.
 ## 📐 SOLID Principles Applied
 
 ### Single Responsibility (SRP)
+
 - Each module/class has one reason to change.
 - Use cases handle one operation.
 - Components render one concern.
 
 ### Open/Closed (OCP)
+
 - Extend behavior via new implementations.
 - Use interfaces for variation points.
 - Plugins for optional features.
 
 ### Liskov Substitution (LSP)
+
 - All repository implementations honor their interfaces.
 - Any implementation can replace another.
 
 ### Interface Segregation (ISP)
+
 - Small, focused interfaces.
 - Clients depend only on methods they use.
 
 ### Dependency Inversion (DIP)
+
 - High-level modules don't depend on low-level modules.
 - Both depend on abstractions (interfaces).
 - Domain and Application layers have zero infrastructure imports.
@@ -50,7 +55,7 @@ independent from frameworks, databases, and UI concerns.
 │                         UI Layer                        │
 │   Next.js Pages, React Components, Hooks, Zustand      │
 └─────────────────────────────────────────────────────────┘
-                              │ 
+                              │
                               │ calls
                               ▼
 ┌─────────────────────────────────────────────────────────┐
@@ -137,6 +142,8 @@ personal-journal/
 │   │   ├── 📁 entities/                      # Core business entities
 │   │   │   ├── Trade.ts                      # Trade entity
 │   │   │   ├── TradeNote.ts                  # Journal note entity
+│   │   │   ├── Observation.ts                # Market observation entity
+│   │   │   ├── ObservationCategory.ts        # Category entity
 │   │   │   ├── Tag.ts                        # Tag entity
 │   │   │   ├── ChartBar.ts                   # OHLCV bar entity
 │   │   │   ├── Account.ts                    # Trading account entity
@@ -196,6 +203,14 @@ personal-journal/
 │   │   │   │   ├── GetTradeNoteUseCase.ts
 │   │   │   │   ├── SaveTradeNoteUseCase.ts
 │   │   │   │   ├── GetDailyJournalUseCase.ts
+│   │   │   │   └── index.ts
+│   │   │   │
+│   │   │   ├── 📁 observations/              # Observation use cases
+│   │   │   │   ├── GetObservationsUseCase.ts
+│   │   │   │   ├── CreateObservationUseCase.ts
+│   │   │   │   ├── UpdateObservationUseCase.ts
+│   │   │   │   ├── DeleteObservationUseCase.ts
+│   │   │   │   ├── ManageCategoriesUseCase.ts
 │   │   │   │   └── index.ts
 │   │   │   │
 │   │   │   ├── 📁 tags/                      # Tag-related use cases
@@ -258,6 +273,7 @@ personal-journal/
 │   │   │   ├── 📁 repositories/              # Repository interfaces
 │   │   │   │   ├── ITradeRepository.ts
 │   │   │   │   ├── INoteRepository.ts
+│   │   │   │   ├── IObservationRepository.ts
 │   │   │   │   ├── ITagRepository.ts
 │   │   │   │   ├── IChartBarRepository.ts
 │   │   │   │   ├── IAccountRepository.ts
@@ -278,6 +294,7 @@ personal-journal/
 │   │   ├── 📁 dto/                           # Data Transfer Objects
 │   │   │   ├── TradeDTO.ts
 │   │   │   ├── TradeNoteDTO.ts
+│   │   │   ├── ObservationDTO.ts
 │   │   │   ├── TagDTO.ts
 │   │   │   ├── ChartBarDTO.ts
 │   │   │   ├── AccountDTO.ts
@@ -309,6 +326,7 @@ personal-journal/
 │   │   │   │   ├── 📁 repositories/          # Dexie repository implementations
 │   │   │   │   │   ├── DexieTradeRepository.ts
 │   │   │   │   │   ├── DexieNoteRepository.ts
+│   │   │   │   │   ├── DexieObservationRepository.ts
 │   │   │   │   │   ├── DexieTagRepository.ts
 │   │   │   │   │   ├── DexieChartBarRepository.ts
 │   │   │   │   │   ├── DexieAccountRepository.ts
@@ -326,6 +344,7 @@ personal-journal/
 │   │   │   │   ├── 📁 repositories/          # Supabase repository implementations
 │   │   │   │   │   ├── SupabaseTradeRepository.ts
 │   │   │   │   │   ├── SupabaseNoteRepository.ts
+│   │   │   │   │   ├── SupabaseObservationRepository.ts
 │   │   │   │   │   ├── SupabaseTagRepository.ts
 │   │   │   │   │   ├── SupabaseChartBarRepository.ts
 │   │   │   │   │   └── index.ts
@@ -472,6 +491,13 @@ personal-journal/
 │   │   │   │   ├── FileAttachment.tsx
 │   │   │   │   └── index.ts
 │   │   │   │
+│   │   │   ├── 📁 observations/              # Observations feature
+│   │   │   │   ├── ObservationsPage.tsx
+│   │   │   │   ├── ObservationList.tsx
+│   │   │   │   ├── CategorySidebar.tsx
+│   │   │   │   ├── ObservationEditor.tsx
+│   │   │   │   └── index.ts
+│   │   │   │
 │   │   │   ├── 📁 calendar/                  # Calendar/daily journal
 │   │   │   │   ├── CalendarPage.tsx
 │   │   │   │   ├── MonthlyCalendar.tsx
@@ -593,9 +619,9 @@ to wire dependencies:
 ```typescript
 // src/infrastructure/factories/useCaseFactory.ts
 
-import { db } from '@infrastructure/db/dexie/database';
-import { DexieTradeRepository } from '@infrastructure/db/dexie/repositories';
-import { GetTradesUseCase } from '@application/use-cases/trades';
+import { db } from "@infrastructure/db/dexie/database";
+import { DexieTradeRepository } from "@infrastructure/db/dexie/repositories";
+import { GetTradesUseCase } from "@application/use-cases/trades";
 
 // Factory creates use case with injected dependencies
 export function createGetTradesUseCase(): GetTradesUseCase {
@@ -609,14 +635,14 @@ export function createGetTradesUseCase(): GetTradesUseCase {
 ```typescript
 // src/ui/hooks/useTrades.ts
 
-import { useQuery } from '@tanstack/react-query';
-import { createGetTradesUseCase } from '@infrastructure/factories';
+import { useQuery } from "@tanstack/react-query";
+import { createGetTradesUseCase } from "@infrastructure/factories";
 
 export function useTrades(filters: FilterDTO) {
   const useCase = createGetTradesUseCase();
-  
+
   return useQuery({
-    queryKey: ['trades', filters],
+    queryKey: ["trades", filters],
     queryFn: () => useCase.execute(filters),
   });
 }
@@ -627,21 +653,25 @@ export function useTrades(filters: FilterDTO) {
 ## 🧪 Testing Strategy
 
 ### Domain Layer
+
 - Unit tests with Jest/Vitest.
 - No mocking needed (pure functions).
 - Test business rules and calculations.
 
 ### Application Layer
+
 - Unit tests with mocked repositories.
 - Test use case orchestration.
 - Verify correct port calls.
 
 ### Infrastructure Layer
+
 - Integration tests with real Dexie (in-memory).
 - Mock external APIs (cTrader, Supabase).
 - Test sync and cache behavior.
 
 ### UI Layer
+
 - Component tests with React Testing Library.
 - E2E tests with Playwright.
 - Visual regression tests (optional).
@@ -731,6 +761,7 @@ export function useTrades(filters: FilterDTO) {
 ## 📚 Reference Dependencies
 
 ### Production
+
 ```json
 {
   "next": "^14.x",
@@ -756,6 +787,7 @@ export function useTrades(filters: FilterDTO) {
 ```
 
 ### Development
+
 ```json
 {
   "@types/react": "^18.x",
