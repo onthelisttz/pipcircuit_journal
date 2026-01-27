@@ -4,7 +4,10 @@
  * Core business entities with their properties and business rules.
  */
 
-// Export entities here as they are implemented
+// Placeholder export to make this a valid module
+export const ENTITIES_MODULE_PLACEHOLDER = true;
+
+// Future implementations:
 // export { Trade } from './Trade';
 // export { TradeNote } from './TradeNote';
 // export { Observation } from './Observation';

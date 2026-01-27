@@ -5,6 +5,10 @@
  * Implementations are provided in the Infrastructure layer.
  */
 
+// Placeholder export to make this a valid module
+export const REPOSITORIES_MODULE_PLACEHOLDER = true;
+
+// Future implementations:
 // export type { ITradeRepository } from './ITradeRepository';
 // export type { INoteRepository } from './INoteRepository';
 // export type { IObservationRepository } from './IObservationRepository';

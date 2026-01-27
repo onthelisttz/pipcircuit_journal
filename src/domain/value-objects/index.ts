@@ -4,7 +4,10 @@
  * Immutable value types that encapsulate domain concepts.
  */
 
-// Export value objects here as they are implemented
+// Placeholder export to make this a valid module
+export const VALUE_OBJECTS_MODULE_PLACEHOLDER = true;
+
+// Future implementations:
 // export { Money } from './Money';
 // export { TimeRange } from './TimeRange';
 // export { DateRange } from './DateRange';

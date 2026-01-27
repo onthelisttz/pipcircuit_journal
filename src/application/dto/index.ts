@@ -4,6 +4,10 @@
  * These are the data structures used for communication between layers.
  */
 
+// Placeholder export to make this a valid module
+export const DTO_MODULE_PLACEHOLDER = true;
+
+// Future implementations:
 // export type { TradeDTO } from './TradeDTO';
 // export type { TradeNoteDTO } from './TradeNoteDTO';
 // export type { ObservationDTO } from './ObservationDTO';

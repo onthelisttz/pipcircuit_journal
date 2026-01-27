@@ -4,7 +4,10 @@
  * Domain enumerations for type-safe constants.
  */
 
-// Export enums here as they are implemented
+// Placeholder export to make this a valid module
+export const ENUMS_MODULE_PLACEHOLDER = true;
+
+// Future implementations:
 // export { Direction } from './Direction';
 // export { OrderType } from './OrderType';
 // export { TradeOutcome } from './TradeOutcome';

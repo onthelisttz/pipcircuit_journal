@@ -4,7 +4,10 @@
  * Custom error types for domain-specific failures.
  */
 
-// Export domain errors here as they are implemented
+// Placeholder export to make this a valid module
+export const ERRORS_MODULE_PLACEHOLDER = true;
+
+// Future implementations:
 // export { DomainError } from './DomainError';
 // export { ValidationError } from './ValidationError';
 // export { TradeNotFoundError } from './TradeNotFoundError';
