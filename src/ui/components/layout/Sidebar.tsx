@@ -50,7 +50,7 @@ const navItems = [
  * Main navigation sidebar for the application.
  * Collapsible with icon-only mode.
  */
-export function Sidebar() {
+export function Sidebar({ className }: { className?: string }) {
     const pathname = usePathname();
     const [collapsed, setCollapsed] = useState(false);
 
@@ -60,6 +60,7 @@ export function Sidebar() {
         flex flex-col h-screen bg-sidebar border-r border-sidebar-border
         transition-all duration-300 ease-in-out
         ${collapsed ? "w-16" : "w-64"}
+        ${className ?? ""}
       `}
         >
             {/* Logo/Brand */}
@@ -74,6 +75,17 @@ export function Sidebar() {
                         TJ
                     </span>
                 )}
+                <button
+                    onClick={() => setCollapsed(!collapsed)}
+                    className="ml-auto hidden md:inline-flex items-center justify-center rounded-lg p-2 text-sidebar-foreground hover:bg-sidebar-accent/50"
+                    aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                >
+                    {collapsed ? (
+                        <ChevronRight className="w-4 h-4" />
+                    ) : (
+                        <ChevronLeft className="w-4 h-4" />
+                    )}
+                </button>
             </div>
 
             {/* Navigation */}
@@ -98,8 +110,10 @@ export function Sidebar() {
                   `}
                                     title={collapsed ? item.label : undefined}
                                 >
-                                    <Icon className="w-5 h-5 flex-shrink-0" />
-                                    {!collapsed && <span>{item.label}</span>}
+                                    <Icon className="w-5 h-5 shrink-0" />
+                                    <span className={collapsed ? "hidden" : "inline"}>
+                                        {item.label}
+                                    </span>
                                 </Link>
                             </li>
                         );
@@ -108,7 +122,7 @@ export function Sidebar() {
             </nav>
 
             {/* Collapse Toggle */}
-            <div className="p-2 border-t border-sidebar-border">
+            <div className="p-2 border-t border-sidebar-border md:hidden">
                 <button
                     onClick={() => setCollapsed(!collapsed)}
                     className="

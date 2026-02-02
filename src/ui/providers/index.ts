@@ -3,7 +3,7 @@
  */
 
 export { ThemeProvider } from "./ThemeProvider";
+export { AuthProvider } from "./AuthProvider";
 
 // Future implementations:
 // export { QueryProvider } from './QueryProvider';
-// export { AuthProvider } from './AuthProvider';

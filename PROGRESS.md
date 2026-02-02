@@ -1,6 +1,6 @@
 # Smart Trading Journal - Implementation Progress
 
-> **Last Updated**: 2026-01-26
+> **Last Updated**: 2026-01-27
 
 ---
 
@@ -9,8 +9,8 @@
 | Phase                               | Status         | Progress |
 | ----------------------------------- | -------------- | -------- |
 | Phase 0 - Foundation & Architecture | ✅ Completed | 100% |
-| Phase 1 - Domain & Data Layer       | ⏳ Pending     | 0%       |
-| Phase 2 - Authentication & Accounts | ⏳ Pending     | 0%       |
+| Phase 1 - Domain & Data Layer       | ✅ Completed | 100%     |
+| Phase 2 - Authentication & Accounts | ✅ Completed | 100%     |
 | Phase 3 - Charts & Visualization    | ⏳ Pending     | 0%       |
 | Phase 4 - Sync Engine               | ⏳ Pending     | 0%       |
 | Phase 5 - Analytics Dashboard       | ⏳ Pending     | 0%       |
@@ -38,6 +38,37 @@
 - [x] Configure ESLint and Prettier
 - [x] Create base layout and navigation shell (Sidebar, Header components)
 - [x] Add theme configuration (dark mode default via next-themes)
+
+---
+
+## Phase 1 - Domain & Data Layer
+
+### Completed ✅
+- [x] Implemented domain enums (Direction, OrderType, TradeOutcome, Session, Mindset, etc.)
+- [x] Implemented domain errors (DomainError, ValidationError, TradeNotFoundError)
+- [x] Implemented value objects (Money, TimeRange, DateRange, Symbol, PriceLevel, TradeResult)
+- [x] Implemented core entities (Trade, TradeNote, Observation, Tag, ChartBar, Account, SyncJob, DailySummary)
+- [x] Added repository interfaces (ports) for core aggregates
+- [x] Added Dexie schema, database, and migration registration
+- [x] Implemented Dexie repositories for CRUD operations
+- [x] Added `useOnlineStatus` hook for offline detection
+- [x] Added sync status badge tied to online/offline state
+- [x] Added unit tests for domain value objects
+
+---
+
+## Phase 2 - Authentication & Accounts
+
+### Completed ✅
+- [x] Implemented Supabase auth service with Google sign-in
+- [x] Added auth provider + state store + hooks
+- [x] Created login and callback routes with auth guard
+- [x] Implemented cTrader API client (auth, trades, history)
+- [x] Added account linking flow and cTrader callback handler
+- [x] Implemented account store + active account switching
+- [x] Added account management page with linking CTA
+- [x] Added cTrader account fetch via access-token HTTP helper
+- [x] Implemented trade import and chart window import use cases
 
 ---
 

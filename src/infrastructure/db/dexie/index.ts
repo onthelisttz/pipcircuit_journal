@@ -1,12 +1,8 @@
 /**
  * Dexie (IndexedDB) Implementation
- *
- * Implementations will be added in Phase 1 (Domain & Data Layer).
  */
 
-// Placeholder export to make this a valid module
-export const DEXIE_MODULE_PLACEHOLDER = true;
-
-// Future implementations:
-// export { db } from './database';
-// export * from './repositories';
+export { db, AppDexie } from "./database";
+export type { SettingRecord, SyncMetaRecord } from "./database";
+export { DEXIE_SCHEMA_V1 } from "./schema";
+export * from "./repositories";

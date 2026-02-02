@@ -4,16 +4,13 @@
  * Core business entities with their properties and business rules.
  */
 
-// Placeholder export to make this a valid module
-export const ENTITIES_MODULE_PLACEHOLDER = true;
-
-// Future implementations:
-// export { Trade } from './Trade';
-// export { TradeNote } from './TradeNote';
-// export { Observation } from './Observation';
-// export { ObservationCategory } from './ObservationCategory';
-// export { Tag } from './Tag';
-// export { ChartBar } from './ChartBar';
-// export { Account } from './Account';
-// export { SyncJob } from './SyncJob';
-// export { DailySummary } from './DailySummary';
+export type { Trade } from "./Trade";
+export type { TradeNote } from "./TradeNote";
+export type { Observation } from "./Observation";
+export type { ObservationCategory } from "./ObservationCategory";
+export type { Tag } from "./Tag";
+export type { TradeTag } from "./TradeTag";
+export type { ChartBar, ChartTimeframe } from "./ChartBar";
+export type { Account, AccountType } from "./Account";
+export type { SyncJob } from "./SyncJob";
+export type { DailySummary } from "./DailySummary";

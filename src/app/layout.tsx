@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { type ReactNode } from "react";
-import { ThemeProvider } from "@ui/providers";
+import { AuthProvider, ThemeProvider } from "@ui/providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,7 +18,9 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
