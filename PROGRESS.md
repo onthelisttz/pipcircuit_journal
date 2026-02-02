@@ -11,7 +11,7 @@
 | Phase 0 - Foundation & Architecture | ✅ Completed | 100% |
 | Phase 1 - Domain & Data Layer       | ✅ Completed | 100%     |
 | Phase 2 - Authentication & Accounts | ✅ Completed | 100%     |
-| Phase 3 - Analytics Dashboard       | ⏳ Pending     | 0%       |
+| Phase 3 - Analytics Dashboard       | ✅ Completed | 100%     |
 | Phase 4 - Trade List & Filters      | ⏳ Pending     | 0%       |
 | Phase 5 - Calendar & Daily Journal  | ⏳ Pending     | 0%       |
 
@@ -89,10 +89,18 @@
 
 ## Phase 3 - Analytics Dashboard
 
-### Pending ⏳
-- [ ] Summary cards, equity curve, drawdown chart
-- [ ] Risk gauges + returns charts
-- [ ] Best/worst trade cards + asset/session analysis
+### Completed ✅
+- [x] Analytics use cases (equity curve, drawdown, win rate, risk metrics, streaks, averages, returns, session/asset performance, best/worst trades)
+- [x] SessionClassifier domain service for session detection from trade openTime
+- [x] Global filters component (date range presets, symbol multi-select, direction)
+- [x] Summary cards (net profit, total trades, win rate, max drawdown, breakeven, % from peak)
+- [x] Equity curve chart (Recharts area chart)
+- [x] Drawdown chart (Recharts area chart)
+- [x] Risk gauges (profit factor, Sharpe, Sortino, Z-score)
+- [x] Returns charts (annual, monthly bar charts)
+- [x] Best/worst trade cards with links to trade detail
+- [x] Asset analysis (donut charts: count, P&L, win rate by symbol)
+- [x] Session analysis (radar chart: count, P&L, win rate by session)
 
 ---
 

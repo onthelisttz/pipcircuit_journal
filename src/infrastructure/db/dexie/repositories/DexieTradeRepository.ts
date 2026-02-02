@@ -20,6 +20,10 @@ export class DexieTradeRepository implements ITradeRepository {
     if (query.symbol) {
       results = results.filter((trade) => trade.symbol === query.symbol);
     }
+    if (query.symbols && query.symbols.length > 0) {
+      const set = new Set(query.symbols);
+      results = results.filter((trade) => set.has(trade.symbol));
+    }
     if (query.direction) {
       results = results.filter((trade) => trade.direction === query.direction);
     }

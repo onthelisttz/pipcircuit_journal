@@ -4,6 +4,7 @@ import type { Trade } from "@domain/entities";
 export interface TradeQuery {
   accountId?: string;
   symbol?: string;
+  symbols?: string[];
   direction?: Direction;
   outcome?: TradeOutcome;
   from?: Date;

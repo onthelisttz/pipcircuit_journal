@@ -1,2 +1,10 @@
-// Placeholder export
-export const DASHBOARD_FEATURE_PLACEHOLDER = true;
+export { DashboardFilters } from "./DashboardFilters";
+export type { DashboardFiltersState } from "./DashboardFilters";
+export { SummaryCards } from "./SummaryCards";
+export { EquityCurveChart } from "./EquityCurveChart";
+export { DrawdownChart } from "./DrawdownChart";
+export { RiskGauges } from "./RiskGauges";
+export { ReturnsCharts } from "./ReturnsCharts";
+export { BestWorstTradeCards } from "./BestWorstTradeCards";
+export { AssetAnalysis } from "./AssetAnalysis";
+export { SessionAnalysis } from "./SessionAnalysis";
