@@ -1,0 +1,176 @@
+"use client";
+
+import { useState, useEffect, useCallback, useMemo } from "react";
+import type { Trade, ChartTimeframe, ChartBar } from "@domain/entities";
+import { DexieChartBarRepository } from "@infrastructure/db/dexie/repositories";
+import { CTraderAPI } from "@infrastructure/api/ctrader";
+import { LoadChartWindowUseCase } from "@application/use-cases/charts";
+
+export interface UseChartDataOptions {
+    /** Trade to fetch chart data for */
+    trade: Trade;
+    /** Chart timeframe */
+    timeframe: ChartTimeframe;
+    /** Access token for API calls (optional) */
+    accessToken?: string;
+    /** Window size in days (default: 2) */
+    windowDays?: number;
+    /** Whether to enable the query */
+    enabled?: boolean;
+}
+
+export interface UseChartDataResult {
+    /** Chart bar data */
+    data: ChartBar[];
+    /** Loading state */
+    isLoading: boolean;
+    /** Error if any */
+    error: Error | null;
+    /** Whether data came from cache */
+    fromCache: boolean;
+    /** Refetch function */
+    refetch: () => void;
+    /** Fetch earlier data (for lazy loading) */
+    fetchPrevious: () => void;
+    /** Fetch later data (for lazy loading) */
+    fetchNext: () => void;
+    /** Window boundaries */
+    windowStart: number;
+    windowEnd: number;
+}
+
+// Memory cap for chart bars
+const MAX_BARS = 5000;
+
+/**
+ * useChartData - Hook for fetching and caching chart data
+ *
+ * Implements cache-first loading with lazy loading support.
+ */
+export function useChartData({
+    trade,
+    timeframe,
+    accessToken,
+    windowDays = 2,
+    enabled = true,
+}: UseChartDataOptions): UseChartDataResult {
+    const [data, setData] = useState<ChartBar[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<Error | null>(null);
+    const [fromCache, setFromCache] = useState(false);
+    const [windowStart, setWindowStart] = useState(0);
+    const [windowEnd, setWindowEnd] = useState(0);
+
+    // Create use case with dependencies
+    const useCase = useMemo(() => {
+        const chartBarRepository = new DexieChartBarRepository();
+        const api = new CTraderAPI();
+        return new LoadChartWindowUseCase(api, chartBarRepository);
+    }, []);
+
+    // Fetch chart data
+    const fetchData = useCallback(async () => {
+        if (!enabled || !trade) return;
+
+        setIsLoading(true);
+        setError(null);
+
+        try {
+            const result = await useCase.execute({
+                trade,
+                timeframe,
+                accessToken,
+                windowDays,
+            });
+
+            // Apply memory cap
+            const cappedBars =
+                result.bars.length > MAX_BARS
+                    ? result.bars.slice(-MAX_BARS) // Keep most recent bars
+                    : result.bars;
+
+            setData(cappedBars);
+            setFromCache(result.fromCache);
+            setWindowStart(result.windowStart);
+            setWindowEnd(result.windowEnd);
+        } catch (err) {
+            setError(err instanceof Error ? err : new Error("Failed to load chart data"));
+            setData([]);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [enabled, trade, timeframe, accessToken, windowDays, useCase]);
+
+    // Fetch data on mount and when dependencies change
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
+
+    // Lazy loading: fetch previous chunk
+    const fetchPrevious = useCallback(async () => {
+        if (windowStart === 0 || isLoading) return;
+
+        const newWindowStart = windowStart - windowDays * 24 * 60 * 60 * 1000;
+
+        try {
+            const chartBarRepository = new DexieChartBarRepository();
+            const previousBars = await chartBarRepository.getByWindow(
+                trade.symbol,
+                timeframe,
+                newWindowStart,
+                windowStart
+            );
+
+            if (previousBars.length > 0) {
+                setData((prev) => {
+                    const combined = [...previousBars, ...prev];
+                    // Apply memory cap, keeping most recent
+                    return combined.length > MAX_BARS ? combined.slice(-MAX_BARS) : combined;
+                });
+                setWindowStart(newWindowStart);
+            }
+        } catch (err) {
+            console.error("Failed to fetch previous data:", err);
+        }
+    }, [windowStart, isLoading, trade.symbol, timeframe, windowDays]);
+
+    // Lazy loading: fetch next chunk
+    const fetchNext = useCallback(async () => {
+        if (windowEnd === 0 || isLoading) return;
+
+        const newWindowEnd = windowEnd + windowDays * 24 * 60 * 60 * 1000;
+
+        try {
+            const chartBarRepository = new DexieChartBarRepository();
+            const nextBars = await chartBarRepository.getByWindow(
+                trade.symbol,
+                timeframe,
+                windowEnd,
+                newWindowEnd
+            );
+
+            if (nextBars.length > 0) {
+                setData((prev) => {
+                    const combined = [...prev, ...nextBars];
+                    // Apply memory cap, keeping most recent
+                    return combined.length > MAX_BARS ? combined.slice(-MAX_BARS) : combined;
+                });
+                setWindowEnd(newWindowEnd);
+            }
+        } catch (err) {
+            console.error("Failed to fetch next data:", err);
+        }
+    }, [windowEnd, isLoading, trade.symbol, timeframe, windowDays]);
+
+    return {
+        data,
+        isLoading,
+        error,
+        fromCache,
+        refetch: fetchData,
+        fetchPrevious,
+        fetchNext,
+        windowStart,
+        windowEnd,
+    };
+}

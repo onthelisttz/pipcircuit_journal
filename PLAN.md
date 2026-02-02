@@ -14,15 +14,16 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 | 0     | Foundation & Architecture | 3-5 days  | None         |
 | 1     | Domain & Data Layer       | 5-7 days  | Phase 0      |
 | 2     | cTrader API Integration   | 5-8 days  | Phase 1      |
-| 3     | Charts & Visualization    | 6-10 days | Phase 2      |
-| 4     | Sync Engine               | 5-8 days  | Phase 1      |
-| 5     | Analytics Dashboard       | 8-12 days | Phase 2      |
+| 3     | Analytics Dashboard       | 8-12 days | Phase 2      |
+| 4     | Trade List & Filters      | 5-7 days  | Phase 2      |
+| 5     | Calendar & Daily Journal  | 4-6 days  | Phase 3      |
 | 6     | Journal & Tagging         | 5-8 days  | Phase 2      |
-| 7     | Trade List & Filters      | 5-7 days  | Phase 2      |
-| 8     | Calendar & Daily Journal  | 4-6 days  | Phase 5      |
-| 9     | Accounts & Multi-Device   | 4-6 days  | Phase 4      |
-| 10    | Polish & QA               | 5-8 days  | All          |
-| 11    | Deployment                | 2-4 days  | Phase 10     |
+| 7     | Charts & Visualization    | 6-10 days | Phase 2      |
+| 8     | Market Observations       | 4-6 days  | Phase 6      |
+| 9     | Sync Engine               | 5-8 days  | Phase 1      |
+| 10    | Accounts & Multi-Device   | 4-6 days  | Phase 9      |
+| 11    | Polish & QA               | 5-8 days  | All          |
+| 12    | Deployment                | 2-4 days  | Phase 11     |
 
 ---
 
@@ -235,123 +236,7 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 
 ---
 
-## Phase 3 - Charts & Visualization (6-10 days)
-
-### Goals
-
-- Implement high-performance trade charting.
-- Add profit timeline and MAE/MFE overlays.
-- Enable timeframe switching with lazy loading.
-
-### Key Tasks
-
-1. **Chart Component**
-   - Integrate TradingView Lightweight Charts.
-   - Candlestick series with OHLCV data.
-   - Price scale customization.
-   - Time scale with timezone support.
-   - Dark theme styling.
-
-2. **Trade Context Visualization**
-   - Entry marker (vertical line + annotation).
-   - Exit marker (vertical line + annotation).
-   - Trade duration highlight zone.
-   - Direction indicator (buy/sell colors).
-
-3. **Profit Timeline Overlay**
-   - Line series below main chart.
-   - Shows floating P&L during trade.
-   - MAE marker (lowest point).
-   - MFE marker (highest point).
-   - Toggle visibility.
-
-4. **Windowed Loading**
-   - `LoadChartWindowUseCase`: Fetch window around trade.
-   - Adaptive window size based on trade duration.
-   - Cache-first fetching (Dexie → Supabase → cTrader).
-
-5. **Lazy Loading (Infinite Scroll)**
-   - Detect scroll near edges (20% threshold).
-   - Fetch previous/next chunks.
-   - Prepend/append to chart data.
-   - Loading indicators at edges.
-
-6. **Timeframe Switching**
-   - Timeframe selector (M1 to D1).
-   - Maintain time context on switch.
-   - Aggregate from lower timeframes when possible.
-   - Reset View button.
-
-### Deliverables
-
-- Fast-loading trade charts with context.
-- Profit timeline with MAE/MFE.
-- Smooth infinite scroll for history.
-- Timeframe switching.
-
-### Exit Criteria
-
-- Chart renders in < 1 second from cache.
-- Scrolling loads more data seamlessly.
-- Memory stays within 5000 bar limit.
-
----
-
-## Phase 4 - Sync Engine (5-8 days)
-
-### Goals
-
-- Implement bidirectional sync with Supabase.
-- Handle conflicts gracefully.
-- Enable multi-device consistency.
-
-### Key Tasks
-
-1. **Supabase Schema**
-   - Mirror Dexie tables in PostgreSQL.
-   - Row Level Security policies.
-   - Timestamps: created_at, updated_at, synced_at.
-   - Version field for optimistic locking.
-
-2. **Sync Queue Processor**
-   - `ProcessSyncQueueUseCase`: Process pending changes.
-   - Ordered processing (oldest first).
-   - Exponential backoff on failures.
-   - Max retry limit with alerting.
-
-3. **Conflict Resolution**
-   - Last-write-wins strategy.
-   - Compare updated_at timestamps.
-   - Optional: Surface conflicts for user review.
-
-4. **Background Sync**
-   - Online/offline event listeners.
-   - Periodic sync interval (5 minutes).
-   - Service Worker Background Sync.
-   - Manual sync trigger.
-
-5. **Sync UI**
-   - Sync status badge (online/syncing/offline).
-   - Pending changes count.
-   - Last sync timestamp.
-   - Manual sync button.
-
-### Deliverables
-
-- Reliable sync queue with retries.
-- Conflict resolution working.
-- Multi-device data consistency.
-- Sync status indicators.
-
-### Exit Criteria
-
-- Offline edits sync when back online.
-- No data loss during conflicts.
-- Sync does not block UI.
-
----
-
-## Phase 5 - Analytics Dashboard (8-12 days)
+## Phase 3 - Analytics Dashboard (8-12 days)
 
 ### Goals
 
@@ -434,6 +319,126 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 
 ---
 
+## Phase 4 - Trade List & Filters (5-7 days)
+
+### Goals
+
+- Build high-performance trade list table.
+- Implement comprehensive filtering.
+- Add inline editing capabilities.
+
+### Key Tasks
+
+1. **Trade List Table**
+   - Virtualized table for large datasets (TanStack Table + Virtual).
+   - Sortable columns.
+   - Pagination with page size options.
+   - Actions column.
+
+2. **Column Configuration**
+   - All columns from requirements.
+   - Column visibility toggle panel.
+   - Persist preferences to settings.
+   - Drag-and-drop reordering (optional).
+
+3. **Inline Editing**
+   - Rating stars (click to edit).
+   - Mindset dropdown (click to edit).
+   - Tags (click to add/remove).
+   - Auto-save on change.
+
+4. **Filters Panel**
+   - Slide-out sidebar.
+   - Trade Filters tab.
+   - Journal Filters tab.
+   - Symbol search with autocomplete.
+   - Order Type checkboxes.
+   - Profit Range min/max inputs.
+   - Hold Time min/max inputs.
+   - Volume Range min/max inputs.
+   - Placed By checkboxes.
+   - AI-Powered Filtering toggle (Pro).
+
+5. **Date Range Picker**
+   - Dual calendar component.
+   - Quick preset buttons.
+   - Auto-sync toggle.
+   - "In The Last" option.
+   - Apply/Cancel buttons.
+
+### Deliverables
+
+- Fast, searchable trade list.
+- All filter options working.
+- Inline editing functional.
+- Column customization.
+
+### Exit Criteria
+
+- 1000+ trades scroll smoothly.
+- Filters apply instantly.
+- Inline edits sync correctly.
+
+---
+
+## Phase 5 - Calendar & Daily Journal (4-6 days)
+
+### Goals
+
+- Implement calendar-based daily journal.
+- Build daily summary view.
+- Add yearly performance grid.
+
+### Key Tasks
+
+1. **Daily Journal Calendar**
+   - Monthly grid view.
+   - Per-day P&L display (amount + percent).
+   - Trade count per day.
+   - Color coding (green/red).
+   - Week totals column.
+
+2. **Calendar Navigation**
+   - Previous/Next month buttons.
+   - Month/year selector dropdown.
+   - Jump to today.
+
+3. **Calendar Header Stats**
+   - Total Trades for month.
+   - Wins count and percentage.
+   - Net Profits for month.
+   - Overall percentage.
+   - Toggle: Percent vs. Trades view.
+
+4. **Day Detail Panel**
+   - Slide-out or modal when clicking day.
+   - Header: Date, Net P&L.
+   - Balance summary: Start, End, Deposit, Fees.
+   - Trading stats: Buys, Sells, Best, Worst, Avg Hold, Drawdown.
+   - Performance: Winrate, Profit Factor, Expectancy.
+   - Intraday P&L curve (small line chart).
+   - "View In Journal" link.
+   - Trade list for that day.
+
+5. **Yearly Performance Grid**
+   - Monthly returns grid by year.
+   - Compact heatmap style.
+   - Clickable for drill-down.
+
+### Deliverables
+
+- Full calendar interface.
+- Day detail with stats and chart.
+- Yearly performance overview.
+
+### Exit Criteria
+
+- Can navigate any month/year.
+- Day details accurate.
+- Links to full journal work.
+
+---
+
 ## Phase 6 - Journal & Tagging (5-8 days)
 
 ### Goals
@@ -497,7 +502,69 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 
 ---
 
-## Phase 7 - Market Observations (4-6 days)
+## Phase 7 - Charts & Visualization (6-10 days)
+
+### Goals
+
+- Implement high-performance trade charting.
+- Add profit timeline and MAE/MFE overlays.
+- Enable timeframe switching with lazy loading.
+
+### Key Tasks
+
+1. **Chart Component**
+   - Integrate TradingView Lightweight Charts.
+   - Candlestick series with OHLCV data.
+   - Price scale customization.
+   - Time scale with timezone support.
+   - Dark theme styling.
+
+2. **Trade Context Visualization**
+   - Entry marker (vertical line + annotation).
+   - Exit marker (vertical line + annotation).
+   - Trade duration highlight zone.
+   - Direction indicator (buy/sell colors).
+
+3. **Profit Timeline Overlay**
+   - Line series below main chart.
+   - Shows floating P&L during trade.
+   - MAE marker (lowest point).
+   - MFE marker (highest point).
+   - Toggle visibility.
+
+4. **Windowed Loading**
+   - `LoadChartWindowUseCase`: Fetch window around trade.
+   - Adaptive window size based on trade duration.
+   - Cache-first fetching (Dexie → Supabase → cTrader).
+
+5. **Lazy Loading (Infinite Scroll)**
+   - Detect scroll near edges (20% threshold).
+   - Fetch previous/next chunks.
+   - Prepend/append to chart data.
+   - Loading indicators at edges.
+
+6. **Timeframe Switching**
+   - Timeframe selector (M1 to D1).
+   - Maintain time context on switch.
+   - Aggregate from lower timeframes when possible.
+   - Reset View button.
+
+### Deliverables
+
+- Fast-loading trade charts with context.
+- Profit timeline with MAE/MFE.
+- Smooth infinite scroll for history.
+- Timeframe switching.
+
+### Exit Criteria
+
+- Chart renders in < 1 second from cache.
+- Scrolling loads more data seamlessly.
+- Memory stays within 5000 bar limit.
+
+---
+
+## Phase 8 - Market Observations (4-6 days)
 
 ### Goals
 
@@ -540,123 +607,57 @@ principles. Each phase has clear goals, deliverables, and exit criteria.
 
 ---
 
-## Phase 8 - Trade List & Filters (5-7 days)
+## Phase 9 - Sync Engine (5-8 days)
 
 ### Goals
 
-- Build high-performance trade list table.
-- Implement comprehensive filtering.
-- Add inline editing capabilities.
+- Implement bidirectional sync with Supabase.
+- Handle conflicts gracefully.
+- Enable multi-device consistency.
 
 ### Key Tasks
 
-1. **Trade List Table**
-   - Virtualized table for large datasets (TanStack Table + Virtual).
-   - Sortable columns.
-   - Pagination with page size options.
-   - Actions column.
+1. **Supabase Schema**
+   - Mirror Dexie tables in PostgreSQL.
+   - Row Level Security policies.
+   - Timestamps: created_at, updated_at, synced_at.
+   - Version field for optimistic locking.
 
-2. **Column Configuration**
-   - All columns from requirements.
-   - Column visibility toggle panel.
-   - Persist preferences to settings.
-   - Drag-and-drop reordering (optional).
+2. **Sync Queue Processor**
+   - `ProcessSyncQueueUseCase`: Process pending changes.
+   - Ordered processing (oldest first).
+   - Exponential backoff on failures.
+   - Max retry limit with alerting.
 
-3. **Inline Editing**
-   - Rating stars (click to edit).
-   - Mindset dropdown (click to edit).
-   - Tags (click to add/remove).
-   - Auto-save on change.
+3. **Conflict Resolution**
+   - Last-write-wins strategy.
+   - Compare updated_at timestamps.
+   - Optional: Surface conflicts for user review.
 
-4. **Filters Panel**
-   - Slide-out sidebar.
-   - Trade Filters tab.
-   - Journal Filters tab.
-   - Symbol search with autocomplete.
-   - Order Type checkboxes.
-   - Profit Range min/max inputs.
-   - Hold Time min/max inputs.
-   - Volume Range min/max inputs.
-   - Placed By checkboxes.
-   - AI-Powered Filtering toggle (Pro).
+4. **Background Sync**
+   - Online/offline event listeners.
+   - Periodic sync interval (5 minutes).
+   - Service Worker Background Sync.
+   - Manual sync trigger.
 
-5. **Date Range Picker**
-   - Dual calendar component.
-   - Quick preset buttons.
-   - Auto-sync toggle.
-   - "In The Last" option.
-   - Apply/Cancel buttons.
+5. **Sync UI**
+   - Sync status badge (online/syncing/offline).
+   - Pending changes count.
+   - Last sync timestamp.
+   - Manual sync button.
 
 ### Deliverables
 
-- Fast, searchable trade list.
-- All filter options working.
-- Inline editing functional.
-- Column customization.
+- Reliable sync queue with retries.
+- Conflict resolution working.
+- Multi-device data consistency.
+- Sync status indicators.
 
 ### Exit Criteria
 
-- 1000+ trades scroll smoothly.
-- Filters apply instantly.
-- Inline edits sync correctly.
-
----
-
-## Phase 9 - Calendar & Daily Journal (4-6 days)
-
-### Goals
-
-- Implement calendar-based daily journal.
-- Build daily summary view.
-- Add yearly performance grid.
-
-### Key Tasks
-
-1. **Daily Journal Calendar**
-   - Monthly grid view.
-   - Per-day P&L display (amount + percent).
-   - Trade count per day.
-   - Color coding (green/red).
-   - Week totals column.
-
-2. **Calendar Navigation**
-   - Previous/Next month buttons.
-   - Month/year selector dropdown.
-   - Jump to today.
-
-3. **Calendar Header Stats**
-   - Total Trades for month.
-   - Wins count and percentage.
-   - Net Profits for month.
-   - Overall percentage.
-   - Toggle: Percent vs. Trades view.
-
-4. **Day Detail Panel**
-   - Slide-out or modal when clicking day.
-   - Header: Date, Net P&L.
-   - Balance summary: Start, End, Deposit, Fees.
-   - Trading stats: Buys, Sells, Best, Worst, Avg Hold, Drawdown.
-   - Performance: Winrate, Profit Factor, Expectancy.
-   - Intraday P&L curve (small line chart).
-   - "View In Journal" link.
-   - Trade list for that day.
-
-5. **Yearly Performance Grid**
-   - Monthly returns grid by year.
-   - Compact heatmap style.
-   - Clickable for drill-down.
-
-### Deliverables
-
-- Full calendar interface.
-- Day detail with stats and chart.
-- Yearly performance overview.
-
-### Exit Criteria
-
-- Can navigate any month/year.
-- Day details accurate.
-- Links to full journal work.
+- Offline edits sync when back online.
+- No data loss during conflicts.
+- Sync does not block UI.
 
 ---
 

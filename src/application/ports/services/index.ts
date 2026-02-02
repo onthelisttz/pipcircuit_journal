@@ -5,7 +5,13 @@
  * Implementations are provided in the Infrastructure layer.
  */
 
-export type { ICTraderAPI } from "./ICTraderAPI";
+export type {
+  ICTraderAPI,
+  CTraderTokenResponse,
+  CTraderAccountInfo,
+  CTraderTradeRecord,
+  CTraderBarRecord,
+} from "./ICTraderAPI";
 export type {
   IAuthService,
   AuthSession,
