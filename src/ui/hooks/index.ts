@@ -8,4 +8,6 @@ export { useAccount } from "./useAccount";
 export { useChartData } from "./useChartData";
 export type { UseChartDataOptions, UseChartDataResult } from "./useChartData";
 export { useTrade } from "./useTrade";
+export { useTradeNote } from "./useTradeNote";
 export { useDashboard, useDashboardSymbols, useCalendarMonthReturns } from "./useDashboard";
+export { useTradesByQuery } from "./useTradesByQuery";

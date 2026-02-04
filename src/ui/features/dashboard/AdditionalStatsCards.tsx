@@ -12,6 +12,7 @@ interface AdditionalStatsCardsProps {
   totalLongProfit: number;
   totalShortTrades: number;
   totalShortProfit: number;
+  onCardClick?: (cardKey: string) => void;
 }
 
 function formatMoney(value: number): string {
@@ -31,27 +32,32 @@ export function AdditionalStatsCards({
   totalLongProfit,
   totalShortTrades,
   totalShortProfit,
+  onCardClick,
 }: AdditionalStatsCardsProps) {
   const cards = [
     {
+      key: "max-consecutive-wins",
       label: "Max Consecutive Wins",
       value: `${maxConsecutiveWins} (${formatMoney(maxConsecutiveWinsProfit)})`,
       icon: Trophy,
       positive: true,
     },
     {
+      key: "max-consecutive-losses",
       label: "Max Consecutive Losses",
       value: `${maxConsecutiveLosses} (${formatMoney(maxConsecutiveLossesProfit)})`,
       icon: XCircle,
       positive: false,
     },
     {
+      key: "total-long-trades",
       label: "Total Long Trades",
       value: `${totalLongTrades} (${formatMoney(totalLongProfit)})`,
       icon: TrendingUp,
       positive: totalLongProfit >= 0,
     },
     {
+      key: "total-short-trades",
       label: "Total Short Trades",
       value: `${totalShortTrades} (${formatMoney(totalShortProfit)})`,
       icon: TrendingDown,
@@ -63,13 +69,14 @@ export function AdditionalStatsCards({
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
       {cards.map((card, i) => {
         const Icon = card.icon;
+        const isClickable = !!onCardClick;
         return (
           <motion.div
-            key={card.label}
+            key={card.key}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.05 }}
-            className="rounded-xl border border-border bg-card p-4"
+            className={`rounded-xl border border-border bg-card p-4 ${!isClickable ? "cursor-default" : ""}`}
           >
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">{card.label}</span>
@@ -79,13 +86,25 @@ export function AdditionalStatsCards({
                 }`}
               />
             </div>
-            <p
-              className={`mt-1 text-lg font-semibold ${
-                card.positive ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"
-              }`}
-            >
-              {card.value}
-            </p>
+            {isClickable ? (
+              <button
+                type="button"
+                onClick={() => onCardClick(card.key)}
+                className={`mt-1 block w-full text-left text-lg font-semibold focus:outline-none ${
+                  card.positive ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"
+                }`}
+              >
+                {card.value}
+              </button>
+            ) : (
+              <p
+                className={`mt-1 text-lg font-semibold cursor-default ${
+                  card.positive ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"
+                }`}
+              >
+                {card.value}
+              </p>
+            )}
           </motion.div>
         );
       })}

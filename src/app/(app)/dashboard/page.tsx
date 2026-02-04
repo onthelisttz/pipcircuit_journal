@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { subDays } from "date-fns";
+import { useMemo, useState } from "react";
+import { subDays, startOfDay, endOfDay } from "date-fns";
+import { TradeOutcome, Direction } from "@domain/enums";
 import { useAccount } from "@ui/hooks";
+import { useTradePanel } from "@ui/providers";
 import {
   DashboardFilters,
   SummaryCards,
@@ -29,9 +31,62 @@ const defaultFilters: DashboardFiltersState = {
 
 export default function DashboardPage() {
   const { activeAccount } = useAccount();
+  const { openPanel } = useTradePanel();
   const accountId = activeAccount?.accountNumber;
   const [filters, setFilters] = useState<DashboardFiltersState>(defaultFilters);
   const availableSymbols = useDashboardSymbols(accountId);
+
+  const panelQuery = useMemo(
+    () =>
+      accountId
+        ? {
+            accountId,
+            from: startOfDay(filters.from),
+            to: endOfDay(filters.to),
+            symbols: filters.symbols.length > 0 ? filters.symbols : undefined,
+            direction: filters.direction !== "Both" ? filters.direction : undefined,
+          }
+        : null,
+    [accountId, filters.from, filters.to, filters.symbols, filters.direction]
+  );
+
+  const formatPanelTitle = (key: string) =>
+    key.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const handleSummaryCardClick = (cardKey: string) => {
+    if (!panelQuery) return;
+    const query =
+      cardKey === "breakeven-trades"
+        ? { ...panelQuery, outcome: TradeOutcome.Breakeven }
+        : panelQuery;
+    openPanel({ title: formatPanelTitle(cardKey), query });
+  };
+
+  const handleAdditionalCardClick = (cardKey: string) => {
+    if (cardKey === "max-consecutive-wins" && streakStats?.maxWinStreakTradeIds.length) {
+      openPanel({
+        title: "Max Consecutive Wins",
+        tradeIds: streakStats.maxWinStreakTradeIds,
+      });
+      return;
+    }
+    if (cardKey === "max-consecutive-losses" && streakStats?.maxLossStreakTradeIds.length) {
+      openPanel({
+        title: "Max Consecutive Losses",
+        tradeIds: streakStats.maxLossStreakTradeIds,
+      });
+      return;
+    }
+    if (panelQuery) {
+      if (cardKey === "total-long-trades") {
+        openPanel({ title: "Total Long Trades", query: { ...panelQuery, direction: Direction.Buy } });
+      } else if (cardKey === "total-short-trades") {
+        openPanel({ title: "Total Short Trades", query: { ...panelQuery, direction: Direction.Sell } });
+      } else {
+        openPanel({ title: formatPanelTitle(cardKey), query: panelQuery });
+      }
+    }
+  };
 
   const {
     loading,
@@ -67,7 +122,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="sticky top-16 z-10 -mx-6 px-6 py-3 -mt-6 mb-3 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border/40">
+      <div className="sticky top-0 z-10 mb-3 flex flex-col gap-4 bg-background py-3 sm:flex-row sm:items-center sm:justify-between border-b border-border/40">
         <h1 className="text-xl font-semibold text-foreground">Analytics Dashboard</h1>
         <DashboardFilters
           filters={filters}
@@ -90,6 +145,7 @@ export default function DashboardPage() {
               maxDrawdown={summary.maxDrawdown}
               breakevenTrades={summary.breakevenTrades}
               percentFromPeak={summary.percentFromPeak}
+              onCardClick={handleSummaryCardClick}
             />
           )}
 
@@ -103,6 +159,7 @@ export default function DashboardPage() {
               totalLongProfit={longShortStats.totalLongProfit}
               totalShortTrades={longShortStats.totalShortTrades}
               totalShortProfit={longShortStats.totalShortProfit}
+              onCardClick={handleAdditionalCardClick}
             />
           )}
 
@@ -120,6 +177,45 @@ export default function DashboardPage() {
             symbols={filters.symbols}
             direction={filters.direction}
             initialMonth={filters.from}
+            onDayClick={
+              panelQuery
+                ? (date) =>
+                    openPanel({
+                      title: `Trades on ${date.toLocaleDateString()}`,
+                      query: {
+                        ...panelQuery,
+                        from: startOfDay(date),
+                        to: endOfDay(date),
+                      },
+                    })
+                : undefined
+            }
+            onWeekClick={
+              panelQuery
+                ? (weekStart, weekEnd) =>
+                    openPanel({
+                      title: `Trades ${weekStart.toLocaleDateString()} – ${weekEnd.toLocaleDateString()}`,
+                      query: {
+                        ...panelQuery,
+                        from: startOfDay(weekStart),
+                        to: endOfDay(weekEnd),
+                      },
+                    })
+                : undefined
+            }
+            onMonthClick={
+              panelQuery
+                ? (monthStart, monthEnd) =>
+                    openPanel({
+                      title: `Trades in ${monthStart.toLocaleDateString(undefined, { month: "long", year: "numeric" })}`,
+                      query: {
+                        ...panelQuery,
+                        from: startOfDay(monthStart),
+                        to: endOfDay(monthEnd),
+                      },
+                    })
+                : undefined
+            }
           />
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -127,10 +223,35 @@ export default function DashboardPage() {
             <SessionAnalysis data={sessionPerf} />
           </div>
 
-          <AssetAnalysis data={assetPerf} />
+          <AssetAnalysis
+            data={assetPerf}
+            onCellClick={
+              panelQuery
+                ? (symbol, type, title) =>
+                    openPanel({
+                      title,
+                      query: {
+                        ...panelQuery,
+                        symbols: [symbol],
+                        ...(type === "wins" && { winsOnly: true }),
+                        ...(type === "losses" && { lossesOnly: true }),
+                      },
+                    })
+                : undefined
+            }
+          />
 
           {bestWorst && (
-            <BestWorstTradeCards best={bestWorst.best} worst={bestWorst.worst} />
+            <BestWorstTradeCards
+              best={bestWorst.best}
+              worst={bestWorst.worst}
+              onBestClick={(ids, selectedId) =>
+                openPanel({ title: "Best Trades", tradeIds: ids, selectedTradeId: selectedId ?? undefined })
+              }
+              onWorstClick={(ids, selectedId) =>
+                openPanel({ title: "Worst Trades", tradeIds: ids, selectedTradeId: selectedId ?? undefined })
+              }
+            />
           )}
         </>
       )}

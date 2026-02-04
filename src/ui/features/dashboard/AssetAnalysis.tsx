@@ -19,8 +19,12 @@ interface AssetPerformance {
   fee: number;
 }
 
+type AssetClickType = "count" | "wins" | "losses";
+
 interface AssetAnalysisProps {
   data: AssetPerformance[];
+  /** When provided, count/wins/losses cells are clickable; opens panel with that symbol's trades (filtered by type) */
+  onCellClick?: (symbol: string, type: AssetClickType, title: string) => void;
 }
 
 const CHART_COLORS = [
@@ -51,7 +55,7 @@ function formatDuration(ms: number): string {
   return `${sec}s`;
 }
 
-export function AssetAnalysis({ data }: AssetAnalysisProps) {
+export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
   const [sortKey, setSortKey] = useState<SortKey>("count");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
@@ -251,9 +255,24 @@ export function AssetAnalysis({ data }: AssetAnalysisProps) {
                   className={`border-b border-border last:border-0 ${i % 2 === 1 ? "bg-muted/20" : ""}`}
                 >
                   <td className="px-3 py-2 font-medium text-foreground">{row.symbol}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{row.count}</td>
-                  <td className="px-3 py-2 text-green-600 dark:text-green-400">{row.wins}</td>
-                  <td className="px-3 py-2 text-red-600 dark:text-red-400">{row.losses}</td>
+                  <td
+                    className={`px-3 py-2 text-muted-foreground ${onCellClick && row.count > 0 ? "cursor-pointer hover:bg-muted/40 hover:underline" : ""}`}
+                    onClick={onCellClick && row.count > 0 ? () => onCellClick(row.symbol, "count", `${row.symbol} (${row.count} trades)`) : undefined}
+                  >
+                    {row.count}
+                  </td>
+                  <td
+                    className={`px-3 py-2 text-green-600 dark:text-green-400 ${onCellClick && row.wins > 0 ? "cursor-pointer hover:bg-muted/40 hover:underline" : ""}`}
+                    onClick={onCellClick && row.wins > 0 ? () => onCellClick(row.symbol, "wins", `${row.symbol} (${row.wins} wins)`) : undefined}
+                  >
+                    {row.wins}
+                  </td>
+                  <td
+                    className={`px-3 py-2 text-red-600 dark:text-red-400 ${onCellClick && row.losses > 0 ? "cursor-pointer hover:bg-muted/40 hover:underline" : ""}`}
+                    onClick={onCellClick && row.losses > 0 ? () => onCellClick(row.symbol, "losses", `${row.symbol} (${row.losses} losses)`) : undefined}
+                  >
+                    {row.losses}
+                  </td>
                   <td className="px-3 py-2 text-muted-foreground">{row.winRate.toFixed(1)}%</td>
                   <td
                     className={`px-3 py-2 font-medium ${row.profit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}

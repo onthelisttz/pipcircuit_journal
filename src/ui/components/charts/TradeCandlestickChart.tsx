@@ -2,6 +2,7 @@
 
 import {
     createChart,
+    createSeriesMarkers,
     type IChartApi,
     type ISeriesApi,
     type CandlestickData,
@@ -49,8 +50,8 @@ export function TradeCandlestickChart({
 }: TradeCandlestickChartProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+    const markersPluginRef = useRef<ReturnType<typeof createSeriesMarkers<Time>> | null>(null);
     const [isChartReady, setIsChartReady] = useState(false);
 
     // Convert ChartBar data to Lightweight Charts format
@@ -117,8 +118,7 @@ export function TradeCandlestickChart({
         });
 
         chartRef.current = chart;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        seriesRef.current = series as any;
+        seriesRef.current = series;
         setIsChartReady(true);
 
         // Handle resize
@@ -141,6 +141,7 @@ export function TradeCandlestickChart({
 
         return () => {
             window.removeEventListener("resize", handleResize);
+            markersPluginRef.current = null;
             chart.remove();
             chartRef.current = null;
             seriesRef.current = null;
@@ -159,38 +160,43 @@ export function TradeCandlestickChart({
         chartRef.current?.timeScale().fitContent();
     }, [data, isChartReady, formatData]);
 
-    // Add trade markers
+    // Add trade markers (Lightweight Charts v5: use createSeriesMarkers, not series.setMarkers)
     useEffect(() => {
-        if (!seriesRef.current || !isChartReady || !trade) return;
+        if (!seriesRef.current || !isChartReady) return;
 
         const markers: SeriesMarker<Time>[] = [];
 
-        const isBuy = trade.direction === Direction.Buy;
-        const entryColor = isBuy ? "#22c55e" : "#ef4444";
-        const exitColor = isBuy ? "#ef4444" : "#22c55e";
+        if (trade) {
+            const isBuy = trade.direction === Direction.Buy;
+            const entryColor = isBuy ? "#22c55e" : "#ef4444";
+            const exitColor = isBuy ? "#ef4444" : "#22c55e";
 
-        if (showEntryMarker && trade.openTime) {
-            markers.push({
-                time: (trade.openTime.getTime() / 1000) as Time,
-                position: isBuy ? "belowBar" : "aboveBar",
-                color: entryColor,
-                shape: isBuy ? "arrowUp" : "arrowDown",
-                text: `Entry ${trade.openPrice?.toFixed(5) ?? ""}`,
-            });
+            if (showEntryMarker && trade.openTime) {
+                markers.push({
+                    time: (trade.openTime.getTime() / 1000) as Time,
+                    position: isBuy ? "belowBar" : "aboveBar",
+                    color: entryColor,
+                    shape: isBuy ? "arrowUp" : "arrowDown",
+                    text: `Entry ${trade.openPrice?.toFixed(5) ?? ""}`,
+                });
+            }
+
+            if (showExitMarker && trade.closeTime && trade.closePrice) {
+                markers.push({
+                    time: (trade.closeTime.getTime() / 1000) as Time,
+                    position: isBuy ? "aboveBar" : "belowBar",
+                    color: exitColor,
+                    shape: "circle",
+                    text: `Exit ${trade.closePrice.toFixed(5)}`,
+                });
+            }
         }
 
-        if (showExitMarker && trade.closeTime && trade.closePrice) {
-            markers.push({
-                time: (trade.closeTime.getTime() / 1000) as Time,
-                position: isBuy ? "aboveBar" : "belowBar",
-                color: exitColor,
-                shape: "circle",
-                text: `Exit ${trade.closePrice.toFixed(5)}`,
-            });
+        if (!markersPluginRef.current) {
+            markersPluginRef.current = createSeriesMarkers(seriesRef.current, markers);
+        } else {
+            markersPluginRef.current.setMarkers(markers);
         }
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (seriesRef.current as any).setMarkers(markers);
     }, [trade, isChartReady, showEntryMarker, showExitMarker]);
 
     return (

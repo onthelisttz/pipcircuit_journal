@@ -1,4 +1,5 @@
 import type { ITradeRepository, TradeQuery } from "@application/ports/repositories";
+import type { Trade } from "@domain/entities";
 
 export interface StreakStats {
   currentStreak: number;
@@ -7,6 +8,10 @@ export interface StreakStats {
   maxWinStreakProfit: number;
   maxLossStreakProfit: number;
   isWinStreak: boolean;
+  /** Trade IDs in the max win streak (chronological order) */
+  maxWinStreakTradeIds: number[];
+  /** Trade IDs in the max loss streak (chronological order) */
+  maxLossStreakTradeIds: number[];
 }
 
 export interface GetStreakStatsInput {
@@ -47,6 +52,8 @@ export class GetStreakStatsUseCase {
         maxWinStreakProfit: 0,
         maxLossStreakProfit: 0,
         isWinStreak: true,
+        maxWinStreakTradeIds: [],
+        maxLossStreakTradeIds: [],
       };
     }
 
@@ -54,35 +61,60 @@ export class GetStreakStatsUseCase {
     let lossCount = 0;
     let winSum = 0;
     let lossSum = 0;
+    let winStart = 0;
+    let lossStart = 0;
+    let bestWinStart = 0;
+    let bestLossStart = 0;
 
     for (let i = 0; i < outcomes.length; i++) {
       if (outcomes[i]) {
         winCount++;
         winSum += profits[i];
+        if (lossCount > 0) lossStart = i;
         lossCount = 0;
         lossSum = 0;
+        if (winCount === 1) winStart = i;
         if (winCount > maxWinStreak) {
           maxWinStreak = winCount;
           maxWinStreakProfit = winSum;
+          bestWinStart = winStart;
         } else if (winCount === maxWinStreak) {
-          maxWinStreakProfit = Math.max(maxWinStreakProfit, winSum);
+          if (winSum > maxWinStreakProfit) {
+            maxWinStreakProfit = winSum;
+            bestWinStart = winStart;
+          }
         }
       } else {
         lossCount++;
         lossSum += profits[i];
+        if (winCount > 0) winStart = i;
         winCount = 0;
         winSum = 0;
+        if (lossCount === 1) lossStart = i;
         if (lossCount > maxLossStreak) {
           maxLossStreak = lossCount;
           maxLossStreakProfit = lossSum;
+          bestLossStart = lossStart;
         } else if (lossCount === maxLossStreak) {
-          maxLossStreakProfit = Math.min(maxLossStreakProfit, lossSum);
+          if (lossSum < maxLossStreakProfit) {
+            maxLossStreakProfit = lossSum;
+            bestLossStart = lossStart;
+          }
         }
       }
     }
 
     isWinStreak = outcomes[outcomes.length - 1] ?? true;
     currentStreak = isWinStreak ? winCount : lossCount;
+
+    const maxWinStreakTradeIds = closed
+      .slice(bestWinStart, bestWinStart + maxWinStreak)
+      .map((t) => (t as Trade).id)
+      .filter((id): id is number => id != null);
+    const maxLossStreakTradeIds = closed
+      .slice(bestLossStart, bestLossStart + maxLossStreak)
+      .map((t) => (t as Trade).id)
+      .filter((id): id is number => id != null);
 
     return {
       currentStreak,
@@ -91,6 +123,8 @@ export class GetStreakStatsUseCase {
       maxWinStreakProfit,
       maxLossStreakProfit,
       isWinStreak,
+      maxWinStreakTradeIds,
+      maxLossStreakTradeIds,
     };
   }
 }

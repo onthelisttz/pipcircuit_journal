@@ -7,6 +7,8 @@ import {
   endOfMonth,
   startOfWeek,
   endOfWeek,
+  startOfDay,
+  endOfDay,
   addDays,
   addMonths,
   subMonths,
@@ -30,6 +32,12 @@ interface PerformanceCalendarProps {
   direction: Direction | "Both";
   /** Initial month to show (e.g. from dashboard filter) */
   initialMonth?: Date;
+  /** When a day with trades is clicked, open panel with that day's trades */
+  onDayClick?: (date: Date) => void;
+  /** When a week total with trades is clicked, open panel with that week's trades */
+  onWeekClick?: (weekStart: Date, weekEnd: Date) => void;
+  /** When the month total (e.g. "75 trades") is clicked, open panel with that month's trades */
+  onMonthClick?: (monthStart: Date, monthEnd: Date) => void;
 }
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -44,6 +52,9 @@ export function PerformanceCalendar({
   symbols,
   direction,
   initialMonth,
+  onDayClick,
+  onWeekClick,
+  onMonthClick,
 }: PerformanceCalendarProps) {
   const [viewMonth, setViewMonth] = useState<Date>(() =>
     initialMonth ? startOfMonth(initialMonth) : startOfMonth(new Date())
@@ -160,9 +171,24 @@ export function PerformanceCalendar({
               </span>
             ) : (
               <>
-                <span className="rounded-full bg-muted/80 px-2.5 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-foreground">
-                  {monthSummary.trades} trades
-                </span>
+                {monthSummary.trades > 0 && onMonthClick ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onMonthClick(
+                        startOfDay(startOfMonth(viewMonth)),
+                        endOfDay(endOfMonth(viewMonth))
+                      )
+                    }
+                    className="rounded-full bg-muted/80 px-2.5 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-foreground hover:bg-muted cursor-pointer transition-colors"
+                  >
+                    {monthSummary.trades} trades
+                  </button>
+                ) : (
+                  <span className="rounded-full bg-muted/80 px-2.5 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-foreground">
+                    {monthSummary.trades} trades
+                  </span>
+                )}
                 <span className="rounded-full bg-muted/80 px-2.5 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-foreground">
                   {monthSummary.winPct.toFixed(0)}% gain
                 </span>
@@ -213,11 +239,14 @@ export function PerformanceCalendar({
                 return (
                   <div
                     key={key}
+                    role={hasData && onDayClick ? "button" : undefined}
+                    onClick={hasData && onDayClick ? () => onDayClick(day) : undefined}
                     className={`
                       relative rounded-lg sm:rounded-xl min-h-[56px] sm:min-h-[72px] flex flex-col p-1.5 sm:p-2.5
-                      transition-all duration-200 ease-out cursor-default
+                      transition-all duration-200 ease-out
                       hover:scale-[1.03] hover:shadow-md hover:z-10
                       active:scale-[0.98]
+                      ${hasData && onDayClick ? "cursor-pointer" : "cursor-default"}
                       ${!isCurrentMonth ? "opacity-35" : ""}
                       ${hasData ? (isProfit ? "bg-emerald-500/10 dark:bg-emerald-500/20 ring-1 ring-emerald-500/20 hover:ring-2 hover:ring-emerald-500/40 hover:bg-emerald-500/15 dark:hover:bg-emerald-500/25" : "bg-red-500/10 dark:bg-red-500/20 ring-1 ring-red-500/20 hover:ring-2 hover:ring-red-500/40 hover:bg-red-500/15 dark:hover:bg-red-500/25") : "bg-muted/30 dark:bg-muted/20 hover:bg-muted/50 dark:hover:bg-muted/30 hover:ring-1 hover:ring-border"}
                     `}
@@ -250,34 +279,41 @@ export function PerformanceCalendar({
                   </div>
                 );
               })}
-              <div
-                className={
-                  weekTotals[wi].trades > 0
-                    ? weekTotals[wi].profit >= 0
-                      ? "rounded-lg sm:rounded-xl min-h-[56px] sm:min-h-[72px] flex flex-col justify-center p-1.5 sm:p-2.5 bg-emerald-500/5 dark:bg-emerald-500/15 ring-1 ring-emerald-500/20 transition-all duration-200 hover:scale-[1.03] hover:shadow-md hover:ring-2 hover:ring-emerald-500/40 hover:bg-emerald-500/10 dark:hover:bg-emerald-500/20 cursor-default"
-                      : "rounded-lg sm:rounded-xl min-h-[56px] sm:min-h-[72px] flex flex-col justify-center p-1.5 sm:p-2.5 bg-red-500/5 dark:bg-red-500/15 ring-1 ring-red-500/20 transition-all duration-200 hover:scale-[1.03] hover:shadow-md hover:ring-2 hover:ring-red-500/40 hover:bg-red-500/10 dark:hover:bg-red-500/20 cursor-default"
-                    : "rounded-lg sm:rounded-xl min-h-[56px] sm:min-h-[72px] flex flex-col justify-center p-1.5 sm:p-2.5 bg-muted/50 dark:bg-muted/30 ring-1 ring-border/50 transition-all duration-200 hover:bg-muted/70 dark:hover:bg-muted/40 cursor-default"
-                }
-              >
-                {weekTotals[wi].trades > 0 ? (
-                  <>
-                    <span
-                      className={`font-semibold text-[11px] sm:text-[13px] tabular-nums ${
-                        weekTotals[wi].profit >= 0
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-red-600 dark:text-red-400"
-                      }`}
-                    >
-                      {formatProfit(weekTotals[wi].profit)}
-                    </span>
-                    <span className="text-[9px] sm:text-[10px] text-muted-foreground mt-0.5">
-                      {weekTotals[wi].trades} trades
-                    </span>
-                  </>
-                ) : (
+              {weekTotals[wi].trades > 0 && onWeekClick ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onWeekClick(startOfDay(weekDays[0]), endOfDay(weekDays[6]));
+                  }}
+                  className={
+                    weekTotals[wi].profit >= 0
+                      ? "rounded-lg sm:rounded-xl min-h-[56px] sm:min-h-[72px] flex flex-col justify-center p-1.5 sm:p-2.5 bg-emerald-500/5 dark:bg-emerald-500/15 ring-1 ring-emerald-500/20 transition-all duration-200 hover:scale-[1.03] hover:shadow-md hover:ring-2 hover:ring-emerald-500/40 hover:bg-emerald-500/10 dark:hover:bg-emerald-500/20 cursor-pointer"
+                      : "rounded-lg sm:rounded-xl min-h-[56px] sm:min-h-[72px] flex flex-col justify-center p-1.5 sm:p-2.5 bg-red-500/5 dark:bg-red-500/15 ring-1 ring-red-500/20 transition-all duration-200 hover:scale-[1.03] hover:shadow-md hover:ring-2 hover:ring-red-500/40 hover:bg-red-500/10 dark:hover:bg-red-500/20 cursor-pointer"
+                  }
+                >
+                  <span
+                    className={`font-semibold text-[11px] sm:text-[13px] tabular-nums ${
+                      weekTotals[wi].profit >= 0
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-red-600 dark:text-red-400"
+                    }`}
+                  >
+                    {formatProfit(weekTotals[wi].profit)}
+                  </span>
+                  <span className="text-[9px] sm:text-[10px] text-muted-foreground mt-0.5">
+                    {weekTotals[wi].trades} trades
+                  </span>
+                </button>
+              ) : (
+                <div
+                  className={
+                    "rounded-lg sm:rounded-xl min-h-[56px] sm:min-h-[72px] flex flex-col justify-center p-1.5 sm:p-2.5 bg-muted/50 dark:bg-muted/30 ring-1 ring-border/50 transition-all duration-200 cursor-default"
+                  }
+                >
                   <span className="text-muted-foreground/50 text-[10px] sm:text-[11px]">—</span>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           ))}
         </div>

@@ -312,6 +312,7 @@ export async function POST(request: Request) {
 
       const trades: TradeRecord[] = [];
       const symbolIds = new Set<number>();
+      const positionOpenTime = new Map<string, number>();
       for (const [start, end] of ranges) {
         const response = await connection.sendCommand("ProtoOADealListReq", {
           ctidTraderAccountId: accountId,
@@ -320,6 +321,16 @@ export async function POST(request: Request) {
           maxRows: 10000,
         });
         const deals = (response?.deal ?? []) as Array<Record<string, unknown>>;
+        for (const deal of deals) {
+          const close = deal["closePositionDetail"] as Record<string, unknown> | undefined;
+          if (!close) {
+            const posId = String(deal["positionId"] ?? "");
+            const execTs = Number(deal["executionTimestamp"]);
+            if (posId && execTs && !positionOpenTime.has(posId)) {
+              positionOpenTime.set(posId, execTs);
+            }
+          }
+        }
         for (const deal of deals) {
           const symbolId = toNumber(deal["symbolId"]);
           if (symbolId !== undefined) {
@@ -380,6 +391,10 @@ export async function POST(request: Request) {
               : undefined;
           const execTs = Number(deal["executionTimestamp"]);
           const createTs = Number(deal["createTimestamp"] ?? execTs);
+          const posId = String(deal["positionId"] ?? "");
+          const openTs = close
+            ? (positionOpenTime.get(posId) ?? execTs)
+            : execTs;
 
           const str = (v: unknown): string =>
             v === undefined || v === null ? "" : String(v);
@@ -389,12 +404,12 @@ export async function POST(request: Request) {
           trades.push({
             ticketId: str(deal["dealId"]),
             orderId: str(deal["orderId"]),
-            positionId: str(deal["positionId"]),
+            positionId: posId,
             symbol: symbolName.replace("/", ""),
             direction: String(deal["tradeSide"]) === "SELL" ? "Sell" : "Buy",
             orderType: "Market",
             dealStatus: str(deal["dealStatus"]),
-            openTime: new Date(execTs).toISOString(),
+            openTime: new Date(openTs).toISOString(),
             closeTime: close ? new Date(execTs).toISOString() : "",
             createTimestamp: new Date(createTs).toISOString(),
             executionTimestamp: new Date(execTs).toISOString(),

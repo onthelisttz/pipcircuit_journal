@@ -1,6 +1,6 @@
 import type { ITradeRepository, TradeQuery } from "@application/ports/repositories";
 import type { Trade } from "@domain/entities";
-import { Direction } from "@domain/enums";
+import { Direction, TradeOutcome } from "@domain/enums";
 import { db } from "../database";
 import { estimateGrossProfit, volumeToLots } from "@lib/pnl-estimate";
 
@@ -69,6 +69,10 @@ export class DexieTradeRepository implements ITradeRepository {
 
     let results = await db.trades.toArray();
 
+    if (query.ids && query.ids.length > 0) {
+      const idSet = new Set(query.ids);
+      results = results.filter((t) => t.id != null && idSet.has(t.id));
+    }
     if (query.accountId) {
       results = results.filter((trade) => trade.accountId === query.accountId);
     }
@@ -83,7 +87,15 @@ export class DexieTradeRepository implements ITradeRepository {
       results = results.filter((trade) => trade.direction === query.direction);
     }
     if (query.outcome) {
-      results = results.filter((trade) => trade.outcome === query.outcome);
+      if (query.outcome === TradeOutcome.Breakeven) {
+        results = results.filter((t) => {
+          if (!t.closeTime) return false;
+          const p = t.netProfit ?? t.grossProfit ?? 0;
+          return p === 0;
+        });
+      } else {
+        results = results.filter((trade) => trade.outcome === query.outcome);
+      }
     }
     if (query.from || query.to) {
       const fromTime = query.from
@@ -115,6 +127,20 @@ export class DexieTradeRepository implements ITradeRepository {
       results = results.filter(
         (trade) => (trade.rating ?? 0) <= query.ratingMax!
       );
+    }
+    if (query.winsOnly) {
+      results = results.filter((t) => {
+        if (!t.closeTime) return false;
+        const p = t.netProfit ?? t.grossProfit ?? 0;
+        return p > 0;
+      });
+    }
+    if (query.lossesOnly) {
+      results = results.filter((t) => {
+        if (!t.closeTime) return false;
+        const p = t.netProfit ?? t.grossProfit ?? 0;
+        return p < 0;
+      });
     }
 
     return results.map(normalizeTrade);

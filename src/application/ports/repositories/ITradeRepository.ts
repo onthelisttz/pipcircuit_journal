@@ -12,6 +12,12 @@ export interface TradeQuery {
   tagIds?: number[];
   ratingMin?: number;
   ratingMax?: number;
+  /** Fetch only trades with these IDs */
+  ids?: number[];
+  /** Fetch only winning trades (closed, profit > 0) */
+  winsOnly?: boolean;
+  /** Fetch only losing trades (closed, profit < 0) */
+  lossesOnly?: boolean;
 }
 
 export interface ITradeRepository {
