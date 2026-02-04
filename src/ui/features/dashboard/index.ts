@@ -8,3 +8,6 @@ export { ReturnsCharts } from "./ReturnsCharts";
 export { BestWorstTradeCards } from "./BestWorstTradeCards";
 export { AssetAnalysis } from "./AssetAnalysis";
 export { SessionAnalysis } from "./SessionAnalysis";
+export { AdditionalStatsCards } from "./AdditionalStatsCards";
+export { DayOfWeekChart } from "./DayOfWeekChart";
+export { PerformanceCalendar } from "./PerformanceCalendar";

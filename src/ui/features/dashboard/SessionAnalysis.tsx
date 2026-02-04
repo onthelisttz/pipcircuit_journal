@@ -99,9 +99,12 @@ export function SessionAnalysis({ data }: SessionAnalysisProps) {
             <Tooltip
               contentStyle={{
                 backgroundColor: "var(--popover)",
+                color: "var(--popover-foreground)",
                 border: "1px solid var(--border)",
                 borderRadius: "8px",
               }}
+              itemStyle={{ color: "var(--popover-foreground)" }}
+              labelStyle={{ color: "var(--popover-foreground)" }}
             />
           </RadarChart>
         </ResponsiveContainer>

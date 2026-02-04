@@ -57,24 +57,30 @@ export function Sidebar({ className }: { className?: string }) {
     return (
         <aside
             className={`
-        flex flex-col h-screen bg-sidebar border-r border-sidebar-border
-        transition-all duration-300 ease-in-out
+        sticky top-0 flex flex-col h-screen bg-sidebar border-r border-sidebar-border
+        shrink-0 transition-colors duration-150
         ${collapsed ? "w-16" : "w-64"}
         ${className ?? ""}
       `}
         >
             {/* Logo/Brand */}
             <div className="flex items-center h-16 px-4 border-b border-sidebar-border">
-                {!collapsed && (
-                    <span className="text-lg font-semibold text-sidebar-foreground">
-                        Trading Journal
-                    </span>
-                )}
-                {collapsed && (
-                    <span className="text-lg font-bold text-sidebar-primary mx-auto">
-                        TJ
-                    </span>
-                )}
+                <Link
+                    href="/dashboard"
+                    className="flex items-center justify-center flex-1 text-sidebar-foreground hover:text-sidebar-primary"
+                    aria-label="Go to dashboard"
+                >
+                    {!collapsed && (
+                        <span className="text-lg font-semibold">
+                            Trading Journal
+                        </span>
+                    )}
+                    {collapsed && (
+                        <span className="text-lg font-bold text-sidebar-primary mx-auto">
+                            TJ
+                        </span>
+                    )}
+                </Link>
                 <button
                     onClick={() => setCollapsed(!collapsed)}
                     className="ml-auto hidden md:inline-flex items-center justify-center rounded-lg p-2 text-sidebar-foreground hover:bg-sidebar-accent/50"

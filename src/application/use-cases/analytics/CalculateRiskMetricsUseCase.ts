@@ -26,7 +26,8 @@ export class CalculateRiskMetricsUseCase {
       accountId: input.accountId,
     });
 
-    const closed = trades.filter((t) => t.closeTime && (t.netProfit ?? t.grossProfit) !== undefined);
+    // Any trade with a closeTime is considered closed; missing P&L becomes 0.
+    const closed = trades.filter((t) => t.closeTime);
     const profits = closed.map((t) => t.netProfit ?? t.grossProfit ?? 0);
 
     const wins = profits.filter((p) => p > 0);

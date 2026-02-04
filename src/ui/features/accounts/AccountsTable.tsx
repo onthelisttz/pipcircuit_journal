@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Pencil, Check, RefreshCw, Download } from "lucide-react";
+import { Pencil, Check, Download } from "lucide-react";
 
 import { useAccount } from "@ui/hooks";
 
@@ -26,6 +26,7 @@ export function AccountsTable() {
     name: string;
   } | null>(null);
   const [nameInput, setNameInput] = useState("");
+  const [syncingAccount, setSyncingAccount] = useState<string | null>(null);
 
   if (accounts.length === 0) {
     return (
@@ -93,7 +94,7 @@ export function AccountsTable() {
             <th className="px-4 py-3">Platform</th>
             <th className="px-4 py-3">Balance</th>
             <th className="px-4 py-3">Connection</th>
-            <th className="px-4 py-3">Last Sync</th>
+            <th className="px-4 py-3">Last trades sync</th>
             <th className="px-4 py-3">Actions</th>
           </tr>
         </thead>
@@ -150,23 +151,27 @@ export function AccountsTable() {
                   </button>
                 )}
                 <button
-                  onClick={() => void syncFromCTrader()}
-                  className="ml-2 inline-flex items-center justify-center rounded-lg border border-border p-2 text-xs text-foreground hover:bg-accent"
-                  aria-label="Sync accounts"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() =>
-                    void syncTradesForAccount(
-                      account.accountNumber,
-                      account.ctraderAccountId
-                    )
-                  }
-                  className="ml-2 inline-flex items-center justify-center rounded-lg border border-border p-2 text-xs text-foreground hover:bg-accent"
+                  onClick={async () => {
+                    if (syncingAccount) return;
+                    setSyncingAccount(account.accountNumber);
+                    try {
+                      await syncTradesForAccount(
+                        account.accountNumber,
+                        account.ctraderAccountId
+                      );
+                    } finally {
+                      setSyncingAccount(null);
+                    }
+                  }}
+                  disabled={syncingAccount === account.accountNumber}
+                  className="ml-2 inline-flex items-center justify-center rounded-lg border border-border p-2 text-xs text-foreground hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
                   aria-label="Sync trades"
                 >
-                  <Download className="h-3.5 w-3.5" />
+                  <Download
+                    className={`h-3.5 w-3.5 ${
+                      syncingAccount === account.accountNumber ? "animate-spin" : ""
+                    }`}
+                  />
                 </button>
               </td>
             </tr>

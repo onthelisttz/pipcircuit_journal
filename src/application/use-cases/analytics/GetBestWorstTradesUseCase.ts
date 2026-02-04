@@ -22,7 +22,12 @@ export class GetBestWorstTradesUseCase {
       accountId: input.accountId,
     });
 
-    const closed = trades.filter((t) => t.closeTime && (t.netProfit ?? t.grossProfit) !== undefined);
+    const closed = trades.filter(
+      (t) =>
+        t.closeTime &&
+        (t.netProfit ?? t.grossProfit) !== undefined &&
+        !/^\d+$/.test(t.symbol || "")
+    );
 
     const sorted = [...closed].sort(
       (a, b) => (b.netProfit ?? b.grossProfit ?? 0) - (a.netProfit ?? a.grossProfit ?? 0)

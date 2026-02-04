@@ -19,6 +19,14 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
     const accountMenuRef = useRef<HTMLDivElement | null>(null);
     const actionsMenuRef = useRef<HTMLDivElement | null>(null);
     const { activeAccount, accounts, setActive } = useAccount();
+    const formatAccountLabel = (account?: { name?: string | null; broker?: string | null; accountNumber: string; type?: string | null }) => {
+        if (!account) return "No Account";
+        const base =
+            account.name ??
+            account.broker ??
+            account.accountNumber;
+        return account.type ? `${base} (${account.type})` : base;
+    };
     const { logout } = useAuth();
 
     // Prevent hydration mismatch
@@ -42,8 +50,8 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
     }, []);
 
     return (
-        <header className="flex items-center justify-between h-16 px-6 bg-background border-b border-border">
-            {/* Left side - Page title or breadcrumb placeholder */}
+        <header className="sticky top-0 z-20 flex items-center justify-between h-16 px-6 bg-background/95 border-b border-border backdrop-blur">
+            {/* Left side - Menu toggle only (page title handled by pages themselves) */}
             <div className="flex items-center gap-4">
                 <button
                     onClick={onMenuToggle}
@@ -52,7 +60,6 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
                 >
                     <Menu className="w-4 h-4" />
                 </button>
-                <h1 className="text-lg font-medium text-foreground">Dashboard</h1>
             </div>
 
             {/* Right side - Actions */}
@@ -72,7 +79,7 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
                     >
                         <User className="w-4 h-4" />
                         <span className="hidden sm:inline">
-                            {activeAccount?.name ?? activeAccount?.accountNumber ?? "No Account"}
+                            {formatAccountLabel(activeAccount)}
                         </span>
                         <ChevronDown className="w-4 h-4" />
                     </button>
@@ -99,7 +106,7 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
                                     role="menuitem"
                                 >
                                     <span>
-                                        {account.name ?? account.broker ?? account.accountNumber}
+                                        {formatAccountLabel(account)}
                                     </span>
                                     {account.id === activeAccount?.id && (
                                         <span className="text-xs text-emerald-500">Active</span>

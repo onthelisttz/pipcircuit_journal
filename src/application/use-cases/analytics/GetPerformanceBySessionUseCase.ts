@@ -23,7 +23,8 @@ export class GetPerformanceBySessionUseCase {
       accountId: input.accountId,
     });
 
-    const closed = trades.filter((t) => t.closeTime && (t.netProfit ?? t.grossProfit) !== undefined);
+    // Closed trades are identified by closeTime; P&L falls back to 0.
+    const closed = trades.filter((t) => t.closeTime);
 
     const bySession = new Map<Session, { profits: number[] }>();
 

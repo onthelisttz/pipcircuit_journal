@@ -7,12 +7,13 @@ import { Direction, OrderType } from "@domain/enums";
 import { DexieTradeRepository } from "@infrastructure/db/dexie";
 import { DexieAccountRepository } from "@infrastructure/db/dexie";
 import { useAccountStore } from "@ui/state";
+import { estimateGrossProfit } from "@lib/pnl-estimate";
 
 const accountRepository = new DexieAccountRepository();
 const tradeRepository = new DexieTradeRepository();
 
 export function useAccount() {
-  const { accounts, activeAccountId, setAccounts, setActiveAccountId } =
+  const { accounts, activeAccountId, setAccounts, setActiveAccountId, setLastAccountsSyncAt } =
     useAccountStore();
 
   const loadAccounts = useCallback(async () => {
@@ -131,6 +132,8 @@ export function useAccount() {
         typeof raw["name"] === "string"
           ? raw["name"]
           : broker ?? (typeof raw["server"] === "string" ? raw["server"] : undefined);
+
+      const existing = await accountRepository.getByAccountNumber(accountNumber);
       const record: Account = {
         accountNumber,
         ctraderAccountId:
@@ -155,13 +158,24 @@ export function useAccount() {
         leverage: typeof raw["leverage"] === "number" ? raw["leverage"] : undefined,
         createdAt: new Date(),
         updatedAt: new Date(),
-        lastSyncAt: new Date(),
+        // lastSyncAt is reserved for trade sync; preserve existing value so
+        // initial trade sync can fetch full history instead of "from now".
+        lastSyncAt: existing?.lastSyncAt ?? null,
       };
-
-      const existing = await accountRepository.getByAccountNumber(accountNumber);
       if (existing?.id) {
         await accountRepository.update(existing.id, {
-          ...record,
+          accountNumber: record.accountNumber,
+          ctraderAccountId: record.ctraderAccountId,
+          platform: record.platform,
+          // Preserve user-renamed name if present; otherwise fall back to remote name.
+          name: existing.name ?? record.name,
+          broker: record.broker,
+          server: record.server,
+          type: record.type,
+          currency: record.currency,
+          balance: record.balance,
+          equity: record.equity,
+          leverage: record.leverage,
           updatedAt: new Date(),
         });
       } else {
@@ -171,9 +185,10 @@ export function useAccount() {
 
     const refreshed = await accountRepository.list();
     setAccounts(refreshed);
+    setLastAccountsSyncAt(new Date());
     const active = refreshed.find((record) => record.isActive) ?? refreshed[0];
     setActiveAccountId(active?.id ?? null);
-  }, [setAccounts, setActiveAccountId]);
+  }, [setAccounts, setActiveAccountId, setLastAccountsSyncAt]);
 
   const syncTradesForAccount = useCallback(
     async (accountNumber: string, ctraderAccountId?: number) => {
@@ -181,6 +196,20 @@ export function useAccount() {
       if (!token) {
         throw new Error("Missing cTrader token");
       }
+
+      const existingAccount = await accountRepository.getByAccountNumber(accountNumber);
+      const parseNum = (v: unknown): number | undefined => {
+        if (v === undefined || v === null || v === "") return undefined;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : undefined;
+      };
+
+      // First sync: no lastSyncAt -> full history (last 10 years).
+      // Later syncs: incremental from lastSyncAt.
+      const from =
+        existingAccount?.lastSyncAt instanceof Date
+          ? existingAccount.lastSyncAt.getTime()
+          : Math.max(0, Date.now() - 10 * 365 * 24 * 60 * 60 * 1000);
       const response = await fetch("/api/ctrader/trades", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -188,34 +217,68 @@ export function useAccount() {
           accessToken: token.accessToken,
           accountNumber,
           accountId: ctraderAccountId,
+          from,
         }),
       });
       const data = (await response.json()) as { trades?: Record<string, unknown>[]; error?: string };
       if (!response.ok || data.error) {
         throw new Error(data.error ?? "Failed to sync trades");
       }
-      const trades = (data.trades ?? []).map((trade) => ({
-        accountId: accountNumber,
-        ticketId: String(trade["ticketId"] ?? ""),
-        symbol: String(trade["symbol"] ?? ""),
-        direction: trade["direction"] === "Sell" ? Direction.Sell : Direction.Buy,
-        orderType: OrderType.Market,
-        openTime: new Date(String(trade["openTime"] ?? "")),
-        closeTime: trade["closeTime"] ? new Date(String(trade["closeTime"])) : null,
-        openPrice: Number(trade["openPrice"] ?? 0),
-        closePrice: trade["closePrice"] !== undefined ? Number(trade["closePrice"]) : null,
-        volume: Number(trade["volume"] ?? 0),
-        commission: trade["commission"] !== undefined ? Number(trade["commission"]) : undefined,
-        swap: trade["swap"] !== undefined ? Number(trade["swap"]) : undefined,
-        fee: trade["fee"] !== undefined ? Number(trade["fee"]) : undefined,
-        grossProfit:
-          trade["grossProfit"] !== undefined ? Number(trade["grossProfit"]) : undefined,
-        netProfit: trade["netProfit"] !== undefined ? Number(trade["netProfit"]) : undefined,
-        percentGain:
-          trade["percentGain"] !== undefined ? Number(trade["percentGain"]) : undefined,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }));
+      const trades = (data.trades ?? []).map((trade) => {
+        const closeTime = trade["closeTime"] ? new Date(String(trade["closeTime"])) : null;
+        const openPrice = parseNum(trade["openPrice"]) ?? 0;
+        const closePrice = (closeTime ? parseNum(trade["closePrice"]) : undefined) ?? null;
+        const symbol = String(trade["symbol"] ?? "");
+        const volume = parseNum(trade["volume"]) ?? 0;
+        const direction = trade["direction"] === "Sell" ? Direction.Sell : Direction.Buy;
+        let grossProfit = parseNum(trade["grossProfit"]);
+        let netProfit = parseNum(trade["netProfit"]);
+
+        if (closeTime && (grossProfit === undefined || netProfit === undefined)) {
+          const entryPrice = parseNum(trade["entryPrice"]) ?? openPrice;
+          const close = closePrice ?? openPrice;
+          if (entryPrice != null && close != null && volume > 0) {
+            const closingDir = direction === Direction.Sell ? "Sell" : "Buy";
+            const openingDir = closingDir === "Sell" ? "Buy" : "Sell";
+            const estimated = estimateGrossProfit(
+              entryPrice,
+              close,
+              volume,
+              openingDir,
+              symbol
+            );
+            grossProfit = grossProfit ?? estimated;
+            netProfit =
+              netProfit ??
+              estimated +
+                (parseNum(trade["commission"]) ?? 0) +
+                (parseNum(trade["swap"]) ?? 0) +
+                (parseNum(trade["fee"]) ?? 0);
+          }
+        }
+
+        return {
+          accountId: accountNumber,
+          ticketId: String(trade["ticketId"] ?? ""),
+          symbol,
+          direction,
+          orderType: OrderType.Market,
+          openTime: new Date(String(trade["openTime"] ?? "")),
+          closeTime,
+          openPrice,
+          closePrice,
+          entryPrice: parseNum(trade["entryPrice"]) ?? null,
+          volume,
+          commission: parseNum(trade["commission"]),
+          swap: parseNum(trade["swap"]),
+          fee: parseNum(trade["fee"]),
+          grossProfit,
+          netProfit,
+          percentGain: parseNum(trade["percentGain"]),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      });
       await tradeRepository.bulkUpsert(trades);
 
       const existing = await accountRepository.getByAccountNumber(accountNumber);

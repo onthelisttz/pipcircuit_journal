@@ -11,6 +11,8 @@ export interface Trade {
   closeTime?: Date | null;
   openPrice: number;
   closePrice?: number | null;
+  /** Position entry price (for closed trades, may differ from openPrice) */
+  entryPrice?: number | null;
   volume: number;
   lots?: number;
   commission?: number;

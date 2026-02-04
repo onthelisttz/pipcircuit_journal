@@ -1,15 +1,70 @@
 import type { ITradeRepository, TradeQuery } from "@application/ports/repositories";
 import type { Trade } from "@domain/entities";
+import { Direction } from "@domain/enums";
 import { db } from "../database";
+import { estimateGrossProfit, volumeToLots } from "@lib/pnl-estimate";
+
+/** IndexedDB/Dexie can return dates as ISO strings; normalize to timestamp for comparison. */
+function toTimeMs(value: Date | string | undefined | null): number {
+  if (value == null) return 0;
+  if (value instanceof Date) return value.getTime();
+  const ms = new Date(value as string).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function toDate(value: Date | string | undefined | null): Date | undefined {
+  if (value == null) return undefined;
+  if (value instanceof Date) return value;
+  const d = new Date(value as string);
+  return Number.isFinite(d.getTime()) ? d : undefined;
+}
+
+/** Enrich trade with estimated P&L when closed. Preserve API grossProfit when valid (for indices). */
+function enrichWithEstimatedPnl(t: Trade): Trade {
+  if (!t.closeTime) return t;
+
+  const existingGross = t.grossProfit;
+  if (Number.isFinite(existingGross)) {
+    const net = existingGross + (t.commission ?? 0) + (t.swap ?? 0) + (t.fee ?? 0);
+    return { ...t, netProfit: net };
+  }
+
+  const entry = t.entryPrice ?? t.openPrice;
+  const close = t.closePrice ?? t.openPrice;
+  const rawVol = t.volume ?? 0;
+  const vol = volumeToLots(rawVol, t.symbol ?? "");
+  if (!Number.isFinite(entry) || !Number.isFinite(close) || vol <= 0) return t;
+
+  const closingDir = t.direction === Direction.Sell ? "Sell" : "Buy";
+  const openingDir = closingDir === "Sell" ? "Buy" : "Sell";
+  const gross = estimateGrossProfit(entry, close, vol, openingDir, t.symbol ?? "");
+  const net = gross + (t.commission ?? 0) + (t.swap ?? 0) + (t.fee ?? 0);
+
+  return { ...t, grossProfit: gross, netProfit: net };
+}
+
+/** Ensure trade dates are Date objects and P&L is populated (estimated if missing). */
+function normalizeTrade(t: Trade): Trade {
+  const openTime = toDate(t.openTime as Date | string);
+  const closeTime = toDate(t.closeTime as Date | string | null | undefined);
+  const normalized: Trade = {
+    ...t,
+    openTime: openTime ?? new Date(0),
+    closeTime: closeTime ?? (t.closeTime ?? null),
+  };
+  return enrichWithEstimatedPnl(normalized);
+}
 
 export class DexieTradeRepository implements ITradeRepository {
   async getById(id: number): Promise<Trade | null> {
-    return (await db.trades.get(id)) ?? null;
+    const t = await db.trades.get(id);
+    return t ? normalizeTrade(t) : null;
   }
 
   async list(query?: TradeQuery): Promise<Trade[]> {
     if (!query) {
-      return db.trades.toArray();
+      const list = await db.trades.toArray();
+      return list.map(normalizeTrade);
     }
 
     let results = await db.trades.toArray();
@@ -30,13 +85,18 @@ export class DexieTradeRepository implements ITradeRepository {
     if (query.outcome) {
       results = results.filter((trade) => trade.outcome === query.outcome);
     }
-    if (query.from) {
-      const fromTime = query.from.getTime();
-      results = results.filter((trade) => trade.openTime.getTime() >= fromTime);
-    }
-    if (query.to) {
-      const toTime = query.to.getTime();
-      results = results.filter((trade) => trade.openTime.getTime() <= toTime);
+    if (query.from || query.to) {
+      const fromTime = query.from
+        ? (query.from instanceof Date ? query.from.getTime() : new Date(query.from).getTime())
+        : 0;
+      const toTime = query.to
+        ? (query.to instanceof Date ? query.to.getTime() : new Date(query.to).getTime())
+        : Number.MAX_SAFE_INTEGER;
+      results = results.filter((trade) => {
+        // Use closeTime for closed trades (when P&L realized), openTime for open trades
+        const tradeTime = toTimeMs(trade.closeTime as Date | string | null) || toTimeMs(trade.openTime as Date | string);
+        return tradeTime >= fromTime && tradeTime <= toTime;
+      });
     }
     if (query.tagIds && query.tagIds.length > 0) {
       const tradeTags = await db.trade_tags
@@ -57,11 +117,12 @@ export class DexieTradeRepository implements ITradeRepository {
       );
     }
 
-    return results;
+    return results.map(normalizeTrade);
   }
 
   async getByAccountId(accountId: string): Promise<Trade[]> {
-    return db.trades.where("accountId").equals(accountId).toArray();
+    const list = await db.trades.where("accountId").equals(accountId).toArray();
+    return list.map(normalizeTrade);
   }
 
   async create(trade: Trade): Promise<Trade> {
@@ -83,6 +144,33 @@ export class DexieTradeRepository implements ITradeRepository {
   }
 
   async bulkUpsert(trades: Trade[]): Promise<void> {
-    await db.trades.bulkPut(trades);
+    if (trades.length === 0) {
+      return;
+    }
+
+    // Dexie uses the primary key (`id`) for upsert. Our imported cTrader trades
+    // often arrive without `id`, so bulkPut would create duplicates on each sync.
+    // To make syncing idempotent, we match existing records by (accountId + ticketId)
+    // and reuse their `id` when found.
+    const accountIds = Array.from(
+      new Set(trades.map((t) => t.accountId).filter(Boolean))
+    );
+
+    const existingByKey = new Map<string, number>();
+    for (const accountId of accountIds) {
+      const existing = await db.trades.where("accountId").equals(accountId).toArray();
+      for (const trade of existing) {
+        if (!trade.ticketId || !trade.id) continue;
+        existingByKey.set(`${accountId}::${trade.ticketId}`, trade.id);
+      }
+    }
+
+    const normalized = trades.map((t) => {
+      const key = t.ticketId ? `${t.accountId}::${t.ticketId}` : "";
+      const id = key ? existingByKey.get(key) : undefined;
+      return id ? { ...t, id } : t;
+    });
+
+    await db.trades.bulkPut(normalized);
   }
 }

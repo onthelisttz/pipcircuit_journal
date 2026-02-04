@@ -22,7 +22,8 @@ export class GetAveragesUseCase {
       accountId: input.accountId,
     });
 
-    const closed = trades.filter((t) => t.closeTime && (t.netProfit ?? t.grossProfit) !== undefined);
+    // Consider trades with a closeTime as closed; use 0 when P&L is missing.
+    const closed = trades.filter((t) => t.closeTime);
     const profits = closed.map((t) => t.netProfit ?? t.grossProfit ?? 0);
     const wins = profits.filter((p) => p > 0);
     const losses = profits.filter((p) => p < 0);

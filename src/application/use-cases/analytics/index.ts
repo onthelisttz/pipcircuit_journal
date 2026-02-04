@@ -20,3 +20,7 @@ export { GetBestWorstTradesUseCase } from "./GetBestWorstTradesUseCase";
 export type { BestWorstTradesResult } from "./GetBestWorstTradesUseCase";
 export { GetDashboardSummaryUseCase } from "./GetDashboardSummaryUseCase";
 export type { DashboardSummary } from "./GetDashboardSummaryUseCase";
+export { GetLongShortStatsUseCase } from "./GetLongShortStatsUseCase";
+export type { LongShortStats } from "./GetLongShortStatsUseCase";
+export { GetReturnsByDayOfWeekUseCase } from "./GetReturnsByDayOfWeekUseCase";
+export type { DayOfWeekReturn } from "./GetReturnsByDayOfWeekUseCase";

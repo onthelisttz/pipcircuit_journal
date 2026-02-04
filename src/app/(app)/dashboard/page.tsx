@@ -6,13 +6,15 @@ import { useAccount } from "@ui/hooks";
 import {
   DashboardFilters,
   SummaryCards,
+  AdditionalStatsCards,
   EquityCurveChart,
   DrawdownChart,
-  RiskGauges,
   ReturnsCharts,
   BestWorstTradeCards,
   AssetAnalysis,
   SessionAnalysis,
+  DayOfWeekChart,
+  PerformanceCalendar,
 } from "@ui/features/dashboard";
 import type { DashboardFiltersState } from "@ui/features/dashboard";
 import { useDashboard, useDashboardSymbols } from "@ui/hooks";
@@ -36,11 +38,14 @@ export default function DashboardPage() {
     summary,
     equityCurve,
     drawdown,
-    riskMetrics,
     returns,
     assetPerf,
+    riskMetrics,
     sessionPerf,
     bestWorst,
+    streakStats,
+    longShortStats,
+    dayOfWeekReturns,
   } = useDashboard(accountId, filters);
 
   if (!activeAccount) {
@@ -62,7 +67,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="sticky top-16 z-10 -mx-6 px-6 py-3 -mt-6 mb-3 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border/40">
         <h1 className="text-xl font-semibold text-foreground">Analytics Dashboard</h1>
         <DashboardFilters
           filters={filters}
@@ -88,30 +93,45 @@ export default function DashboardPage() {
             />
           )}
 
+          {streakStats && longShortStats && (
+            <AdditionalStatsCards
+              maxConsecutiveWins={streakStats.maxWinStreak}
+              maxConsecutiveWinsProfit={streakStats.maxWinStreakProfit}
+              maxConsecutiveLosses={streakStats.maxLossStreak}
+              maxConsecutiveLossesProfit={streakStats.maxLossStreakProfit}
+              totalLongTrades={longShortStats.totalLongTrades}
+              totalLongProfit={longShortStats.totalLongProfit}
+              totalShortTrades={longShortStats.totalShortTrades}
+              totalShortProfit={longShortStats.totalShortProfit}
+            />
+          )}
+
           <div className="grid gap-4 lg:grid-cols-2">
             <EquityCurveChart data={equityCurve} />
             <DrawdownChart data={drawdown} />
           </div>
 
-          {riskMetrics && (
-            <RiskGauges
-              profitFactor={riskMetrics.profitFactor}
-              sharpeRatio={riskMetrics.sharpeRatio}
-              sortinoRatio={riskMetrics.sortinoRatio}
-              zScore={riskMetrics.zScore}
-            />
-          )}
-
           {returns && (
             <ReturnsCharts annual={returns.annual} monthly={returns.monthly} />
           )}
 
+          <PerformanceCalendar
+            accountId={accountId!}
+            symbols={filters.symbols}
+            direction={filters.direction}
+            initialMonth={filters.from}
+          />
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <DayOfWeekChart data={dayOfWeekReturns} />
+            <SessionAnalysis data={sessionPerf} />
+          </div>
+
+          <AssetAnalysis data={assetPerf} />
+
           {bestWorst && (
             <BestWorstTradeCards best={bestWorst.best} worst={bestWorst.worst} />
           )}
-
-          <AssetAnalysis data={assetPerf} />
-          <SessionAnalysis data={sessionPerf} />
         </>
       )}
     </div>

@@ -11,9 +11,13 @@ import {
   GetPerformanceByAssetUseCase,
   GetPerformanceBySessionUseCase,
   GetBestWorstTradesUseCase,
+  GetStreakStatsUseCase,
+  GetLongShortStatsUseCase,
+  GetReturnsByDayOfWeekUseCase,
 } from "@application/use-cases";
 import type { DashboardFiltersState } from "@ui/features/dashboard/DashboardFilters";
 import { Direction } from "@domain/enums";
+import { startOfDay, endOfDay, startOfMonth, endOfMonth, format } from "date-fns";
 
 const tradeRepo = new DexieTradeRepository();
 
@@ -30,12 +34,15 @@ export function useDashboard(
   const [assetPerf, setAssetPerf] = useState<Awaited<ReturnType<GetPerformanceByAssetUseCase["execute"]>>>([]);
   const [sessionPerf, setSessionPerf] = useState<Awaited<ReturnType<GetPerformanceBySessionUseCase["execute"]>>>([]);
   const [bestWorst, setBestWorst] = useState<Awaited<ReturnType<GetBestWorstTradesUseCase["execute"]>> | null>(null);
+  const [streakStats, setStreakStats] = useState<Awaited<ReturnType<GetStreakStatsUseCase["execute"]>> | null>(null);
+  const [longShortStats, setLongShortStats] = useState<Awaited<ReturnType<GetLongShortStatsUseCase["execute"]>> | null>(null);
+  const [dayOfWeekReturns, setDayOfWeekReturns] = useState<Awaited<ReturnType<GetReturnsByDayOfWeekUseCase["execute"]>>>([]);
 
   const query = useMemo(() => {
     const q: Parameters<typeof tradeRepo.list>[0] = {
       accountId: accountId ?? "",
-      from: filters.from,
-      to: filters.to,
+      from: startOfDay(filters.from),
+      to: endOfDay(filters.to),
     };
     if (filters.symbols.length > 0) {
       q.symbols = filters.symbols;
@@ -63,6 +70,9 @@ export function useDashboard(
         assetResult,
         sessionResult,
         bestWorstResult,
+        streakResult,
+        longShortResult,
+        dayOfWeekResult,
       ] = await Promise.all([
         new GetDashboardSummaryUseCase(tradeRepo).execute({ accountId, query }),
         new CalculateEquityCurveUseCase(tradeRepo).execute({ accountId, query }),
@@ -72,6 +82,9 @@ export function useDashboard(
         new GetPerformanceByAssetUseCase(tradeRepo).execute({ accountId, query }),
         new GetPerformanceBySessionUseCase(tradeRepo).execute({ accountId, query }),
         new GetBestWorstTradesUseCase(tradeRepo).execute({ accountId, query, limit: 5 }),
+        new GetStreakStatsUseCase(tradeRepo).execute({ accountId, query }),
+        new GetLongShortStatsUseCase(tradeRepo).execute({ accountId, query }),
+        new GetReturnsByDayOfWeekUseCase(tradeRepo).execute({ accountId, query }),
       ]);
 
       setSummary(summaryResult);
@@ -82,6 +95,9 @@ export function useDashboard(
       setAssetPerf(assetResult);
       setSessionPerf(sessionResult);
       setBestWorst(bestWorstResult);
+      setStreakStats(streakResult);
+      setLongShortStats(longShortResult);
+      setDayOfWeekReturns(dayOfWeekResult);
     } catch (e) {
       console.error("Dashboard load error:", e);
     } finally {
@@ -103,8 +119,54 @@ export function useDashboard(
     assetPerf,
     sessionPerf,
     bestWorst,
+    streakStats,
+    longShortStats,
+    dayOfWeekReturns,
     refetch: load,
   };
+}
+
+/** Fetches daily returns for a specific month (for calendar). Refetches when viewMonth or filters change. */
+export function useCalendarMonthReturns(
+  accountId: string | undefined,
+  viewMonth: Date,
+  symbols: string[],
+  direction: Direction | "Both"
+) {
+  const [daily, setDaily] = useState<Awaited<ReturnType<GetReturnsByPeriodUseCase["execute"]>>["daily"]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const monthKey = format(viewMonth, "yyyy-MM");
+  const query = useMemo(() => {
+    const from = startOfMonth(viewMonth);
+    const to = endOfMonth(viewMonth);
+    const q: Parameters<typeof tradeRepo.list>[0] = {
+      accountId: accountId ?? "",
+      from: startOfDay(from),
+      to: endOfDay(to),
+    };
+    if (symbols.length > 0) q.symbols = symbols;
+    if (direction !== "Both") q.direction = direction;
+    return q;
+  }, [accountId, monthKey, symbols, direction, viewMonth]);
+
+  useEffect(() => {
+    if (!accountId) {
+      setDaily([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    new GetReturnsByPeriodUseCase(tradeRepo)
+      .execute({ accountId, query })
+      .then((r) => {
+        setDaily(r.daily);
+      })
+      .catch(() => setDaily([]))
+      .finally(() => setLoading(false));
+  }, [accountId, query]);
+
+  return { daily, loading };
 }
 
 export function useDashboardSymbols(accountId: string | undefined): string[] {
@@ -118,7 +180,9 @@ export function useDashboardSymbols(accountId: string | undefined): string[] {
     tradeRepo
       .list({ accountId })
       .then((trades) => {
-        const s = [...new Set(trades.map((t) => t.symbol).filter(Boolean))].sort();
+        const s = [...new Set(trades.map((t) => t.symbol).filter(Boolean))]
+          .filter((sym) => !/^\d+$/.test(sym))
+          .sort();
         setSymbols(s);
       })
       .catch(() => setSymbols([]));

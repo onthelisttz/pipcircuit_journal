@@ -51,12 +51,12 @@ export function DrawdownChart({ data }: DrawdownChartProps) {
             <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
             <XAxis
               dataKey="displayDate"
-              tick={{ fontSize: 11 }}
+              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
               tickLine={false}
               axisLine={false}
             />
             <YAxis
-              tick={{ fontSize: 11 }}
+              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
               tickLine={false}
               axisLine={false}
               tickFormatter={(v) => `$${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`}
@@ -64,9 +64,12 @@ export function DrawdownChart({ data }: DrawdownChartProps) {
             <Tooltip
               contentStyle={{
                 backgroundColor: "var(--popover)",
+                color: "var(--popover-foreground)",
                 border: "1px solid var(--border)",
                 borderRadius: "8px",
               }}
+              itemStyle={{ color: "var(--popover-foreground)" }}
+              labelStyle={{ color: "var(--popover-foreground)" }}
               formatter={(value: number) => [`$${value.toFixed(2)}`, "Drawdown"]}
             />
             <Area

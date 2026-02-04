@@ -23,7 +23,8 @@ export class CalculateWinRateUseCase {
       accountId: input.accountId,
     });
 
-    const closed = trades.filter((t) => t.closeTime && (t.netProfit ?? t.grossProfit) !== undefined);
+    // Treat any trade with a closeTime as closed; missing P&L is treated as 0.
+    const closed = trades.filter((t) => t.closeTime);
     const winning = closed.filter((t) => (t.netProfit ?? t.grossProfit ?? 0) > 0);
     const losing = closed.filter((t) => (t.netProfit ?? t.grossProfit ?? 0) < 0);
     const breakeven = closed.filter((t) => (t.netProfit ?? t.grossProfit ?? 0) === 0);

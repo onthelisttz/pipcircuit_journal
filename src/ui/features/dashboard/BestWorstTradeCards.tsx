@@ -4,6 +4,7 @@ import type { Trade } from "@domain/entities";
 import { format } from "date-fns";
 import Link from "next/link";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { volumeToLots } from "@lib/pnl-estimate";
 
 interface BestWorstTradeCardsProps {
   best: Trade[];
@@ -53,7 +54,7 @@ function TradeCard({
           <ArrowDownRight className="w-3 h-3" />
         )}
         <span>
-          {trade.direction} {trade.volume} lots
+          {trade.direction} {volumeToLots(trade.volume ?? 0, trade.symbol ?? "").toFixed(2)} lots
         </span>
       </div>
     </Link>

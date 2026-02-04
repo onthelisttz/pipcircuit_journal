@@ -31,7 +31,8 @@ export class GetDashboardSummaryUseCase {
       accountId: input.accountId,
     });
 
-    const closed = trades.filter((t) => t.closeTime && (t.netProfit ?? t.grossProfit) !== undefined);
+    // Closed = has a closeTime; missing P&L counts as 0.
+    const closed = trades.filter((t) => t.closeTime);
     const netProfit = closed.reduce((a, t) => a + (t.netProfit ?? t.grossProfit ?? 0), 0);
 
     const maxDrawdown = drawdownPoints.length > 0

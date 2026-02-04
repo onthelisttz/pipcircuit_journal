@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
 import { createRequire } from "module";
+import { estimateGrossProfit, volumeToLots } from "@lib/pnl-estimate";
 
 export const runtime = "nodejs";
 
@@ -13,20 +14,27 @@ const protoPort = Number(process.env.CTRADER_PROTO_PORT ?? "5035");
 
 type TradeRecord = {
   ticketId: string;
+  orderId: string;
+  positionId: string;
   symbol: string;
-  direction: "Buy" | "Sell";
-  orderType: "Market";
+  direction: string;
+  orderType: string;
+  dealStatus: string;
   openTime: string;
-  closeTime?: string | null;
-  openPrice: number;
-  closePrice?: number | null;
-  volume: number;
-  commission?: number;
-  swap?: number;
-  fee?: number;
-  grossProfit?: number;
-  netProfit?: number;
-  percentGain?: number;
+  closeTime: string;
+  createTimestamp: string;
+  executionTimestamp: string;
+  openPrice: string;
+  closePrice: string;
+  entryPrice: string;
+  volume: string;
+  filledVolume: string;
+  commission: string;
+  swap: string;
+  fee: string;
+  grossProfit: string;
+  netProfit: string;
+  percentGain: string;
 };
 
 async function ensureProtoFiles(): Promise<void> {
@@ -94,24 +102,102 @@ function getAccountHost(account: Record<string, unknown> | undefined): string {
   return live ? protoLiveHost : protoDemoHost;
 }
 
+async function getAssetMap(
+  connection: any,
+  accountId: number
+): Promise<Map<number, string>> {
+  const res = await connection.sendCommand("ProtoOAAssetListReq", {
+    ctidTraderAccountId: accountId,
+  });
+  const candidate = (res?.asset as unknown) ?? (res?.assets as unknown) ?? [];
+  const assets = (Array.isArray(candidate) ? candidate : []) as Array<Record<string, unknown>>;
+  const map = new Map<number, string>();
+  for (const a of assets) {
+    const id = toNumber(a["assetId"] ?? a["id"]);
+    const name = typeof a["name"] === "string" ? a["name"] : undefined;
+    if (id !== undefined && name) {
+      map.set(id, name);
+    }
+  }
+  return map;
+}
+
 async function getSymbolMap(
   connection: any,
   accountId: number
 ): Promise<Map<number, string>> {
-  const symbolsRes = await connection.sendCommand("ProtoOASymbolsListReq", {
-    ctidTraderAccountId: accountId,
-  });
-  const symbols = (symbolsRes?.symbol ?? []) as Array<{
-    symbolId: number;
-    symbolName?: string;
-  }>;
+  const [symbolsRes, assetMap] = await Promise.all([
+    connection.sendCommand("ProtoOASymbolsListReq", {
+      ctidTraderAccountId: accountId,
+      includeArchivedSymbols: true,
+    }),
+    getAssetMap(connection, accountId),
+  ]);
   const map = new Map<number, string>();
+
+  // ProtoOALightSymbol: symbolId, symbolName (optional), baseAssetId, quoteAssetId
+  const symbolsCandidate =
+    (symbolsRes?.symbol as unknown) ??
+    (symbolsRes?.symbols as unknown) ??
+    (symbolsRes?.symbolList as unknown) ??
+    [];
+  const symbols = (Array.isArray(symbolsCandidate) ? symbolsCandidate : []) as Array<
+    Record<string, unknown>
+  >;
   for (const symbol of symbols) {
-    if (symbol.symbolId && symbol.symbolName) {
-      map.set(symbol.symbolId, symbol.symbolName);
+    const symbolId = toNumber(symbol["symbolId"] ?? symbol["id"]);
+    if (symbolId === undefined) continue;
+    let symbolName =
+      typeof symbol["symbolName"] === "string"
+        ? symbol["symbolName"]
+        : typeof symbol["name"] === "string"
+          ? symbol["name"]
+          : undefined;
+    if (!symbolName && assetMap.size > 0) {
+      const baseId = toNumber(symbol["baseAssetId"] ?? symbol["baseAsset"]);
+      const quoteId = toNumber(symbol["quoteAssetId"] ?? symbol["quoteAsset"]);
+      const base = baseId !== undefined ? assetMap.get(baseId) : undefined;
+      const quote = quoteId !== undefined ? assetMap.get(quoteId) : undefined;
+      if (base && quote) {
+        symbolName = `${base}/${quote}`;
+      }
+    }
+    if (symbolName) {
+      map.set(symbolId, symbolName);
     }
   }
+
+  // ProtoOAArchivedSymbol: symbolId, name (archived symbols)
+  const archivedCandidate =
+    (symbolsRes?.archivedSymbol as unknown) ??
+    (symbolsRes?.archivedSymbols as unknown) ??
+    [];
+  const archived = (Array.isArray(archivedCandidate) ? archivedCandidate : []) as Array<
+    Record<string, unknown>
+  >;
+  for (const sym of archived) {
+    const symbolId = toNumber(sym["symbolId"] ?? sym["id"]);
+    const name = typeof sym["name"] === "string" ? sym["name"] : undefined;
+    if (symbolId !== undefined && name && !map.has(symbolId)) {
+      map.set(symbolId, name);
+    }
+  }
+
   return map;
+}
+
+function toNumber(v: unknown): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  // protobuf int64 may be Long-like { low, high, toString }
+  if (v && typeof v === "object" && "toString" in v) {
+    const n = Number((v as { toString(): string }).toString());
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
 }
 
 async function getSymbolNamesById(
@@ -126,16 +212,25 @@ async function getSymbolNamesById(
     ctidTraderAccountId: accountId,
     symbolId: symbolIds,
   });
-  const symbols = (res?.symbol ?? []) as Array<{
-    symbolId: number;
-    symbolName?: string;
-  }>;
   const map = new Map<number, string>();
-  for (const symbol of symbols) {
-    if (symbol.symbolId && symbol.symbolName) {
-      map.set(symbol.symbolId, symbol.symbolName);
+
+  // ProtoOASymbolByIdRes.symbol = ProtoOASymbol (no symbolName - skip for names)
+  // ProtoOASymbolByIdRes.archivedSymbol = ProtoOAArchivedSymbol (has symbolId, name)
+  const archivedCandidate =
+    (res?.archivedSymbol as unknown) ??
+    (res?.archivedSymbols as unknown) ??
+    [];
+  const archived = (Array.isArray(archivedCandidate) ? archivedCandidate : []) as Array<
+    Record<string, unknown>
+  >;
+  for (const sym of archived) {
+    const symbolId = toNumber(sym["symbolId"] ?? sym["id"]);
+    const name = typeof sym["name"] === "string" ? sym["name"] : undefined;
+    if (symbolId !== undefined && name) {
+      map.set(symbolId, name);
     }
   }
+
   return map;
 }
 
@@ -226,57 +321,94 @@ export async function POST(request: Request) {
         });
         const deals = (response?.deal ?? []) as Array<Record<string, unknown>>;
         for (const deal of deals) {
-          const symbolId = Number(deal["symbolId"]);
-          if (symbolId) {
+          const symbolId = toNumber(deal["symbolId"]);
+          if (symbolId !== undefined) {
             symbolIds.add(symbolId);
           }
-          const symbolName = symbolMap.get(symbolId) ?? String(symbolId);
+          const dealSymbolName =
+            typeof deal["symbolName"] === "string"
+              ? (deal["symbolName"] as string)
+              : typeof deal["symbol"] === "string"
+                ? (deal["symbol"] as string)
+                : undefined;
+          const symbolName =
+            dealSymbolName ??
+            (symbolId !== undefined ? symbolMap.get(symbolId) : undefined) ??
+            (symbolId !== undefined && symbolId > 0 ? String(symbolId) : "Unknown");
           const dealDigits = typeof deal["moneyDigits"] === "number" ? deal["moneyDigits"] : 2;
           const close = deal["closePositionDetail"] as Record<string, unknown> | undefined;
           const closeDigits =
             typeof close?.["moneyDigits"] === "number" ? close["moneyDigits"] : dealDigits;
+          const entryPrice =
+            typeof close?.["entryPrice"] === "number"
+              ? close["entryPrice"]
+              : Number(deal["executionPrice"]);
 
-          const grossProfit = normalizeMoney(
-            typeof close?.["grossProfit"] === "number" ? close["grossProfit"] : undefined,
-            closeDigits
-          );
-          const swap = normalizeMoney(
-            typeof close?.["swap"] === "number" ? close["swap"] : undefined,
-            closeDigits
-          );
+          let grossProfit: number | undefined;
+          if (close) {
+            const rawGross = toNumber(close["grossProfit"]);
+            const apiGross =
+              rawGross !== undefined
+                ? normalizeMoney(rawGross, closeDigits)
+                : undefined;
+            if (apiGross !== undefined) {
+              grossProfit = apiGross;
+            } else {
+              const execPrice = Number(deal["executionPrice"]);
+              const rawVol = toNumber(deal["volume"]) ?? Number(deal["volume"]);
+              const vol = volumeToLots(rawVol, symbolName);
+              const closingSide = String(deal["tradeSide"]) === "SELL" ? "Sell" : "Buy";
+              const openingSide = closingSide === "Sell" ? "Buy" : "Sell";
+              grossProfit = estimateGrossProfit(
+                entryPrice,
+                execPrice,
+                vol,
+                openingSide,
+                symbolName
+              );
+            }
+          }
+          const swap = normalizeMoney(toNumber(close?.["swap"]), closeDigits);
           const commission = normalizeMoney(
-            typeof close?.["commission"] === "number"
-              ? close["commission"]
-              : typeof deal["commission"] === "number"
-                ? deal["commission"]
-                : undefined,
+            toNumber(close?.["commission"]) ?? toNumber(deal["commission"]),
             closeDigits
           );
-          const fee = normalizeMoney(
-            typeof close?.["pnlConversionFee"] === "number" ? close["pnlConversionFee"] : undefined,
-            closeDigits
-          );
+          const fee = normalizeMoney(toNumber(close?.["pnlConversionFee"]), closeDigits);
           const netProfit =
             grossProfit !== undefined
-              ? grossProfit - (commission ?? 0) - (swap ?? 0) - (fee ?? 0)
+              ? grossProfit + (commission ?? 0) + (swap ?? 0) + (fee ?? 0)
               : undefined;
+          const execTs = Number(deal["executionTimestamp"]);
+          const createTs = Number(deal["createTimestamp"] ?? execTs);
+
+          const str = (v: unknown): string =>
+            v === undefined || v === null ? "" : String(v);
+          const numStr = (n: number | undefined): string =>
+            n === undefined ? "" : String(n);
 
           trades.push({
-            ticketId: String(deal["dealId"]),
+            ticketId: str(deal["dealId"]),
+            orderId: str(deal["orderId"]),
+            positionId: str(deal["positionId"]),
             symbol: symbolName.replace("/", ""),
             direction: String(deal["tradeSide"]) === "SELL" ? "Sell" : "Buy",
             orderType: "Market",
-            openTime: new Date(Number(deal["executionTimestamp"])).toISOString(),
-            closeTime: close ? new Date(Number(deal["executionTimestamp"])).toISOString() : null,
-            openPrice: Number(deal["executionPrice"]),
-            closePrice: Number(deal["executionPrice"]),
-            volume: Number(deal["volume"]) / 100,
-            commission,
-            swap,
-            fee,
-            grossProfit,
-            netProfit,
-            percentGain: 0,
+            dealStatus: str(deal["dealStatus"]),
+            openTime: new Date(execTs).toISOString(),
+            closeTime: close ? new Date(execTs).toISOString() : "",
+            createTimestamp: new Date(createTs).toISOString(),
+            executionTimestamp: new Date(execTs).toISOString(),
+            openPrice: numStr(close ? entryPrice : Number(deal["executionPrice"])),
+            closePrice: numStr(Number(deal["executionPrice"])),
+            entryPrice: numStr(entryPrice),
+            volume: numStr(volumeToLots(Number(deal["volume"]), symbolName)),
+            filledVolume: numStr(volumeToLots(Number(deal["filledVolume"] ?? deal["volume"]), symbolName)),
+            commission: numStr(commission),
+            swap: numStr(swap),
+            fee: numStr(fee),
+            grossProfit: numStr(grossProfit),
+            netProfit: numStr(netProfit),
+            percentGain: numStr(0),
           });
         }
       }
