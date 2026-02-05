@@ -13,3 +13,6 @@ export { useDashboard, useDashboardSymbols, useCalendarMonthReturns } from "./us
 export { useTradesByQuery } from "./useTradesByQuery";
 export { useTradeTags } from "./useTradeTags";
 export { useTagsList } from "./useTagsList";
+export { useObservation } from "./useObservation";
+export { useObservations } from "./useObservations";
+export { useObservationCategories } from "./useObservationCategories";
