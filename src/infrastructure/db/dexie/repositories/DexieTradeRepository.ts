@@ -24,7 +24,7 @@ function enrichWithEstimatedPnl(t: Trade): Trade {
   if (!t.closeTime) return t;
 
   const existingGross = t.grossProfit;
-  if (Number.isFinite(existingGross)) {
+  if (existingGross != null && Number.isFinite(existingGross)) {
     const net = existingGross + (t.commission ?? 0) + (t.swap ?? 0) + (t.fee ?? 0);
     return { ...t, netProfit: net };
   }

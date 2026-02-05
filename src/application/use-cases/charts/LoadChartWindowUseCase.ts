@@ -29,11 +29,21 @@ export class LoadChartWindowUseCase {
     ) { }
 
     /**
+     * Safely get timestamp from trade date (handles Date, string, or number from Dexie)
+     */
+    private toTimestamp(d: Date | string | number | null | undefined): number {
+        if (d == null) return 0;
+        if (typeof d === "number") return d;
+        if (typeof d === "string") return new Date(d).getTime();
+        return d.getTime();
+    }
+
+    /**
      * Calculate adaptive window size based on trade duration
      */
     private calculateWindow(trade: Trade, windowDays: number): { from: number; to: number } {
-        const openTime = trade.openTime.getTime();
-        const closeTime = trade.closeTime?.getTime() ?? openTime;
+        const openTime = this.toTimestamp(trade.openTime);
+        const closeTime = trade.closeTime ? this.toTimestamp(trade.closeTime) : openTime;
         const tradeDuration = closeTime - openTime;
 
         // Adaptive window: longer trades get more context
@@ -81,7 +91,8 @@ export class LoadChartWindowUseCase {
                     params.trade.symbol,
                     params.timeframe,
                     from,
-                    to
+                    to,
+                    params.trade.accountId
                 );
 
                 // Store in cache for next time
@@ -96,7 +107,8 @@ export class LoadChartWindowUseCase {
                     windowEnd: to,
                 };
             } catch (error) {
-                console.error("Failed to fetch chart data from API:", error);
+                const msg = error instanceof Error ? error.message : String(error);
+                console.warn("Chart API fallback (using cache):", msg);
                 // Return cached bars even if incomplete
                 return {
                     bars: cachedBars.sort((a, b) => a.timestamp - b.timestamp),

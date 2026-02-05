@@ -310,8 +310,10 @@ export async function POST(request: Request) {
       const to = body.to ?? now;
       const ranges = chunkRange(from, to, 7 * 24 * 60 * 60 * 1000);
 
-      const trades: TradeRecord[] = [];
-      const symbolIds = new Set<number>();
+      // First pass: fetch all deals and build positionOpenTime from OPENING deals only.
+      // Opening deals have no closePositionDetail. Closing deals may reference positions
+      // opened in an earlier range, so we must process all ranges before building trades.
+      const allDeals: Array<Record<string, unknown>>[] = [];
       const positionOpenTime = new Map<string, number>();
       for (const [start, end] of ranges) {
         const response = await connection.sendCommand("ProtoOADealListReq", {
@@ -320,17 +322,23 @@ export async function POST(request: Request) {
           toTimestamp: end,
           maxRows: 10000,
         });
-        const deals = (response?.deal ?? []) as Array<Record<string, unknown>>;
+        const deals = (response?.deal ?? response?.deals ?? []) as Array<Record<string, unknown>>;
+        allDeals.push(deals);
         for (const deal of deals) {
           const close = deal["closePositionDetail"] as Record<string, unknown> | undefined;
           if (!close) {
-            const posId = String(deal["positionId"] ?? "");
+            const posId = String(toNumber(deal["positionId"]) ?? deal["positionId"] ?? "");
             const execTs = Number(deal["executionTimestamp"]);
-            if (posId && execTs && !positionOpenTime.has(posId)) {
+            if (posId && posId !== "undefined" && execTs && !positionOpenTime.has(posId)) {
               positionOpenTime.set(posId, execTs);
             }
           }
         }
+      }
+
+      const trades: TradeRecord[] = [];
+      const symbolIds = new Set<number>();
+      for (const deals of allDeals) {
         for (const deal of deals) {
           const symbolId = toNumber(deal["symbolId"]);
           if (symbolId !== undefined) {
@@ -391,7 +399,7 @@ export async function POST(request: Request) {
               : undefined;
           const execTs = Number(deal["executionTimestamp"]);
           const createTs = Number(deal["createTimestamp"] ?? execTs);
-          const posId = String(deal["positionId"] ?? "");
+          const posId = String(toNumber(deal["positionId"]) ?? deal["positionId"] ?? "");
           const openTs = close
             ? (positionOpenTime.get(posId) ?? execTs)
             : execTs;
@@ -400,6 +408,10 @@ export async function POST(request: Request) {
             v === undefined || v === null ? "" : String(v);
           const numStr = (n: number | undefined): string =>
             n === undefined ? "" : String(n);
+
+          // Only output closed positions (one trade per position). Opening deals
+          // have no closePositionDetail and would duplicate/confuse the trade list.
+          if (!close) continue;
 
           trades.push({
             ticketId: str(deal["dealId"]),

@@ -95,13 +95,13 @@ export function TradeJournalEditor({ tradeId, initialComment }: TradeJournalEdit
     if (!editor) return;
     if (note) {
       const c = note.content || "<p></p>";
-      editor.commands.setContent(c, false);
+      editor.commands.setContent(c, { emitUpdate: false });
       initialContentRef.current = c;
       lastHtmlRef.current = c;
       hasDirtyRef.current = false;
       isInitializedRef.current = true;
     } else {
-      editor.commands.setContent("<p></p>", false);
+      editor.commands.setContent("<p></p>", { emitUpdate: false });
       initialContentRef.current = "<p></p>";
       lastHtmlRef.current = "<p></p>";
       hasDirtyRef.current = false;

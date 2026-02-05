@@ -46,8 +46,9 @@ export class CTraderAPI implements ICTraderAPI {
     symbol: string,
     timeframe: CTraderBarRecord["timeframe"],
     from: number,
-    to: number
+    to: number,
+    accountNumber?: string
   ): Promise<CTraderBarRecord[]> {
-    return this.historyClient.getBars(accessToken, symbol, timeframe, from, to);
+    return this.historyClient.getBars(accessToken, symbol, timeframe, from, to, accountNumber);
   }
 }

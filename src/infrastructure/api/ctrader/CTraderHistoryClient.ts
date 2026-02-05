@@ -10,7 +10,8 @@ export class CTraderHistoryClient {
     symbol: string,
     timeframe: CTraderBarRecord["timeframe"],
     from: number,
-    to: number
+    to: number,
+    accountNumber?: string
   ): Promise<CTraderBarRecord[]> {
     const response = await fetch("/api/ctrader/bars", {
       method: "POST",
@@ -21,11 +22,13 @@ export class CTraderHistoryClient {
         timeframe,
         from,
         to,
+        accountNumber: accountNumber ?? undefined,
       }),
     });
     const data = (await response.json()) as { bars?: CTraderBarRecord[]; error?: string };
     if (!response.ok || data.error) {
-      throw new Error(data.error ?? "Failed to fetch bars");
+      const msg = data.error ?? `Failed to fetch bars (${response.status})`;
+      throw new Error(msg);
     }
     return data.bars ?? [];
   }

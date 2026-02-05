@@ -31,9 +31,9 @@ export function TradeChartTab({ trade, accessToken }: TradeChartTabProps) {
             <TradeChartView
                 trade={trade}
                 accessToken={accessToken}
-                initialTimeframe="M15"
+                initialTimeframe="M1"
                 chartHeight={400}
-                profitTimelineHeight={120}
+                profitTimelineHeight={200}
             />
         </div>
     );

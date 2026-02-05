@@ -29,16 +29,18 @@ export interface TradeChartViewProps {
  */
 export function TradeChartView({
     trade,
-    initialTimeframe = "M15",
+    initialTimeframe = "M1",
     accessToken,
     chartHeight = 400,
-    profitTimelineHeight = 120,
+    profitTimelineHeight = 200,
 }: TradeChartViewProps) {
     const [timeframe, setTimeframe] = useState<ChartTimeframe>(initialTimeframe);
     const [showProfitTimeline, setShowProfitTimeline] = useState(true);
     const [showMAE, setShowMAE] = useState(true);
     const [showMFE, setShowMFE] = useState(true);
     const chartContainerRef = useRef<HTMLDivElement>(null);
+    const candlestickChartRef = useRef<{ fitContent: () => void } | null>(null);
+    const profitChartRef = useRef<{ fitContent: () => void } | null>(null);
 
     // Fetch chart data using custom hook
     const { data, isLoading, error, refetch } = useChartData({
@@ -52,12 +54,11 @@ export function TradeChartView({
         setTimeframe(newTimeframe);
     }, []);
 
-    // Reset view - trigger chart to fit content
+    // Reset view - fit both charts to content
     const handleResetView = useCallback(() => {
-        // The chart internally handles fit content
-        // We can trigger a refetch to ensure latest data
-        refetch();
-    }, [refetch]);
+        candlestickChartRef.current?.fitContent();
+        profitChartRef.current?.fitContent();
+    }, []);
 
     // Handle visible range change for lazy loading
     const handleVisibleRangeChange = useCallback(
@@ -119,6 +120,7 @@ export function TradeChartView({
 
             {/* Main candlestick chart */}
             <TradeCandlestickChart
+                ref={candlestickChartRef}
                 data={data}
                 trade={trade}
                 height={chartHeight}
@@ -130,6 +132,7 @@ export function TradeChartView({
 
             {/* Profit timeline chart */}
             <ProfitTimelineChart
+                ref={profitChartRef}
                 data={data}
                 trade={trade}
                 height={profitTimelineHeight}

@@ -11,3 +11,4 @@ export { SessionAnalysis } from "./SessionAnalysis";
 export { AdditionalStatsCards } from "./AdditionalStatsCards";
 export { DayOfWeekChart } from "./DayOfWeekChart";
 export { PerformanceCalendar } from "./PerformanceCalendar";
+export { DashboardTradeTable } from "./DashboardTradeTable";

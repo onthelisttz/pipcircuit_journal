@@ -3,6 +3,7 @@
 import { format, formatDistanceStrict } from "date-fns";
 import { Loader2 } from "lucide-react";
 import { useTrade } from "@ui/hooks";
+import { TokenStorage } from "@infrastructure/auth";
 import { TradeChartView } from "@ui/components/charts";
 import { TradeJournalEditor } from "./TradeJournalEditor";
 import { TradeTagsTab } from "./TradeTagsTab";
@@ -206,13 +207,15 @@ export function TradePanelDetailTabs({
   }
 
   if (activeTab === "chart") {
+    const token = TokenStorage.getGlobal();
     return (
       <div className="-mx-2">
         <TradeChartView
           trade={trade}
-          initialTimeframe="M15"
+          initialTimeframe="M1"
+          accessToken={token?.accessToken}
           chartHeight={280}
-          profitTimelineHeight={80}
+          profitTimelineHeight={200}
         />
       </div>
     );

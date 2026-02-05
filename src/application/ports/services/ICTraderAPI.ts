@@ -64,6 +64,7 @@ export interface ICTraderAPI {
     symbol: string,
     timeframe: CTraderBarRecord["timeframe"],
     from: number,
-    to: number
+    to: number,
+    accountNumber?: string
   ): Promise<CTraderBarRecord[]>;
 }

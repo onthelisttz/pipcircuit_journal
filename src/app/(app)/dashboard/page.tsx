@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { subDays, startOfDay, endOfDay } from "date-fns";
 import { TradeOutcome, Direction } from "@domain/enums";
-import { useAccount } from "@ui/hooks";
+import { useAccount, useTradesByQuery } from "@ui/hooks";
 import { useTradePanel } from "@ui/providers";
 import {
   DashboardFilters,
@@ -17,7 +17,9 @@ import {
   SessionAnalysis,
   DayOfWeekChart,
   PerformanceCalendar,
+  DashboardTradeTable,
 } from "@ui/features/dashboard";
+import { ScrollToTop } from "@ui/components/common";
 import type { DashboardFiltersState } from "@ui/features/dashboard";
 import { useDashboard, useDashboardSymbols } from "@ui/hooks";
 import Link from "next/link";
@@ -49,6 +51,8 @@ export default function DashboardPage() {
         : null,
     [accountId, filters.from, filters.to, filters.symbols, filters.direction]
   );
+
+  const { trades } = useTradesByQuery(panelQuery);
 
   const formatPanelTitle = (key: string) =>
     key.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -253,8 +257,36 @@ export default function DashboardPage() {
               }
             />
           )}
+
+          <div className="w-full">
+            <h2 className="text-lg font-semibold text-foreground mb-3">Trade List</h2>
+            <DashboardTradeTable
+              trades={trades}
+              startingBalance={summary != null && activeAccount?.balance != null ? activeAccount.balance - summary.netProfit : 0}
+              onRowClick={
+                panelQuery
+                  ? (trade, allIds) =>
+                      openPanel({
+                        title: "Trades",
+                        tradeIds: allIds,
+                        selectedTradeId: trade.id ?? undefined,
+                      })
+                  : undefined
+              }
+              onSummaryClick={
+                panelQuery
+                  ? (filter, tradeIds) =>
+                      openPanel({
+                        title: filter === "long" ? "Long Trades" : filter === "short" ? "Short Trades" : "All Trades",
+                        tradeIds,
+                      })
+                  : undefined
+              }
+            />
+          </div>
         </>
       )}
+      <ScrollToTop threshold={400} containerSelector="main" />
     </div>
   );
 }

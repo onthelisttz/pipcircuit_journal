@@ -46,7 +46,7 @@ async function ensureProtoFiles(): Promise<void> {
   );
 }
 
-async function fetchAccounts(accessToken: string) {
+async function fetchAccounts(accessToken: string): Promise<Record<string, unknown>[]> {
   const response = await fetch(
     `https://api.spotware.com/connect/tradingaccounts?access_token=${encodeURIComponent(
       accessToken
@@ -57,8 +57,84 @@ async function fetchAccounts(accessToken: string) {
     }
   );
   const text = await response.text();
-  const data = JSON.parse(text) as Record<string, unknown>[];
-  return Array.isArray(data) ? data : [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  if (Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>[];
+  }
+  if (parsed && typeof parsed === "object") {
+    const record = parsed as Record<string, unknown>;
+    const candidates = [
+      record["accounts"],
+      record["tradingAccounts"],
+      record["accountList"],
+      record["data"],
+    ];
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) {
+        return candidate as Record<string, unknown>[];
+      }
+    }
+  }
+  return [];
+}
+
+async function fetchAccountsViaProtobuf(
+  accessToken: string,
+  host: string
+): Promise<Record<string, unknown>[]> {
+  if (!clientId || !clientSecret) return [];
+  const require = createRequire(import.meta.url);
+  const { CTraderConnection } = require("@reiryoku/ctrader-layer") as {
+    CTraderConnection: new (args: { host: string; port: number }) => {
+      open: () => Promise<void>;
+      close: () => void;
+      sendCommand: (cmd: string, args: object) => Promise<{ ctidTraderAccount?: unknown[] }>;
+    };
+  };
+  const connection = new CTraderConnection({ host, port: protoPort });
+  try {
+    await connection.open();
+    await connection.sendCommand("ProtoOAApplicationAuthReq", {
+      clientId,
+      clientSecret,
+    });
+    const response = await connection.sendCommand("ProtoOAGetAccountListByAccessTokenReq", {
+      accessToken,
+    });
+    const accounts = (response?.ctidTraderAccount ?? []) as Record<string, unknown>[];
+    return Array.isArray(accounts) ? accounts : [];
+  } catch {
+    return [];
+  } finally {
+    connection.close();
+  }
+}
+
+function getAccountIdentifier(account: Record<string, unknown>): string {
+  return String(
+    account["accountNumber"] ??
+      account["ctidTraderAccountId"] ??
+      account["login"] ??
+      account["accountId"] ??
+      account["id"] ??
+      ""
+  );
+}
+
+function getAccountNumericId(account: Record<string, unknown>): number {
+  const val =
+    account["ctidTraderAccountId"] ??
+    account["accountId"] ??
+    account["id"];
+  if (typeof val === "number" && !Number.isNaN(val)) return val;
+  const str = String(val ?? "");
+  const num = Number.parseInt(str, 10);
+  return Number.isNaN(num) ? 0 : num;
 }
 
 function getAccountHost(account: Record<string, unknown> | undefined): string {
@@ -123,15 +199,41 @@ export async function POST(request: Request) {
 
   try {
     await ensureProtoFiles();
-    const accounts = await fetchAccounts(body.accessToken);
-    const account =
-      body.accountId !== undefined
-        ? accounts.find((item) => Number(item["accountId"]) === body.accountId)
-        : accounts.find((item) => String(item["accountNumber"]) === body.accountNumber) ??
-          accounts[0];
-    const accountId = Number(account?.["accountId"]);
+    let accounts = await fetchAccounts(body.accessToken);
+    if (accounts.length === 0 && clientId && clientSecret) {
+      const [live, demo] = await Promise.all([
+        fetchAccountsViaProtobuf(body.accessToken, protoLiveHost),
+        fetchAccountsViaProtobuf(body.accessToken, protoDemoHost),
+      ]);
+      const seen = new Set<string>();
+      accounts = [...live, ...demo].filter((acc) => {
+        const id = getAccountIdentifier(acc);
+        if (!id || id === "undefined" || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+    }
+    const searchAccountNumber = body.accountNumber != null ? String(body.accountNumber) : null;
+    const searchAccountId = body.accountId;
+
+    const account = searchAccountId !== undefined
+      ? accounts.find((item) => getAccountNumericId(item) === searchAccountId)
+      : searchAccountNumber
+        ? accounts.find(
+            (item) =>
+              getAccountIdentifier(item) === searchAccountNumber ||
+              String(getAccountNumericId(item)) === searchAccountNumber
+          ) ?? accounts[0]
+        : accounts[0];
+
+    const accountId = account ? getAccountNumericId(account) : 0;
     if (!accountId) {
-      return NextResponse.json({ error: "Account not found" }, { status: 404 });
+      return NextResponse.json(
+        {
+          error: `Account not found. Searched: ${searchAccountNumber ?? searchAccountId ?? "none"}. Accounts: ${accounts.length}`,
+        },
+        { status: 404 }
+      );
     }
     const host = getAccountHost(account);
     const require = createRequire(import.meta.url);

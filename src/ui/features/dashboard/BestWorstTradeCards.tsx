@@ -2,7 +2,6 @@
 
 import type { Trade } from "@domain/entities";
 import { format } from "date-fns";
-import Link from "next/link";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { volumeToLots } from "@lib/pnl-estimate";
 
@@ -62,24 +61,14 @@ function TradeCard({
     </>
   );
 
-  if (onClick) {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        className="block w-full text-left rounded-lg border p-3 hover:bg-accent/50 transition-colors"
-      >
-        {content}
-      </button>
-    );
-  }
   return (
-    <Link
-      href={trade.id ? `/trades/${trade.id}` : "#"}
-      className="block rounded-lg border p-3 hover:bg-accent/50 transition-colors"
+    <button
+      type="button"
+      onClick={onClick}
+      className="block w-full text-left rounded-lg border p-3 hover:bg-accent/50 transition-colors"
     >
       {content}
-    </Link>
+    </button>
   );
 }
 

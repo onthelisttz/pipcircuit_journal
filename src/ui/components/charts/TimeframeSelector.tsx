@@ -11,7 +11,7 @@ export interface TimeframeSelectorProps {
     disabled?: boolean;
 }
 
-const TIMEFRAMES: ChartTimeframe[] = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"];
+const TIMEFRAMES: ChartTimeframe[] = ["M1", "M5", "M15", "H1"];
 
 /**
  * TimeframeSelector - Timeframe button group

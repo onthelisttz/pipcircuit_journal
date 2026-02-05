@@ -3,6 +3,7 @@
 import {
     createChart,
     type IChartApi,
+    type IPriceLine,
     type ISeriesApi,
     type LineData,
     type Time,
@@ -10,9 +11,10 @@ import {
     LineStyle,
     LineSeries,
 } from "lightweight-charts";
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
 import type { ChartBar, Trade } from "@domain/entities";
 import { Direction } from "@domain/enums";
+import { estimateGrossProfit, volumeToLots } from "@lib/pnl-estimate";
 
 export interface ProfitTimelineChartProps {
     /** Chart bar data to calculate P&L from */
@@ -29,6 +31,10 @@ export interface ProfitTimelineChartProps {
     showMFE?: boolean;
 }
 
+export interface ProfitTimelineChartRef {
+    fitContent: () => void;
+}
+
 interface ProfitPoint {
     time: number;
     profit: number;
@@ -39,18 +45,19 @@ interface ProfitPoint {
  *
  * Shows profit/loss evolution during trade duration with MAE/MFE markers.
  */
-export function ProfitTimelineChart({
+export const ProfitTimelineChart = forwardRef<ProfitTimelineChartRef, ProfitTimelineChartProps>(function ProfitTimelineChart({
     data,
     trade,
     height = 120,
     visible = true,
     showMAE = true,
     showMFE = true,
-}: ProfitTimelineChartProps) {
+}, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const maeLineRef = useRef<IPriceLine | null>(null);
+    const mfeLineRef = useRef<IPriceLine | null>(null);
     const [isChartReady, setIsChartReady] = useState(false);
     const [mae, setMae] = useState<ProfitPoint | null>(null);
     const [mfe, setMfe] = useState<ProfitPoint | null>(null);
@@ -60,31 +67,72 @@ export function ProfitTimelineChart({
         (bars: ChartBar[], tradeData: Trade): LineData<Time>[] => {
             if (!tradeData.openTime || !tradeData.openPrice) return [];
 
-            const isBuy = tradeData.direction === Direction.Buy;
-            const openTime = tradeData.openTime.getTime();
-            const closeTime = tradeData.closeTime?.getTime() ?? Date.now();
-            const openPrice = tradeData.openPrice;
-            const volume = tradeData.volume ?? 1;
+            const openTime = tradeData.openTime instanceof Date
+                ? tradeData.openTime.getTime()
+                : new Date(tradeData.openTime).getTime();
+            const closeTime = tradeData.closeTime
+                ? (tradeData.closeTime instanceof Date ? tradeData.closeTime.getTime() : new Date(tradeData.closeTime).getTime())
+                : Date.now();
+            const rawOpen = tradeData.openPrice;
+            const rawClose = tradeData.closePrice ?? tradeData.entryPrice ?? tradeData.openPrice;
+            const actualProfit = Number(tradeData.netProfit ?? tradeData.grossProfit ?? NaN);
+            const lots =
+                (tradeData.lots ?? volumeToLots(tradeData.volume ?? 100, tradeData.symbol ?? "")) || 0.01;
+            const symbol = tradeData.symbol ?? "";
+            const direction = tradeData.direction === Direction.Buy ? "Buy" : "Sell";
 
-            // Filter bars within trade duration
+            // Infer correct entry/exit from actual profit (trade data may have them swapped)
+            let openPrice: number;
+            let closePrice: number;
+            if (
+                rawClose != null &&
+                Number.isFinite(rawClose) &&
+                Number.isFinite(actualProfit) &&
+                Math.abs(actualProfit) < 1_000_000
+            ) {
+                if (actualProfit >= 0) {
+                    openPrice = direction === "Sell" ? Math.max(rawOpen, rawClose) : Math.min(rawOpen, rawClose);
+                    closePrice = direction === "Sell" ? Math.min(rawOpen, rawClose) : Math.max(rawOpen, rawClose);
+                } else {
+                    openPrice = rawOpen;
+                    closePrice = rawClose;
+                }
+            } else {
+                openPrice = rawOpen;
+                closePrice = rawClose ?? rawOpen;
+            }
+
             const tradeBars = bars.filter(
                 (bar) => bar.timestamp >= openTime && bar.timestamp <= closeTime
             );
+
+            // Normalize bar prices to match trade scale (bars API may return different scale for XAUUSD etc.)
+            const refPrice = openPrice;
+            const barScale =
+                refPrice > 0 && refPrice < 100_000 && tradeBars.length > 0
+                    ? (() => {
+                          const sample = tradeBars[Math.floor(tradeBars.length / 2)].close;
+                          if (sample > refPrice * 100) {
+                              const ratio = sample / refPrice;
+                              const scale = Math.pow(10, Math.round(Math.log10(ratio)));
+                              return scale > 1 ? scale : 1;
+                          }
+                          return 1;
+                      })()
+                    : 1;
+
+            const toBarPrice = (raw: number) => raw / barScale;
 
             let minProfit: ProfitPoint | null = null;
             let maxProfit: ProfitPoint | null = null;
 
             const profitData = tradeBars.map((bar) => {
-                // Calculate floating P&L based on close price of bar
-                const priceDiff = isBuy ? bar.close - openPrice : openPrice - bar.close;
-                const profit = priceDiff * volume * 100000; // Simplified pip value calculation
+                const barClose = toBarPrice(bar.close);
+                const profit = estimateGrossProfit(openPrice, barClose, lots, direction, symbol);
 
-                // Track MAE (Maximum Adverse Excursion)
                 if (minProfit === null || profit < minProfit.profit) {
                     minProfit = { time: bar.timestamp, profit };
                 }
-
-                // Track MFE (Maximum Favorable Excursion)
                 if (maxProfit === null || profit > maxProfit.profit) {
                     maxProfit = { time: bar.timestamp, profit };
                 }
@@ -98,7 +146,13 @@ export function ProfitTimelineChart({
             setMae(minProfit);
             setMfe(maxProfit);
 
-            return profitData;
+            // Sort by time and deduplicate (Lightweight Charts requires strictly ascending, no duplicates)
+            const byTime = new Map<number, { time: Time; value: number }>();
+            for (const p of profitData) {
+                const t = p.time as number;
+                byTime.set(t, p);
+            }
+            return Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number));
         },
         []
     );
@@ -152,8 +206,7 @@ export function ProfitTimelineChart({
         });
 
         chartRef.current = chart;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        seriesRef.current = series as any;
+        seriesRef.current = series;
         setIsChartReady(true);
 
         // Handle resize
@@ -184,47 +237,69 @@ export function ProfitTimelineChart({
         chartRef.current?.timeScale().fitContent();
     }, [data, trade, isChartReady, calculateProfitTimeline]);
 
-    // Add MAE/MFE price lines
+    // Add MAE/MFE price lines (remove old before adding new to avoid accumulation)
     useEffect(() => {
         if (!seriesRef.current || !isChartReady) return;
 
-        // Create MAE price line if visible and available
+        const series = seriesRef.current;
+
+        // Remove existing MAE/MFE lines
+        if (maeLineRef.current) {
+            series.removePriceLine(maeLineRef.current);
+            maeLineRef.current = null;
+        }
+        if (mfeLineRef.current) {
+            series.removePriceLine(mfeLineRef.current);
+            mfeLineRef.current = null;
+        }
+
         if (showMAE && mae) {
-            seriesRef.current.createPriceLine({
+            const maeStr = mae.profit >= 0 ? `$${mae.profit.toFixed(2)}` : `-$${Math.abs(mae.profit).toFixed(2)}`;
+            maeLineRef.current = series.createPriceLine({
                 price: mae.profit,
                 color: "#ef4444",
                 lineWidth: 1,
                 lineStyle: LineStyle.Dotted,
                 axisLabelVisible: true,
-                title: `MAE: ${mae.profit.toFixed(2)}`,
+                title: `MAE: ${maeStr}`,
             });
         }
 
-        // Create MFE price line if visible and available
         if (showMFE && mfe) {
-            seriesRef.current.createPriceLine({
+            const mfeStr = mfe.profit >= 0 ? `$${mfe.profit.toFixed(2)}` : `-$${Math.abs(mfe.profit).toFixed(2)}`;
+            mfeLineRef.current = series.createPriceLine({
                 price: mfe.profit,
                 color: "#22c55e",
                 lineWidth: 1,
                 lineStyle: LineStyle.Dotted,
                 axisLabelVisible: true,
-                title: `MFE: ${mfe.profit.toFixed(2)}`,
+                title: `MFE: ${mfeStr}`,
             });
         }
     }, [isChartReady, showMAE, showMFE, mae, mfe]);
+
+    useImperativeHandle(ref, () => ({
+        fitContent: () => {
+            chartRef.current?.timeScale().fitContent();
+        },
+    }), []);
 
     if (!visible) return null;
 
     return (
         <div className="relative w-full" style={{ height }}>
-            {/* Header with MAE/MFE values */}
+            {/* Header with MAE/MFE values (dollar amounts) */}
             <div className="absolute left-2 top-1 z-10 flex items-center gap-4 text-xs">
                 <span className="text-gray-500">Floating P&L</span>
                 {showMAE && mae && (
-                    <span className="text-red-400">MAE: {mae.profit.toFixed(2)}</span>
+                    <span className="text-red-400">
+                        MAE: {mae.profit >= 0 ? `$${mae.profit.toFixed(2)}` : `-$${Math.abs(mae.profit).toFixed(2)}`}
+                    </span>
                 )}
                 {showMFE && mfe && (
-                    <span className="text-green-400">MFE: {mfe.profit.toFixed(2)}</span>
+                    <span className="text-green-400">
+                        MFE: {mfe.profit >= 0 ? `$${mfe.profit.toFixed(2)}` : `-$${Math.abs(mfe.profit).toFixed(2)}`}
+                    </span>
                 )}
             </div>
             <div
@@ -234,4 +309,4 @@ export function ProfitTimelineChart({
             />
         </div>
     );
-}
+});
