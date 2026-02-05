@@ -30,7 +30,10 @@ export class DexieTagRepository implements ITagRepository {
   }
 
   async delete(id: number): Promise<void> {
-    await db.tags.delete(id);
+    await db.transaction("rw", db.tags, db.trade_tags, async () => {
+      await db.trade_tags.where("tagId").equals(id).delete();
+      await db.tags.delete(id);
+    });
   }
 
   async listForTrade(tradeId: number): Promise<Tag[]> {

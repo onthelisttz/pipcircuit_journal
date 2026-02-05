@@ -3,166 +3,139 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { TextStyle, Color, FontSize } from "@tiptap/extension-text-style";
 import Image from "@tiptap/extension-image";
-import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import { useTradeNote } from "@ui/hooks";
-import { DexieNoteRepository } from "@infrastructure/db/dexie";
-import { Loader2, Check, ImagePlus, Bold, Italic, List, ListOrdered, Quote } from "lucide-react";
-
-const noteRepo = new DexieNoteRepository();
+import { Loader2, Check, ImagePlus, Bold, Italic, List, ListOrdered, Quote, Palette, Type } from "lucide-react";
 
 interface TradeJournalEditorProps {
   tradeId: number;
   initialComment?: string | null;
 }
 
-const IDLE_SAVE_MS = 30_000;
-
 export function TradeJournalEditor({ tradeId, initialComment }: TradeJournalEditorProps) {
   const { note, isLoading, error, saveNote } = useTradeNote(tradeId, initialComment);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [colorPickerOpen, setColorPickerOpen] = useState(false);
+  const [fontSizePickerOpen, setFontSizePickerOpen] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const isInitializedRef = useRef(false);
   const editorRef = useRef<ReturnType<typeof useEditor> | null>(null);
+  const initialContentRef = useRef<string>("");
+  const lastHtmlRef = useRef<string>("");
+  const hasDirtyRef = useRef(false);
 
   const editor = useEditor(
     {
       immediatelyRender: false,
       extensions: [
-      StarterKit,
-      Image.configure({ allowBase64: true }),
-      Link.configure({ openOnClick: false }),
-      Placeholder.configure({ placeholder: "Write your trade notes… Add images by pasting or using the button." }),
-    ],
-    content: "",
-    editorProps: {
-      handlePaste: (_view, event) => {
-        const items = Array.from(event.clipboardData?.items ?? []);
-        for (const item of items) {
-          if (item.type.startsWith("image/")) {
-            const file = item.getAsFile();
-            if (file) {
-              const reader = new FileReader();
-              reader.onload = (e) => {
-                const dataUrl = e.target?.result as string;
-                if (dataUrl) {
-                  editorRef.current?.chain().focus().setImage({ src: dataUrl }).run();
-                }
-              };
-              reader.readAsDataURL(file);
-              return true;
+        StarterKit,
+        TextStyle,
+        Color,
+        FontSize,
+        Image.configure({ allowBase64: true }),
+        Placeholder.configure({
+          placeholder: "Write your trade notes… Add images by pasting or using the button.",
+        }),
+      ],
+      content: "",
+      editorProps: {
+        handlePaste: (_view, event) => {
+          const items = Array.from(event.clipboardData?.items ?? []);
+          for (const item of items) {
+            if (item.type.startsWith("image/")) {
+              const file = item.getAsFile();
+              if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                  const dataUrl = e.target?.result as string;
+                  if (dataUrl) {
+                    editorRef.current?.chain().focus().setImage({ src: dataUrl }).run();
+                  }
+                };
+                reader.readAsDataURL(file);
+                return true;
+              }
             }
           }
-        }
-        return false;
-      },
-      handleDrop: (_view, event) => {
-        const files = event.dataTransfer?.files;
-        if (files?.length) {
-          for (const file of Array.from(files)) {
-            if (file.type.startsWith("image/")) {
-              event.preventDefault();
-              const reader = new FileReader();
-              reader.onload = (e) => {
-                const dataUrl = e.target?.result as string;
-                if (dataUrl) {
-                  editorRef.current?.chain().focus().setImage({ src: dataUrl }).run();
-                }
-              };
-              reader.readAsDataURL(file);
-              return true;
+          return false;
+        },
+        handleDrop: (_view, event) => {
+          const files = event.dataTransfer?.files;
+          if (files?.length) {
+            for (const file of Array.from(files)) {
+              if (file.type.startsWith("image/")) {
+                event.preventDefault();
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                  const dataUrl = e.target?.result as string;
+                  if (dataUrl) {
+                    editorRef.current?.chain().focus().setImage({ src: dataUrl }).run();
+                  }
+                };
+                reader.readAsDataURL(file);
+                return true;
+              }
             }
           }
-        }
-        return false;
+          return false;
+        },
       },
     },
-  },
-  [tradeId]
+    [tradeId]
   );
 
   useEffect(() => {
     editorRef.current = editor;
   }, [editor]);
 
-  const contentRef = useRef<string>("");
-  const noteIdRef = useRef<number | null>(null);
-  const tradeIdRef = useRef<number>(tradeId);
-  tradeIdRef.current = tradeId;
-  noteIdRef.current = note?.id ?? null;
-
-  const saveNow = useCallback(
-    async (html: string) => {
-      if (!html || html === "<p></p>") return;
-      setSaveStatus("saving");
-      try {
-        await saveNote(html);
-        setSaveStatus("saved");
-        setTimeout(() => setSaveStatus("idle"), 2000);
-      } catch {
-        setSaveStatus("idle");
-      }
-    },
-    [saveNote]
-  );
-
+  // Load existing content when note (or trade) changes
   useEffect(() => {
     if (!editor) return;
     if (note) {
-      if (!isInitializedRef.current) {
-        isInitializedRef.current = true;
-        const c = note.content || "<p></p>";
-        editor.commands.setContent(c, false);
-        contentRef.current = c;
-      }
-    } else {
+      const c = note.content || "<p></p>";
+      editor.commands.setContent(c, false);
+      initialContentRef.current = c;
+      lastHtmlRef.current = c;
+      hasDirtyRef.current = false;
       isInitializedRef.current = true;
+    } else {
       editor.commands.setContent("<p></p>", false);
-      contentRef.current = "<p></p>";
+      initialContentRef.current = "<p></p>";
+      lastHtmlRef.current = "<p></p>";
+      hasDirtyRef.current = false;
+      isInitializedRef.current = true;
     }
   }, [editor, note, tradeId]);
 
+  // Track changes, but do not save on every keystroke
   useEffect(() => {
     if (!editor) return;
     const onUpdate = () => {
       const html = editor.getHTML();
-      contentRef.current = html;
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = setTimeout(() => {
-        saveTimeoutRef.current = null;
-        void saveNow(html);
-      }, IDLE_SAVE_MS);
+      lastHtmlRef.current = html;
+      hasDirtyRef.current = html !== initialContentRef.current;
+      setSaveStatus("idle");
     };
     editor.on("update", onUpdate);
     return () => {
       editor.off("update", onUpdate);
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = null;
-      }
-      const lastContent = contentRef.current;
-      const tid = tradeIdRef.current;
-      const nid = noteIdRef.current;
-      if (lastContent && lastContent !== "<p></p>" && tid) {
-        const now = new Date();
-        if (nid) {
-          noteRepo.update(nid, { content: lastContent, updatedAt: now }).catch(() => {});
-        } else {
-          noteRepo.create({
-            tradeId: tid,
-            content: lastContent,
-            createdAt: now,
-            updatedAt: now,
-          }).catch(() => {});
-        }
-      }
     };
-  }, [editor, saveNow]);
+  }, [editor]);
 
+  // Save when unmounting or when tradeId changes away
   useEffect(() => {
-    isInitializedRef.current = false;
-  }, [tradeId]);
+    return () => {
+      if (!hasDirtyRef.current) return;
+      const html = lastHtmlRef.current;
+      if (!html || html === initialContentRef.current) return;
+      setSaveStatus("saving");
+      void saveNote(html).then(() => {
+        // component may be unmounted; status is best-effort
+      });
+    };
+  }, [saveNote]);
 
   const addImage = useCallback(() => {
     const input = document.createElement("input");
@@ -261,6 +234,105 @@ export function TradeJournalEditor({ tradeId, initialComment }: TradeJournalEdit
               >
                 <Quote className="h-4 w-4" />
               </ToolbarButton>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setFontSizePickerOpen((o) => !o)}
+                  title="Font size"
+                  className={`rounded p-1.5 ${editor.isActive("textStyle", { fontSize: true }) ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                >
+                  <Type className="h-4 w-4" />
+                </button>
+                {fontSizePickerOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      aria-hidden
+                      onClick={() => setFontSizePickerOpen(false)}
+                    />
+                    <div className="absolute right-0 top-full z-50 mt-1 flex flex-col gap-0.5 rounded-lg border border-border bg-background p-2 shadow-lg">
+                      {["12px", "14px", "16px", "18px", "20px", "24px", "28px"].map((size) => (
+                        <button
+                          key={size}
+                          type="button"
+                          onClick={() => {
+                            editor.chain().focus().setFontSize(size).run();
+                            setFontSizePickerOpen(false);
+                          }}
+                          className="rounded px-2 py-1 text-left text-sm hover:bg-muted"
+                          style={{ fontSize: size }}
+                        >
+                          {size}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          editor.chain().focus().unsetFontSize().run();
+                          setFontSizePickerOpen(false);
+                        }}
+                        className="mt-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setColorPickerOpen((o) => !o)}
+                  title="Text color"
+                  className={`rounded p-1.5 ${editor.isActive("textStyle", { color: true }) ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                >
+                  <Palette className="h-4 w-4" />
+                </button>
+                {colorPickerOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      aria-hidden
+                      onClick={() => setColorPickerOpen(false)}
+                    />
+                    <div className="absolute right-0 top-full z-50 mt-1 flex flex-wrap gap-1 rounded-lg border border-border bg-background p-2 shadow-lg">
+                      {[
+                        "#000000",
+                        "#dc2626",
+                        "#ea580c",
+                        "#ca8a04",
+                        "#16a34a",
+                        "#2563eb",
+                        "#7c3aed",
+                        "#6b7280",
+                        "#ffffff",
+                      ].map((hex) => (
+                        <button
+                          key={hex}
+                          type="button"
+                          onClick={() => {
+                            editor.chain().focus().setColor(hex).run();
+                            setColorPickerOpen(false);
+                          }}
+                          className="h-6 w-6 rounded border border-border"
+                          style={{ backgroundColor: hex }}
+                          title={hex}
+                        />
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          editor.chain().focus().unsetColor().run();
+                          setColorPickerOpen(false);
+                        }}
+                        className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </>
           )}
           <button
@@ -287,10 +359,31 @@ export function TradeJournalEditor({ tradeId, initialComment }: TradeJournalEdit
         className="min-h-[120px] rounded-lg border border-border bg-background px-3 py-2 text-sm
           [&_.ProseMirror]:min-h-[100px] [&_.ProseMirror]:outline-none
           [&_.ProseMirror_p]:my-1 [&_.ProseMirror_h1]:text-lg [&_.ProseMirror_h2]:text-base [&_.ProseMirror_h3]:text-sm
-          [&_.ProseMirror_img]:rounded-lg [&_.ProseMirror_img]:max-w-full [&_.ProseMirror_ul]:list-disc [&_.ProseMirror_ol]:list-decimal [&_.ProseMirror_blockquote]:border-l-2 [&_.ProseMirror_blockquote]:pl-3 [&_.ProseMirror_blockquote]:italic"
+          [&_.ProseMirror_img]:cursor-zoom-in [&_.ProseMirror_img]:rounded-lg [&_.ProseMirror_img]:max-w-full [&_.ProseMirror_ul]:list-disc [&_.ProseMirror_ol]:list-decimal [&_.ProseMirror_blockquote]:border-l-2 [&_.ProseMirror_blockquote]:pl-3 [&_.ProseMirror_blockquote]:italic"
+        onClick={(e) => {
+          const img = (e.target as HTMLElement).closest("img");
+          if (img?.src) setZoomedImage(img.src);
+        }}
       >
         <EditorContent editor={editor} />
       </div>
+      {zoomedImage && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setZoomedImage(null)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => e.key === "Escape" && setZoomedImage(null)}
+          aria-label="Close zoomed image"
+        >
+          <img
+            src={zoomedImage}
+            alt="Zoomed"
+            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

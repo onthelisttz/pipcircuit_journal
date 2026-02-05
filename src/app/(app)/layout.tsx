@@ -1,13 +1,18 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { AuthGuard, Header, Sidebar } from "@ui/components/layout";
+import { seedDefaultTags } from "@infrastructure/db/dexie/seedTags";
 import { TradePanel } from "@ui/components/panels";
 import { TradePanelProvider } from "@ui/providers";
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    void seedDefaultTags();
+  }, []);
 
   return (
     <AuthGuard>
@@ -25,7 +30,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           )}
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <Header onMenuToggle={() => setIsSidebarOpen((prev) => !prev)} />
-            <main className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-0">{children}</main>
+            <main className="min-h-0 flex-1 overflow-y-auto px-6 pr-8 md:pr-10 pb-6 pt-0">{children}</main>
           </div>
           <TradePanel />
         </div>

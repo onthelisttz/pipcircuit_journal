@@ -6,6 +6,7 @@ import {
     LayoutDashboard,
     BookOpen,
     Eye,
+    Tag,
     Users,
     Settings,
     ChevronLeft,
@@ -31,6 +32,11 @@ const navItems = [
         label: "Observations",
         href: "/observations",
         icon: Eye,
+    },
+    {
+        label: "Tags",
+        href: "/tags",
+        icon: Tag,
     },
     {
         label: "Accounts",

@@ -11,3 +11,5 @@ export { useTrade } from "./useTrade";
 export { useTradeNote } from "./useTradeNote";
 export { useDashboard, useDashboardSymbols, useCalendarMonthReturns } from "./useDashboard";
 export { useTradesByQuery } from "./useTradesByQuery";
+export { useTradeTags } from "./useTradeTags";
+export { useTagsList } from "./useTagsList";

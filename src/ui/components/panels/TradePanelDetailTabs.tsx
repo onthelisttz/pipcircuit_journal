@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import { useTrade } from "@ui/hooks";
 import { TradeChartView } from "@ui/components/charts";
 import { TradeJournalEditor } from "./TradeJournalEditor";
+import { TradeTagsTab } from "./TradeTagsTab";
 import { volumeToLots } from "@lib/pnl-estimate";
 
 type TabId = "details" | "journal" | "tags" | "chart";
@@ -201,11 +202,7 @@ export function TradePanelDetailTabs({
   }
 
   if (activeTab === "tags") {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Tags feature coming soon
-      </p>
-    );
+    return <TradeTagsTab tradeId={tradeId} />;
   }
 
   if (activeTab === "chart") {
