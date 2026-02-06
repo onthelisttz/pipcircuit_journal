@@ -32,9 +32,30 @@ const defaultFilters: ObservationFiltersState = {
   to: new Date(),
   categoryId: null,
 };
+const OBS_FILTERS_KEY = "observationFilters";
 
 export function ObservationsPage() {
-  const [filters, setFilters] = useState<ObservationFiltersState>(defaultFilters);
+  const [filters, setFilters] = useState<ObservationFiltersState>(() => {
+    if (typeof window === "undefined") return defaultFilters;
+    try {
+      const raw = window.localStorage.getItem(OBS_FILTERS_KEY);
+      if (!raw) return defaultFilters;
+      const parsed = JSON.parse(raw) as {
+        from?: string;
+        to?: string;
+        categoryId?: number | null;
+      };
+      const from = parsed.from ? new Date(parsed.from) : defaultFilters.from;
+      const to = parsed.to ? new Date(parsed.to) : defaultFilters.to;
+      return {
+        from,
+        to,
+        categoryId: parsed.categoryId ?? defaultFilters.categoryId,
+      };
+    } catch {
+      return defaultFilters;
+    }
+  });
   const { observations: filteredObs, isLoading, refetch } = useObservations(filters);
   const { categories, refetch: refetchCategories } = useObservationCategories();
   const { openPanel } = useObservationPanel();
@@ -48,6 +69,23 @@ export function ObservationsPage() {
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+
+  // Persist filters whenever they change
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        OBS_FILTERS_KEY,
+        JSON.stringify({
+          from: filters.from.toISOString(),
+          to: filters.to.toISOString(),
+          categoryId: filters.categoryId ?? null,
+        })
+      );
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [filters]);
 
   const resetForm = useCallback(() => {
     setTitle("");

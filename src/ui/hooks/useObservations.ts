@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { startOfDay, endOfDay } from "date-fns";
 import type { Observation } from "@domain/entities";
 import { DexieObservationRepository } from "@infrastructure/db/dexie";
 
@@ -43,8 +44,8 @@ export function useObservations(filters?: UseObservationsFilters) {
 
   const filtered = useMemo(() => {
     if (!filters?.from && !filters?.to) return observations;
-    const fromMs = filters.from ? toTimeMs(filters.from) : 0;
-    const toMs = filters.to ? toTimeMs(filters.to) : Number.MAX_SAFE_INTEGER;
+    const fromMs = filters.from ? startOfDay(filters.from).getTime() : 0;
+    const toMs = filters.to ? endOfDay(filters.to).getTime() : Number.MAX_SAFE_INTEGER;
     return observations.filter((obs) => {
       const created = toTimeMs(obs.createdAt);
       return created >= fromMs && created <= toMs;

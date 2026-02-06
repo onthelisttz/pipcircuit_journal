@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { subDays, startOfDay, endOfDay } from "date-fns";
 import { TradeOutcome, Direction } from "@domain/enums";
 import { useAccount, useTradesByQuery } from "@ui/hooks";
@@ -30,13 +30,58 @@ const defaultFilters: DashboardFiltersState = {
   from: subDays(new Date(), 30),
   to: new Date(),
 };
+const DASHBOARD_FILTERS_KEY = "dashboardFilters";
 
 export default function DashboardPage() {
   const { activeAccount } = useAccount();
   const { openPanel } = useTradePanel();
   const accountId = activeAccount?.accountNumber;
-  const [filters, setFilters] = useState<DashboardFiltersState>(defaultFilters);
+  const [filters, setFilters] = useState<DashboardFiltersState>(() => {
+    if (typeof window === "undefined") return defaultFilters;
+    try {
+      const raw = window.localStorage.getItem(DASHBOARD_FILTERS_KEY);
+      if (!raw) return defaultFilters;
+      const parsed = JSON.parse(raw) as {
+        symbols?: string[];
+        direction?: string;
+        from?: string;
+        to?: string;
+      };
+      const from = parsed.from ? new Date(parsed.from) : defaultFilters.from;
+      const to = parsed.to ? new Date(parsed.to) : defaultFilters.to;
+      const direction: DashboardFiltersState["direction"] =
+        parsed.direction === "Buy" || parsed.direction === "Sell" || parsed.direction === "Both"
+          ? (parsed.direction as DashboardFiltersState["direction"])
+          : defaultFilters.direction;
+      return {
+        symbols: parsed.symbols ?? defaultFilters.symbols,
+        direction,
+        from,
+        to,
+      };
+    } catch {
+      return defaultFilters;
+    }
+  });
   const availableSymbols = useDashboardSymbols(accountId);
+
+  // Persist filters whenever they change
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        DASHBOARD_FILTERS_KEY,
+        JSON.stringify({
+          symbols: filters.symbols,
+          direction: filters.direction,
+          from: filters.from.toISOString(),
+          to: filters.to.toISOString(),
+        })
+      );
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [filters]);
 
   const panelQuery = useMemo(
     () =>

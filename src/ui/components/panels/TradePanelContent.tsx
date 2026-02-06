@@ -5,6 +5,8 @@ import { format } from "date-fns";
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   BarChart3,
   FileText,
   Tag,
@@ -42,6 +44,7 @@ export function TradePanelContent({
   type SortCol = "name" | "type" | "size" | "pnl" | "date";
   const [sortCol, setSortCol] = useState<SortCol>("date");
   const [sortAsc, setSortAsc] = useState(false);
+  const [listCollapsed, setListCollapsed] = useState(false);
 
   const summary = useMemo(() => {
     const total = trades.length;
@@ -156,159 +159,218 @@ export function TradePanelContent({
         </div>
       </div>
 
-      {/* Trade list - sortable table */}
+      {/* Trade list - sortable table (collapsible) */}
       <div className="shrink-0 border-b border-border">
-        <div className="max-h-40 overflow-y-auto">
-          {trades.length === 0 ? (
-            <p className="px-4 py-4 text-center text-sm text-muted-foreground">
-              No trades
-            </p>
-          ) : (
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
-                <tr>
-                  <th className="px-2 py-1.5 text-left">
-                    <button
-                      type="button"
-                      onClick={() => toggleSort("name")}
-                      className="flex items-center gap-0.5 font-semibold text-muted-foreground hover:text-foreground"
-                    >
-                      Name
-                      {sortCol === "name" ? (
-                        sortAsc ? (
-                          <ArrowUp className="h-3 w-3" />
-                        ) : (
-                          <ArrowDown className="h-3 w-3" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="h-3 w-3 opacity-50" />
-                      )}
-                    </button>
-                  </th>
-                  <th className="px-2 py-1.5 text-left">
-                    <button
-                      type="button"
-                      onClick={() => toggleSort("type")}
-                      className="flex items-center gap-0.5 font-semibold text-muted-foreground hover:text-foreground"
-                    >
-                      Type
-                      {sortCol === "type" ? (
-                        sortAsc ? (
-                          <ArrowUp className="h-3 w-3" />
-                        ) : (
-                          <ArrowDown className="h-3 w-3" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="h-3 w-3 opacity-50" />
-                      )}
-                    </button>
-                  </th>
-                  <th className="px-2 py-1.5 text-left">
-                    <button
-                      type="button"
-                      onClick={() => toggleSort("size")}
-                      className="flex items-center gap-0.5 font-semibold text-muted-foreground hover:text-foreground"
-                    >
-                      Size
-                      {sortCol === "size" ? (
-                        sortAsc ? (
-                          <ArrowUp className="h-3 w-3" />
-                        ) : (
-                          <ArrowDown className="h-3 w-3" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="h-3 w-3 opacity-50" />
-                      )}
-                    </button>
-                  </th>
-                  <th className="px-2 py-1.5 text-right">
-                    <button
-                      type="button"
-                      onClick={() => toggleSort("pnl")}
-                      className="ml-auto flex items-center gap-0.5 font-semibold text-muted-foreground hover:text-foreground"
-                    >
-                      P/L
-                      {sortCol === "pnl" ? (
-                        sortAsc ? (
-                          <ArrowUp className="h-3 w-3" />
-                        ) : (
-                          <ArrowDown className="h-3 w-3" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="h-3 w-3 opacity-50" />
-                      )}
-                    </button>
-                  </th>
-                  <th className="px-2 py-1.5 text-left">
-                    <button
-                      type="button"
-                      onClick={() => toggleSort("date")}
-                      className="flex items-center gap-0.5 font-semibold text-muted-foreground hover:text-foreground"
-                    >
-                      Date
-                      {sortCol === "date" ? (
-                        sortAsc ? (
-                          <ArrowUp className="h-3 w-3" />
-                        ) : (
-                          <ArrowDown className="h-3 w-3" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="h-3 w-3 opacity-50" />
-                      )}
-                    </button>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedTrades.map((t) => {
-                  const profit = t.netProfit ?? t.grossProfit ?? 0;
-                  const isSelected = t.id === selectedTradeId;
-                  const lots = volumeToLots(t.volume ?? 0, t.symbol ?? "");
-                  const dateVal = t.closeTime ?? t.openTime;
-                  return (
-                    <tr
-                      key={t.id ?? t.ticketId ?? t.openTime?.toString()}
-                      onClick={() => setSelectedTradeId(t.id ?? null)}
-                      className={`cursor-pointer transition-colors ${
-                        isSelected
-                          ? "bg-accent text-accent-foreground"
-                          : "hover:bg-muted/50"
-                      }`}
-                    >
-                      <td className="px-2 py-1.5 font-medium truncate max-w-16">
-                        {t.symbol}
-                      </td>
-                      <td
-                        className={`px-2 py-1.5 ${
-                          t.direction === "Buy"
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-destructive"
-                        }`}
-                      >
-                        {t.direction}
-                      </td>
-                      <td className="px-2 py-1.5 tabular-nums">{lots.toFixed(2)}</td>
-                      <td
-                        className={`px-2 py-1.5 text-right tabular-nums ${
-                          profit >= 0
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-destructive"
-                        }`}
-                      >
-                        {formatProfit(profit)}
-                      </td>
-                      <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
-                        {dateVal
-                          ? format(new Date(dateVal), "MMM d HH:mm")
-                          : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
+        <div className="flex items-center justify-between px-4 py-2">
+          <span className="text-xs font-medium text-muted-foreground">
+            Trades
+          </span>
+          <button
+            type="button"
+            onClick={() => setListCollapsed((v) => !v)}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            {listCollapsed ? (
+              <ChevronDown className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <ChevronUp className="h-4 w-4" aria-hidden="true" />
+            )}
+            <span className="sr-only">
+              {listCollapsed ? "Show trade list" : "Hide trade list"}
+            </span>
+          </button>
         </div>
+        {listCollapsed ? (
+          <div className="px-4 pb-2">
+            {selectedIndex >= 0 && trades[selectedIndex] ? (
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-medium text-foreground">
+                    {trades[selectedIndex].symbol}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {trades[selectedIndex].direction} ·{" "}
+                    {volumeToLots(trades[selectedIndex].volume ?? 0, trades[selectedIndex].symbol ?? "").toFixed(2)}{" "}
+                    lots
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span
+                    className={`block tabular-nums ${
+                      (trades[selectedIndex].netProfit ?? trades[selectedIndex].grossProfit ?? 0) >= 0
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-destructive"
+                    }`}
+                  >
+                    {formatProfit(
+                      trades[selectedIndex].netProfit ?? trades[selectedIndex].grossProfit ?? 0
+                    )}
+                  </span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    {format(
+                      new Date(trades[selectedIndex].closeTime ?? trades[selectedIndex].openTime ?? 0),
+                      "MMM d HH:mm"
+                    )}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">No trade selected</p>
+            )}
+          </div>
+        ) : (
+          <div className="max-h-40 overflow-y-auto">
+            {trades.length === 0 ? (
+              <p className="px-4 py-4 text-center text-sm text-muted-foreground">
+                No trades
+              </p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left">
+                      <button
+                        type="button"
+                        onClick={() => toggleSort("name")}
+                        className="flex items-center gap-0.5 font-semibold text-muted-foreground hover:text-foreground"
+                      >
+                        Name
+                        {sortCol === "name" ? (
+                          sortAsc ? (
+                            <ArrowUp className="h-3 w-3" />
+                          ) : (
+                            <ArrowDown className="h-3 w-3" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="h-3 w-3 opacity-50" />
+                        )}
+                      </button>
+                    </th>
+                    <th className="px-2 py-1.5 text-left">
+                      <button
+                        type="button"
+                        onClick={() => toggleSort("type")}
+                        className="flex items-center gap-0.5 font-semibold text-muted-foreground hover:text-foreground"
+                      >
+                        Type
+                        {sortCol === "type" ? (
+                          sortAsc ? (
+                            <ArrowUp className="h-3 w-3" />
+                          ) : (
+                            <ArrowDown className="h-3 w-3" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="h-3 w-3 opacity-50" />
+                        )}
+                      </button>
+                    </th>
+                    <th className="px-2 py-1.5 text-left">
+                      <button
+                        type="button"
+                        onClick={() => toggleSort("size")}
+                        className="flex items-center gap-0.5 font-semibold text-muted-foreground hover:text-foreground"
+                      >
+                        Size
+                        {sortCol === "size" ? (
+                          sortAsc ? (
+                            <ArrowUp className="h-3 w-3" />
+                          ) : (
+                            <ArrowDown className="h-3 w-3" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="h-3 w-3 opacity-50" />
+                        )}
+                      </button>
+                    </th>
+                    <th className="px-2 py-1.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => toggleSort("pnl")}
+                        className="ml-auto flex items-center gap-0.5 font-semibold text-muted-foreground hover:text-foreground"
+                      >
+                        P/L
+                        {sortCol === "pnl" ? (
+                          sortAsc ? (
+                            <ArrowUp className="h-3 w-3" />
+                          ) : (
+                            <ArrowDown className="h-3 w-3" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="h-3 w-3 opacity-50" />
+                        )}
+                      </button>
+                    </th>
+                    <th className="px-2 py-1.5 text-left">
+                      <button
+                        type="button"
+                        onClick={() => toggleSort("date")}
+                        className="flex items-center gap-0.5 font-semibold text-muted-foreground hover:text-foreground"
+                      >
+                        Date
+                        {sortCol === "date" ? (
+                          sortAsc ? (
+                            <ArrowUp className="h-3 w-3" />
+                          ) : (
+                            <ArrowDown className="h-3 w-3" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="h-3 w-3 opacity-50" />
+                        )}
+                      </button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedTrades.map((t) => {
+                    const profit = t.netProfit ?? t.grossProfit ?? 0;
+                    const isSelected = t.id === selectedTradeId;
+                    const lots = volumeToLots(t.volume ?? 0, t.symbol ?? "");
+                    const dateVal = t.closeTime ?? t.openTime;
+                    return (
+                      <tr
+                        key={t.id ?? t.ticketId ?? t.openTime?.toString()}
+                        onClick={() => setSelectedTradeId(t.id ?? null)}
+                        className={`cursor-pointer transition-colors ${
+                          isSelected
+                            ? "bg-accent text-accent-foreground"
+                            : "hover:bg-muted/50"
+                        }`}
+                      >
+                        <td className="px-2 py-1.5 font-medium truncate max-w-16">
+                          {t.symbol}
+                        </td>
+                        <td
+                          className={`px-2 py-1.5 ${
+                            t.direction === "Buy"
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-destructive"
+                          }`}
+                        >
+                          {t.direction}
+                        </td>
+                        <td className="px-2 py-1.5 tabular-nums">{lots.toFixed(2)}</td>
+                        <td
+                          className={`px-2 py-1.5 text-right tabular-nums ${
+                            profit >= 0
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-destructive"
+                          }`}
+                        >
+                          {formatProfit(profit)}
+                        </td>
+                        <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
+                          {dateVal
+                            ? format(new Date(dateVal), "MMM d HH:mm")
+                            : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Selected trade detail */}
