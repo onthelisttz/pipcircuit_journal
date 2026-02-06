@@ -2,32 +2,26 @@
 
 import {
     createChart,
-    createSeriesMarkers,
     type IChartApi,
     type IPriceLine,
     type ISeriesApi,
     type CandlestickData,
     type Time,
-    type SeriesMarker,
     ColorType,
     LineStyle,
     CandlestickSeries,
 } from "lightweight-charts";
 import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
 import type { ChartBar, Trade } from "@domain/entities";
-import { Direction } from "@domain/enums";
+import { RiskRewardPlugin } from "./plugins/RiskRewardPlugin";
 
 export interface TradeCandlestickChartProps {
     /** Chart bar data to display */
     data: ChartBar[];
-    /** Trade for context visualization (entry/exit markers) */
+    /** Trade for context visualization */
     trade?: Trade;
     /** Height of the chart container */
     height?: number;
-    /** Show/hide entry marker */
-    showEntryMarker?: boolean;
-    /** Show/hide exit marker */
-    showExitMarker?: boolean;
     /** Callback when visible range changes (for lazy loading) */
     onVisibleRangeChange?: (from: number, to: number) => void;
     /** Loading state */
@@ -36,31 +30,31 @@ export interface TradeCandlestickChartProps {
 
 export interface TradeCandlestickChartRef {
     fitContent: () => void;
+    scrollToTrade: () => void;
 }
 
 /**
  * TradeCandlestickChart - Main candlestick chart component
  *
- * Uses TradingView Lightweight Charts v5 with dark theme,
- * entry/exit markers, and trade context visualization.
+ * Uses TradingView Lightweight Charts v5 with dark theme (Pure Black),
+ * R:R visualization with timestamp snapping for finite boxes.
  */
 export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeCandlestickChartProps>(function TradeCandlestickChart({
     data,
     trade,
     height = 400,
-    showEntryMarker = true,
-    showExitMarker = true,
     onVisibleRangeChange,
     isLoading = false,
 }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-    const markersPluginRef = useRef<ReturnType<typeof createSeriesMarkers<Time>> | null>(null);
     const entryLineRef = useRef<IPriceLine | null>(null);
     const stopLossLineRef = useRef<IPriceLine | null>(null);
-    const takeProfitLineRef = useRef<IPriceLine | null>(null);
+    const exitLineRef = useRef<IPriceLine | null>(null);
     const [isChartReady, setIsChartReady] = useState(false);
+
+    const riskRewardPluginRef = useRef<RiskRewardPlugin | null>(null);
 
     // Convert ChartBar data to Lightweight Charts format (sorted, deduplicated by time)
     const formatData = useCallback((bars: ChartBar[]): CandlestickData<Time>[] => {
@@ -79,6 +73,26 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         return Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number));
     }, []);
 
+    // Scroll chart to center on trade timeframe
+    const scrollToTrade = useCallback(() => {
+        if (!chartRef.current || !trade || data.length === 0) return;
+
+        const openTs = trade.openTime instanceof Date ? trade.openTime.getTime() : new Date(trade.openTime).getTime();
+        const closeTs = trade.closeTime
+            ? (trade.closeTime instanceof Date ? trade.closeTime.getTime() : new Date(trade.closeTime).getTime())
+            : openTs;
+
+        const openSec = openTs / 1000;
+        const closeSec = closeTs / 1000;
+        const tradeDuration = Math.max(closeSec - openSec, 60); // At least 1 minute
+        const padding = tradeDuration * 0.5; // 50% padding on each side
+
+        chartRef.current.timeScale().setVisibleRange({
+            from: (openSec - padding) as Time,
+            to: (closeSec + padding) as Time,
+        });
+    }, [trade, data.length]);
+
     // Initialize chart
     useEffect(() => {
         if (!containerRef.current) return;
@@ -87,13 +101,13 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             width: containerRef.current.clientWidth,
             height,
             layout: {
-                background: { type: ColorType.Solid, color: "transparent" },
+                background: { type: ColorType.Solid, color: "#000000" }, // Pure Black
                 textColor: "#9ca3af",
                 fontFamily: "'Inter', sans-serif",
             },
             grid: {
-                vertLines: { color: "#1f2937" },
-                horzLines: { color: "#1f2937" },
+                vertLines: { color: "#000000" }, // Pure Black Grid (Invisible/Matches BG)
+                horzLines: { color: "#000000" }, // Pure Black Grid
             },
             crosshair: {
                 mode: 1, // Normal
@@ -112,7 +126,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             },
             rightPriceScale: {
                 borderColor: "#374151",
-                scaleMargins: { top: 0.1, bottom: 0.1 },
+                scaleMargins: { top: 0.15, bottom: 0.15 },
             },
             timeScale: {
                 borderColor: "#374151",
@@ -142,14 +156,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             },
         });
 
-        // Add candlestick series (v5 API)
+        // Add candlestick series (User Specified Colors)
         const series = chart.addSeries(CandlestickSeries, {
-            upColor: "#22c55e",
-            downColor: "#ef4444",
-            borderUpColor: "#22c55e",
-            borderDownColor: "#ef4444",
-            wickUpColor: "#22c55e",
-            wickDownColor: "#ef4444",
+            upColor: "#dbdbdb",           // Bullish: Light Gray/Off-White
+            downColor: "#636363",         // Bearish: Dark Gray
+            borderUpColor: "#dbdbdb",
+            borderDownColor: "#636363",
+            wickUpColor: "#dbdbdb",
+            wickDownColor: "#636363",
         });
 
         chartRef.current = chart;
@@ -174,10 +188,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         return () => {
             window.removeEventListener("resize", handleResize);
-            markersPluginRef.current = null;
             entryLineRef.current = null;
             stopLossLineRef.current = null;
-            takeProfitLineRef.current = null;
+            exitLineRef.current = null;
+            riskRewardPluginRef.current = null;
             chart.remove();
             chartRef.current = null;
             seriesRef.current = null;
@@ -189,138 +203,139 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         fitContent: () => {
             chartRef.current?.timeScale().fitContent();
         },
-    }), []);
+        scrollToTrade,
+    }), [scrollToTrade]);
 
-    // Update chart data
+    // Update chart data and auto-scroll to trade
     useEffect(() => {
         if (!seriesRef.current || !isChartReady || data.length === 0) return;
 
         const formattedData = formatData(data);
         seriesRef.current.setData(formattedData);
 
-        // Fit content to view
-        chartRef.current?.timeScale().fitContent();
-    }, [data, isChartReady, formatData]);
-
-    // Add trade markers (Lightweight Charts v5) - run after data is set, snap times to bar boundaries
-    useEffect(() => {
-        if (!seriesRef.current || !isChartReady || data.length === 0) return;
-
-        const formattedData = formatData(data);
-        const barTimes = formattedData.map((d) => d.time as number).sort((a, b) => a - b);
-
-        const snapToNearestBar = (tsMs: number): Time => {
-            const tsSec = tsMs / 1000;
-            if (barTimes.length === 0) return tsSec as Time;
-            let nearest = barTimes[0];
-            let minDiff = Math.abs(barTimes[0] - tsSec);
-            for (const t of barTimes) {
-                const diff = Math.abs(t - tsSec);
-                if (diff < minDiff) {
-                    minDiff = diff;
-                    nearest = t;
-                }
-            }
-            return nearest as Time;
-        };
-
-        const markers: SeriesMarker<Time>[] = [];
-
+        // Auto-scroll to trade location after data loads
         if (trade) {
-            const isBuy = trade.direction === Direction.Buy;
-            const entryColor = isBuy ? "#22c55e" : "#ef4444";
-            const exitColor = isBuy ? "#ef4444" : "#22c55e";
-
-            if (showEntryMarker && trade.openTime) {
-                const openTs = trade.openTime instanceof Date ? trade.openTime.getTime() : new Date(trade.openTime).getTime();
-                markers.push({
-                    time: snapToNearestBar(openTs),
-                    position: isBuy ? "belowBar" : "aboveBar",
-                    color: entryColor,
-                    shape: isBuy ? "arrowUp" : "arrowDown",
-                    text: "",
-                });
-            }
-
-            if (showExitMarker && trade.closeTime && trade.closePrice) {
-                const closeTs = trade.closeTime instanceof Date ? trade.closeTime.getTime() : new Date(trade.closeTime).getTime();
-                markers.push({
-                    time: snapToNearestBar(closeTs),
-                    position: isBuy ? "aboveBar" : "belowBar",
-                    color: exitColor,
-                    shape: "circle",
-                    text: `Exit ${trade.closePrice.toFixed(5)}`,
-                });
-            }
-        }
-
-        if (!markersPluginRef.current) {
-            markersPluginRef.current = createSeriesMarkers(seriesRef.current, markers);
+            // Small delay to ensure chart has rendered
+            setTimeout(() => scrollToTrade(), 50);
         } else {
-            markersPluginRef.current.setMarkers(markers);
+            chartRef.current?.timeScale().fitContent();
         }
-    }, [trade, data, isChartReady, formatData, showEntryMarker, showExitMarker]);
+    }, [data, isChartReady, formatData, trade, scrollToTrade]);
 
-    // Add entry, stop loss, take profit price lines (dotted, no label on entry)
+    // Manage R:R Visualization (Plugin + Price Lines) with Adaptive Scaling
     useEffect(() => {
-        if (!seriesRef.current || !isChartReady || !trade) return;
+        if (!seriesRef.current || !isChartReady || !trade || data.length === 0) return;
 
         const series = seriesRef.current;
+        let entryPrice = trade.entryPrice ?? trade.openPrice;
+        let rewardPrice = trade.closePrice ?? trade.takeProfit;
+        let stopLoss = trade.stopLoss;
+        const openTime = trade.openTime;
 
-        // Remove existing price lines
-        if (entryLineRef.current) {
-            series.removePriceLine(entryLineRef.current);
-            entryLineRef.current = null;
-        }
-        if (stopLossLineRef.current) {
-            series.removePriceLine(stopLossLineRef.current);
-            stopLossLineRef.current = null;
-        }
-        if (takeProfitLineRef.current) {
-            series.removePriceLine(takeProfitLineRef.current);
-            takeProfitLineRef.current = null;
-        }
+        // --- ADAPTIVE SCALING LOGIC (Robust Power of 10) ---
+        // Calculate average close price from data to check scale
+        const avgPrice = data.reduce((sum, bar) => sum + bar.close, 0) / data.length;
 
-        const entryPrice = trade.entryPrice ?? trade.openPrice;
-        const isBuy = trade.direction === Direction.Buy;
-        const lineColor = isBuy ? "#22c55e" : "#ef4444";
+        if (entryPrice && avgPrice > 0) {
+            const ratio = avgPrice / entryPrice;
+            const logDiff = Math.log10(ratio);
+            const magnitude = Math.round(logDiff);
 
-        // Entry line: dotted, no label
+            // Only apply scaling if the difference is substantial (at least 1 order of magnitude, e.g. 10x)
+            if (Math.abs(magnitude) >= 1) {
+                const multiplier = Math.pow(10, magnitude);
+
+                // Apply scaling correction to trade levels
+                entryPrice = entryPrice * multiplier;
+                if (rewardPrice) rewardPrice = rewardPrice * multiplier;
+                if (stopLoss) stopLoss = stopLoss * multiplier;
+
+                console.log(`[TradeChart] Scaling Mismatch Detected. Ratio: ${ratio.toFixed(2)}, Applied Multiplier: ${multiplier}`);
+            }
+        }
+        // -----------------------------
+
+        // 1. Manage Price Lines (Labels Only - Line Hidden)
+        // Remove existing
+        if (entryLineRef.current) { series.removePriceLine(entryLineRef.current); entryLineRef.current = null; }
+        if (stopLossLineRef.current) { series.removePriceLine(stopLossLineRef.current); stopLossLineRef.current = null; }
+        if (exitLineRef.current) { series.removePriceLine(exitLineRef.current); exitLineRef.current = null; }
+
+        // Entry Label
         if (entryPrice != null && Number.isFinite(entryPrice)) {
             entryLineRef.current = series.createPriceLine({
                 price: entryPrice,
-                color: lineColor,
+                color: "#6b7280", // Neutral gray
                 lineWidth: 1,
                 lineStyle: LineStyle.Dotted,
-                axisLabelVisible: false,
-                title: "",
+                axisLabelVisible: true,
+                lineVisible: false, // Hide the infinite line
+                title: "ENTRY",
             });
         }
 
-        // Stop loss: dotted
-        if (trade.stopLoss != null && Number.isFinite(trade.stopLoss)) {
+        // SL Label
+        if (stopLoss != null && Number.isFinite(stopLoss)) {
             stopLossLineRef.current = series.createPriceLine({
-                price: trade.stopLoss,
-                color: "#ef4444",
+                price: stopLoss,
+                color: "#ef4444", // Red text
                 lineWidth: 1,
-                lineStyle: LineStyle.Dotted,
+                lineStyle: LineStyle.Dotted, // Minimal line
                 axisLabelVisible: true,
-                title: `SL ${trade.stopLoss.toFixed(5)}`,
+                lineVisible: false, // Hide the infinite line
+                title: "SL",
             });
         }
 
-        // Take profit: dotted
-        if (trade.takeProfit != null && Number.isFinite(trade.takeProfit)) {
-            takeProfitLineRef.current = series.createPriceLine({
-                price: trade.takeProfit,
-                color: "#22c55e",
+        // TP/Exit Label
+        if (rewardPrice != null && Number.isFinite(rewardPrice)) {
+            const isProfit = (trade.netProfit ?? 0) >= 0;
+            const color = trade.closePrice ? (isProfit ? "#22c55e" : "#ef4444") : "#22c55e"; // Green for TP target
+
+            exitLineRef.current = series.createPriceLine({
+                price: rewardPrice,
+                color: color,
                 lineWidth: 1,
                 lineStyle: LineStyle.Dotted,
                 axisLabelVisible: true,
-                title: `TP ${trade.takeProfit.toFixed(5)}`,
+                lineVisible: false, // Hide the infinite line
+                title: trade.closePrice ? "EXIT" : "TP",
             });
         }
-    }, [trade, isChartReady]);
+
+        // 2. Manage RiskRewardPlugin (The Box)
+        if (entryPrice != null && stopLoss != null && rewardPrice != null && data.length > 0) {
+
+            // Safe timestamp snapper - finds nearest bar to prevent plugin from receiving invalid time
+            const findClosestTime = (targetDate: Date | string | number): Time => {
+                const targetTs = new Date(targetDate).getTime();
+                // Find bar with closest timestamp
+                const closest = data.reduce((prev, curr) =>
+                    Math.abs(curr.timestamp - targetTs) < Math.abs(prev.timestamp - targetTs) ? curr : prev
+                );
+                return (closest.timestamp / 1000) as Time;
+            };
+
+            const startTs = findClosestTime(openTime);
+
+            // Pass closeTime if trade is closed
+            let endTs: Time | null = null;
+            if (trade.closeTime) {
+                endTs = findClosestTime(trade.closeTime);
+            }
+
+            if (!riskRewardPluginRef.current) {
+                // Create new plugin
+                const plugin = new RiskRewardPlugin(entryPrice, stopLoss, rewardPrice, startTs, endTs);
+                series.attachPrimitive(plugin);
+                riskRewardPluginRef.current = plugin;
+            } else {
+                // Update existing
+                riskRewardPluginRef.current.updateData(entryPrice, stopLoss, rewardPrice, startTs, endTs);
+            }
+        }
+
+    }, [data, isChartReady, trade]); // data dependency vital for scaling calc checks
 
     return (
         <div className="relative w-full" style={{ height }}>

@@ -16,3 +16,4 @@ export { useTagsList } from "./useTagsList";
 export { useObservation } from "./useObservation";
 export { useObservations } from "./useObservations";
 export { useObservationCategories } from "./useObservationCategories";
+export { useScrollPersistence } from "./useScrollPersistence";

@@ -21,7 +21,7 @@ import {
 } from "@ui/features/dashboard";
 import { ScrollToTop } from "@ui/components/common";
 import type { DashboardFiltersState } from "@ui/features/dashboard";
-import { useDashboard, useDashboardSymbols } from "@ui/hooks";
+import { useDashboard, useDashboardSymbols, useScrollPersistence } from "@ui/hooks";
 import Link from "next/link";
 
 const defaultFilters: DashboardFiltersState = {
@@ -34,7 +34,7 @@ const DASHBOARD_FILTERS_KEY = "dashboardFilters";
 
 export default function DashboardPage() {
   const { activeAccount } = useAccount();
-  const { openPanel } = useTradePanel();
+  const { openPanel, isOpen: isPanelOpen } = useTradePanel();
   const accountId = activeAccount?.accountNumber;
   const [filters, setFilters] = useState<DashboardFiltersState>(() => {
     if (typeof window === "undefined") return defaultFilters;
@@ -87,12 +87,12 @@ export default function DashboardPage() {
     () =>
       accountId
         ? {
-            accountId,
-            from: startOfDay(filters.from),
-            to: endOfDay(filters.to),
-            symbols: filters.symbols.length > 0 ? filters.symbols : undefined,
-            direction: filters.direction !== "Both" ? filters.direction : undefined,
-          }
+          accountId,
+          from: startOfDay(filters.from),
+          to: endOfDay(filters.to),
+          symbols: filters.symbols.length > 0 ? filters.symbols : undefined,
+          direction: filters.direction !== "Both" ? filters.direction : undefined,
+        }
         : null,
     [accountId, filters.from, filters.to, filters.symbols, filters.direction]
   );
@@ -151,6 +151,9 @@ export default function DashboardPage() {
     longShortStats,
     dayOfWeekReturns,
   } = useDashboard(accountId, filters);
+
+  // Use scroll persistence, waiting for loading to complete
+  useScrollPersistence("dashboard", !loading);
 
   if (!activeAccount) {
     return (
@@ -229,40 +232,40 @@ export default function DashboardPage() {
             onDayClick={
               panelQuery
                 ? (date) =>
-                    openPanel({
-                      title: `Trades on ${date.toLocaleDateString()}`,
-                      query: {
-                        ...panelQuery,
-                        from: startOfDay(date),
-                        to: endOfDay(date),
-                      },
-                    })
+                  openPanel({
+                    title: `Trades on ${date.toLocaleDateString()}`,
+                    query: {
+                      ...panelQuery,
+                      from: startOfDay(date),
+                      to: endOfDay(date),
+                    },
+                  })
                 : undefined
             }
             onWeekClick={
               panelQuery
                 ? (weekStart, weekEnd) =>
-                    openPanel({
-                      title: `Trades ${weekStart.toLocaleDateString()} – ${weekEnd.toLocaleDateString()}`,
-                      query: {
-                        ...panelQuery,
-                        from: startOfDay(weekStart),
-                        to: endOfDay(weekEnd),
-                      },
-                    })
+                  openPanel({
+                    title: `Trades ${weekStart.toLocaleDateString()} – ${weekEnd.toLocaleDateString()}`,
+                    query: {
+                      ...panelQuery,
+                      from: startOfDay(weekStart),
+                      to: endOfDay(weekEnd),
+                    },
+                  })
                 : undefined
             }
             onMonthClick={
               panelQuery
                 ? (monthStart, monthEnd) =>
-                    openPanel({
-                      title: `Trades in ${monthStart.toLocaleDateString(undefined, { month: "long", year: "numeric" })}`,
-                      query: {
-                        ...panelQuery,
-                        from: startOfDay(monthStart),
-                        to: endOfDay(monthEnd),
-                      },
-                    })
+                  openPanel({
+                    title: `Trades in ${monthStart.toLocaleDateString(undefined, { month: "long", year: "numeric" })}`,
+                    query: {
+                      ...panelQuery,
+                      from: startOfDay(monthStart),
+                      to: endOfDay(monthEnd),
+                    },
+                  })
                 : undefined
             }
           />
@@ -277,15 +280,15 @@ export default function DashboardPage() {
             onCellClick={
               panelQuery
                 ? (symbol, type, title) =>
-                    openPanel({
-                      title,
-                      query: {
-                        ...panelQuery,
-                        symbols: [symbol],
-                        ...(type === "wins" && { winsOnly: true }),
-                        ...(type === "losses" && { lossesOnly: true }),
-                      },
-                    })
+                  openPanel({
+                    title,
+                    query: {
+                      ...panelQuery,
+                      symbols: [symbol],
+                      ...(type === "wins" && { winsOnly: true }),
+                      ...(type === "losses" && { lossesOnly: true }),
+                    },
+                  })
                 : undefined
             }
           />
@@ -311,27 +314,32 @@ export default function DashboardPage() {
               onRowClick={
                 panelQuery
                   ? (trade, allIds) =>
-                      openPanel({
-                        title: "Trades",
-                        tradeIds: allIds,
-                        selectedTradeId: trade.id ?? undefined,
-                      })
+                    openPanel({
+                      title: "Trades",
+                      tradeIds: allIds,
+                      selectedTradeId: trade.id ?? undefined,
+                    })
                   : undefined
               }
               onSummaryClick={
                 panelQuery
                   ? (filter, tradeIds) =>
-                      openPanel({
-                        title: filter === "long" ? "Long Trades" : filter === "short" ? "Short Trades" : "All Trades",
-                        tradeIds,
-                      })
+                    openPanel({
+                      title: filter === "long" ? "Long Trades" : filter === "short" ? "Short Trades" : "All Trades",
+                      tradeIds,
+                    })
                   : undefined
               }
             />
           </div>
         </>
       )}
-      <ScrollToTop threshold={400} containerSelector="main" />
+
+      <ScrollToTop
+        threshold={400}
+        containerSelector="main"
+        className={isPanelOpen ? "right-6 md:right-[calc(min(50%,28rem)+1.5rem)]" : "right-6"}
+      />
     </div>
   );
 }

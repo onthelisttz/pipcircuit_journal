@@ -10,9 +10,11 @@ interface ScrollButtonsProps {
   threshold?: number;
   /** CSS selector for scroll container (e.g. "main"). If not provided, uses window. */
   containerSelector?: string;
+  /** Additional classes for the container (e.g. for positioning) */
+  className?: string;
 }
 
-export function ScrollToTop({ threshold = SCROLL_THRESHOLD, containerSelector }: ScrollButtonsProps) {
+export function ScrollToTop({ threshold = SCROLL_THRESHOLD, containerSelector, className }: ScrollButtonsProps) {
   const [showTop, setShowTop] = useState(false);
   const [showBottom, setShowBottom] = useState(false);
 
@@ -65,7 +67,7 @@ export function ScrollToTop({ threshold = SCROLL_THRESHOLD, containerSelector }:
   if (!showTop && !showBottom) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
+    <div className={`fixed bottom-6 z-50 flex flex-col gap-2 transition-all duration-300 ${className ?? "right-6"}`}>
       {showTop && (
         <button
           type="button"
