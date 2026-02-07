@@ -418,7 +418,8 @@ export async function POST(request: Request) {
             orderId: str(deal["orderId"]),
             positionId: posId,
             symbol: symbolName.replace("/", ""),
-            direction: String(deal["tradeSide"]) === "SELL" ? "Sell" : "Buy",
+            // tradeSide on closing deal = closing order side; opening direction is opposite
+            direction: String(deal["tradeSide"]) === "SELL" ? "Buy" : "Sell",
             orderType: "Market",
             dealStatus: str(deal["dealStatus"]),
             openTime: new Date(openTs).toISOString(),
