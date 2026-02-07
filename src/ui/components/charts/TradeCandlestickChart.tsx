@@ -14,7 +14,7 @@ import {
 import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
 import type { ChartBar, Trade } from "@domain/entities";
 import { Direction } from "@domain/enums";
-import { formatPipsLabel } from "@lib/pnl-estimate";
+import { estimateGrossProfit, volumeToLots } from "@lib/pnl-estimate";
 import { RiskRewardPlugin } from "./plugins/RiskRewardPlugin";
 
 export interface TradeCandlestickChartProps {
@@ -334,17 +334,32 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             });
         }
 
-        // 2. Build RR labels (risk label when we show risk zone - SL or MAE)
+        // 2. Build RR labels as dollar amounts (e.g. "-$3.00", "+$6.85")
+        const lots = (trade.lots ?? volumeToLots(trade.volume ?? 0, symbol)) || 0.01;
+        const direction = isBuy ? "Buy" : "Sell";
         const rawRiskPrice = hasExplicitSL ? rawStopLoss : rawMaePrice;
-        const riskLabel =
-            showRiskZone && rawEntry != null && rawRiskPrice != null
-                ? formatPipsLabel(isBuy ? rawRiskPrice - rawEntry : rawEntry - rawRiskPrice, symbol)
-                : undefined;
 
-        const rewardLabel =
-            rawEntry != null && rawReward != null
-                ? formatPipsLabel(isBuy ? rawReward - rawEntry : rawEntry - rawReward, symbol)
-                : undefined;
+        let riskLabel: string | undefined;
+        if (showRiskZone && rawEntry != null && rawRiskPrice != null) {
+            const riskDollar = estimateGrossProfit(rawEntry, rawRiskPrice, lots, direction, symbol);
+            if (Number.isFinite(riskDollar) && Math.abs(riskDollar) < 1_000_000) {
+                const sign = riskDollar >= 0 ? "+" : "";
+                riskLabel = `${sign}$${riskDollar.toFixed(2)}`;
+            }
+        }
+
+        let rewardLabel: string | undefined;
+        const actualProfit = trade.netProfit ?? trade.grossProfit;
+        if (actualProfit != null && Number.isFinite(actualProfit) && Math.abs(actualProfit) < 1_000_000) {
+            const sign = actualProfit >= 0 ? "+" : "";
+            rewardLabel = `${sign}$${actualProfit.toFixed(2)}`;
+        } else if (rawEntry != null && rawReward != null) {
+            const rewardDollar = estimateGrossProfit(rawEntry, rawReward, lots, direction, symbol);
+            if (Number.isFinite(rewardDollar) && Math.abs(rewardDollar) < 1_000_000) {
+                const sign = rewardDollar >= 0 ? "+" : "";
+                rewardLabel = `${sign}$${rewardDollar.toFixed(2)}`;
+            }
+        }
 
         const netProfit = trade.netProfit ?? trade.grossProfit;
         const profitLabel =

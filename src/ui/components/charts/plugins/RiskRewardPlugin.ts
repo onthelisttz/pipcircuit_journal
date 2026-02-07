@@ -221,5 +221,27 @@ class RiskRewardPaneRenderer implements IPrimitivePaneRenderer {
         target.stroke();
         target.restore();
 
+        // --- Labels: SL/MAE (e.g. "-2") and Exit/TP (e.g. "+6") ---
+        const labelPadding = 8;
+        const labelFont = '12px "Inter", sans-serif';
+
+        target.save();
+        target.font = labelFont;
+        target.textAlign = 'left';
+        target.textBaseline = 'middle';
+
+        if (this._labels.riskLabel && riskHeight > 1) {
+            target.fillStyle = 'rgba(239, 68, 68, 0.95)';
+            const riskCenterY = this._isBuy ? entryY + (slY - entryY) / 2 : slY + (entryY - slY) / 2;
+            target.fillText(this._labels.riskLabel, finalStartX + labelPadding, riskCenterY);
+        }
+
+        if (this._labels.rewardLabel) {
+            const rewardCenterY = (entryY + tpY) / 2;
+            target.fillStyle = this._labels.isProfit === false ? 'rgba(239, 68, 68, 0.95)' : 'rgba(34, 197, 94, 0.95)';
+            target.fillText(this._labels.rewardLabel, finalStartX + labelPadding, rewardCenterY);
+        }
+
+        target.restore();
     }
 }
