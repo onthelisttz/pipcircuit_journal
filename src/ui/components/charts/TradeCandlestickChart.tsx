@@ -13,6 +13,8 @@ import {
 } from "lightweight-charts";
 import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
 import type { ChartBar, Trade } from "@domain/entities";
+import { Direction } from "@domain/enums";
+import { formatPipsLabel } from "@lib/pnl-estimate";
 import { RiskRewardPlugin } from "./plugins/RiskRewardPlugin";
 
 export interface TradeCandlestickChartProps {
@@ -22,6 +24,10 @@ export interface TradeCandlestickChartProps {
     trade?: Trade;
     /** Height of the chart container */
     height?: number;
+    /** Show entry marker on chart */
+    showEntryMarker?: boolean;
+    /** Show exit marker on chart */
+    showExitMarker?: boolean;
     /** Callback when visible range changes (for lazy loading) */
     onVisibleRangeChange?: (from: number, to: number) => void;
     /** Loading state */
@@ -227,13 +233,42 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         if (!seriesRef.current || !isChartReady || !trade || data.length === 0) return;
 
         const series = seriesRef.current;
-        let entryPrice = trade.entryPrice ?? trade.openPrice;
-        let rewardPrice = trade.closePrice ?? trade.takeProfit;
-        let stopLoss = trade.stopLoss;
-        const openTime = trade.openTime;
+        const isBuy = trade.direction === Direction.Buy;
+        const symbol = trade.symbol ?? "";
+
+        // Raw prices (for pips labels - use unscaled)
+        const rawEntry = trade.entryPrice ?? trade.openPrice;
+        const rawReward = trade.closePrice ?? trade.takeProfit;
+        const rawStopLoss = trade.stopLoss;
+
+        let entryPrice = rawEntry;
+        let rewardPrice = rawReward;
+        let stopLoss = rawStopLoss;
+
+        // --- Compute MAE (Maximum Adverse Excursion): lowest low (Buy) or highest high (Sell) from open onward ---
+        const openTs = new Date(trade.openTime).getTime();
+        const closeTs = trade.closeTime ? new Date(trade.closeTime).getTime() : null;
+        const dataEndTs = data.length > 0 ? Math.max(...data.map((b) => b.timestamp)) : openTs;
+        const endTs = closeTs ?? dataEndTs;
+        const tradeBars = data.filter((b) => b.timestamp >= openTs && b.timestamp <= endTs);
+        const allBarsFromOpen = data.filter((b) => b.timestamp >= openTs);
+
+        let rawMaePrice: number | null = null;
+        const barsForMae = tradeBars.length > 0 ? tradeBars : allBarsFromOpen;
+        if (barsForMae.length > 0) {
+            rawMaePrice = isBuy
+                ? Math.min(...barsForMae.map((b) => b.low))
+                : Math.max(...barsForMae.map((b) => b.high));
+        }
+
+        // Risk zone: use explicit SL when present, otherwise use MAE (Maximum Adverse Excursion)
+        const hasExplicitSL = stopLoss != null && Number.isFinite(stopLoss);
+        const hasMae = rawMaePrice != null && Number.isFinite(rawMaePrice);
+        const showRiskZone = hasExplicitSL || hasMae;
+        const useMae = !hasExplicitSL && hasMae;
+        let maePrice = rawMaePrice;
 
         // --- ADAPTIVE SCALING LOGIC (Robust Power of 10) ---
-        // Calculate average close price from data to check scale
         const avgPrice = data.reduce((sum, bar) => sum + bar.close, 0) / data.length;
 
         if (entryPrice && avgPrice > 0) {
@@ -241,101 +276,131 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             const logDiff = Math.log10(ratio);
             const magnitude = Math.round(logDiff);
 
-            // Only apply scaling if the difference is substantial (at least 1 order of magnitude, e.g. 10x)
             if (Math.abs(magnitude) >= 1) {
                 const multiplier = Math.pow(10, magnitude);
-
-                // Apply scaling correction to trade levels
                 entryPrice = entryPrice * multiplier;
                 if (rewardPrice) rewardPrice = rewardPrice * multiplier;
-                if (stopLoss) stopLoss = stopLoss * multiplier;
+                if (stopLoss != null) stopLoss = stopLoss * multiplier;
+                // Do NOT scale maePrice - it comes from bars, already in chart scale
 
                 console.log(`[TradeChart] Scaling Mismatch Detected. Ratio: ${ratio.toFixed(2)}, Applied Multiplier: ${multiplier}`);
             }
         }
+
+        // Risk price: SL/MAE. MAE from bars is in chart scale; when trade was scaled, maePrice needs same scale as entry for comparison.
+        const scaledRiskPrice = hasExplicitSL ? stopLoss : (hasMae ? (maePrice ?? entryPrice) : entryPrice);
+
         // -----------------------------
 
         // 1. Manage Price Lines (Labels Only - Line Hidden)
-        // Remove existing
         if (entryLineRef.current) { series.removePriceLine(entryLineRef.current); entryLineRef.current = null; }
         if (stopLossLineRef.current) { series.removePriceLine(stopLossLineRef.current); stopLossLineRef.current = null; }
         if (exitLineRef.current) { series.removePriceLine(exitLineRef.current); exitLineRef.current = null; }
 
-        // Entry Label
+        // Price lines: show price on axis only, no "ENTRY"/"EXIT" labels
         if (entryPrice != null && Number.isFinite(entryPrice)) {
             entryLineRef.current = series.createPriceLine({
                 price: entryPrice,
-                color: "#6b7280", // Neutral gray
+                color: "#6b7280",
                 lineWidth: 1,
                 lineStyle: LineStyle.Dotted,
                 axisLabelVisible: true,
-                lineVisible: false, // Hide the infinite line
-                title: "ENTRY",
+                lineVisible: false,
+                title: "",
             });
         }
 
-        // SL Label
-        if (stopLoss != null && Number.isFinite(stopLoss)) {
+        if (showRiskZone && scaledRiskPrice != null && Number.isFinite(scaledRiskPrice)) {
             stopLossLineRef.current = series.createPriceLine({
-                price: stopLoss,
-                color: "#ef4444", // Red text
+                price: scaledRiskPrice,
+                color: "#6b7280",
                 lineWidth: 1,
-                lineStyle: LineStyle.Dotted, // Minimal line
+                lineStyle: LineStyle.Dotted,
                 axisLabelVisible: true,
-                lineVisible: false, // Hide the infinite line
-                title: "SL",
+                lineVisible: false,
+                title: "",
             });
         }
 
-        // TP/Exit Label
         if (rewardPrice != null && Number.isFinite(rewardPrice)) {
-            const isProfit = (trade.netProfit ?? 0) >= 0;
-            const color = trade.closePrice ? (isProfit ? "#22c55e" : "#ef4444") : "#22c55e"; // Green for TP target
-
             exitLineRef.current = series.createPriceLine({
                 price: rewardPrice,
-                color: color,
+                color: "#6b7280",
                 lineWidth: 1,
                 lineStyle: LineStyle.Dotted,
                 axisLabelVisible: true,
-                lineVisible: false, // Hide the infinite line
-                title: trade.closePrice ? "EXIT" : "TP",
+                lineVisible: false,
+                title: "",
             });
         }
 
-        // 2. Manage RiskRewardPlugin (The Box)
-        if (entryPrice != null && stopLoss != null && rewardPrice != null && data.length > 0) {
+        // 2. Build RR labels (risk label when we show risk zone - SL or MAE)
+        const rawRiskPrice = hasExplicitSL ? rawStopLoss : rawMaePrice;
+        const riskLabel =
+            showRiskZone && rawEntry != null && rawRiskPrice != null
+                ? formatPipsLabel(isBuy ? rawRiskPrice - rawEntry : rawEntry - rawRiskPrice, symbol)
+                : undefined;
 
-            // Safe timestamp snapper - finds nearest bar to prevent plugin from receiving invalid time
+        const rewardLabel =
+            rawEntry != null && rawReward != null
+                ? formatPipsLabel(isBuy ? rawReward - rawEntry : rawEntry - rawReward, symbol)
+                : undefined;
+
+        const netProfit = trade.netProfit ?? trade.grossProfit;
+        const profitLabel =
+            netProfit != null && Number.isFinite(netProfit)
+                ? `${netProfit >= 0 ? "+" : ""}$${netProfit.toFixed(2)}`
+                : undefined;
+
+        // 3. Manage RiskRewardPlugin (attach/update or detach)
+        if (entryPrice != null && scaledRiskPrice != null && rewardPrice != null && data.length > 0) {
             const findClosestTime = (targetDate: Date | string | number): Time => {
                 const targetTs = new Date(targetDate).getTime();
-                // Find bar with closest timestamp
                 const closest = data.reduce((prev, curr) =>
                     Math.abs(curr.timestamp - targetTs) < Math.abs(prev.timestamp - targetTs) ? curr : prev
                 );
                 return (closest.timestamp / 1000) as Time;
             };
 
-            const startTs = findClosestTime(openTime);
-
-            // Pass closeTime if trade is closed
+            const startTs = findClosestTime(trade.openTime);
             let endTs: Time | null = null;
             if (trade.closeTime) {
                 endTs = findClosestTime(trade.closeTime);
             }
 
+            const isProfit = (trade.netProfit ?? trade.grossProfit ?? 0) >= 0;
+        const labels = { riskLabel, rewardLabel, profitLabel, isProfit };
+
             if (!riskRewardPluginRef.current) {
-                // Create new plugin
-                const plugin = new RiskRewardPlugin(entryPrice, stopLoss, rewardPrice, startTs, endTs);
+                const plugin = new RiskRewardPlugin(
+                    entryPrice,
+                    scaledRiskPrice,
+                    rewardPrice,
+                    startTs,
+                    endTs,
+                    isBuy,
+                    useMae,
+                    labels
+                );
                 series.attachPrimitive(plugin);
                 riskRewardPluginRef.current = plugin;
             } else {
-                // Update existing
-                riskRewardPluginRef.current.updateData(entryPrice, stopLoss, rewardPrice, startTs, endTs);
+                riskRewardPluginRef.current.updateData(
+                    entryPrice,
+                    scaledRiskPrice,
+                    rewardPrice,
+                    startTs,
+                    endTs,
+                    isBuy,
+                    useMae,
+                    labels
+                );
             }
+        } else if (riskRewardPluginRef.current) {
+            series.detachPrimitive(riskRewardPluginRef.current);
+            riskRewardPluginRef.current = null;
         }
-
-    }, [data, isChartReady, trade]); // data dependency vital for scaling calc checks
+    }, [data, isChartReady, trade]);
 
     return (
         <div className="relative w-full" style={{ height }}>

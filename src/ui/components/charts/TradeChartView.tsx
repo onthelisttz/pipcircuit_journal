@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import type { Trade, ChartTimeframe } from "@domain/entities";
+import { Direction } from "@domain/enums";
+import { formatPipsLabel } from "@lib/pnl-estimate";
 import { TradeCandlestickChart } from "./TradeCandlestickChart";
 import { ProfitTimelineChart } from "./ProfitTimelineChart";
 import { TimeframeSelector } from "./TimeframeSelector";
@@ -59,6 +61,54 @@ export function TradeChartView({
         candlestickChartRef.current?.fitContent();
         profitChartRef.current?.fitContent();
     }, []);
+
+    // RR summary for trade panel (entry, risk, target, profit)
+    const rrSummary = useMemo(() => {
+        const entry = trade.entryPrice ?? trade.openPrice;
+        const exit = trade.closePrice ?? trade.takeProfit;
+        const sl = trade.stopLoss;
+        const isBuy = trade.direction === Direction.Buy;
+        const symbol = trade.symbol ?? "";
+
+        const openTs = new Date(trade.openTime).getTime();
+        const closeTs = trade.closeTime
+            ? new Date(trade.closeTime).getTime()
+            : (data.length > 0 ? Math.max(...data.map((b) => b.timestamp)) : openTs + 86400000);
+        const tradeBars = data.filter((b) => b.timestamp >= openTs && b.timestamp <= closeTs);
+
+        const mae = tradeBars.length > 0
+            ? (isBuy ? Math.min(...tradeBars.map((b) => b.low)) : Math.max(...tradeBars.map((b) => b.high)))
+            : null;
+
+        const useMae = sl == null || sl === undefined;
+        const riskPrice = useMae ? mae : sl;
+
+        const riskLabel =
+            entry != null && riskPrice != null
+                ? formatPipsLabel(isBuy ? riskPrice - entry : entry - riskPrice, symbol)
+                : null;
+
+        const targetLabel =
+            entry != null && exit != null
+                ? formatPipsLabel(isBuy ? exit - entry : entry - exit, symbol)
+                : null;
+
+        const netProfit = trade.netProfit ?? trade.grossProfit;
+        const profitStr =
+            netProfit != null && Number.isFinite(netProfit)
+                ? `${netProfit >= 0 ? "+" : ""}$${netProfit.toFixed(2)}`
+                : null;
+
+        return {
+            entry,
+            exit,
+            riskLabel,
+            targetLabel,
+            profitStr,
+            useMae,
+            direction: trade.direction,
+        };
+    }, [trade, data]);
 
     // Handle visible range change for lazy loading
     const handleVisibleRangeChange = useCallback(
@@ -141,37 +191,48 @@ export function TradeChartView({
                 showMFE={showMFE}
             />
 
-            {/* Trade context info */}
-            <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
-                <span>
-                    Symbol: <span className="font-medium text-gray-300">{trade.symbol}</span>
-                </span>
-                <span>
-                    Direction:{" "}
+            {/* RR summary panel - friendly risk-to-reward overview */}
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-3 text-xs">
+                <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Symbol</span>
+                    <span className="font-medium text-gray-300">{trade.symbol}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Dir</span>
                     <span
-                        className={`font-medium ${trade.direction === "Buy" ? "text-green-400" : "text-red-400"
-                            }`}
+                        className={`font-medium ${rrSummary.direction === "Buy" ? "text-green-400" : "text-red-400"}`}
                     >
-                        {trade.direction}
+                        {rrSummary.direction}
                     </span>
-                </span>
-                <span>
-                    Entry:{" "}
-                    <span className="font-medium text-gray-300">
-                        {trade.openPrice?.toFixed(5)}
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Entry</span>
+                    <span className="font-mono text-gray-300">
+                        {rrSummary.entry != null ? rrSummary.entry.toFixed(5) : "—"}
                     </span>
-                </span>
-                {trade.closePrice && (
-                    <span>
-                        Exit:{" "}
-                        <span className="font-medium text-gray-300">
-                            {trade.closePrice.toFixed(5)}
-                        </span>
-                    </span>
+                </div>
+                {rrSummary.riskLabel != null && (
+                    <div className="flex items-center gap-2">
+                        <span className="text-gray-500">{rrSummary.useMae ? "MAE" : "SL"}</span>
+                        <span className="font-mono text-red-400">{rrSummary.riskLabel}</span>
+                    </div>
                 )}
-                <span>
-                    Bars: <span className="font-medium text-gray-300">{data.length}</span>
-                </span>
+                {rrSummary.targetLabel != null && (
+                    <div className="flex items-center gap-2">
+                        <span className="text-gray-500">{trade.closePrice ? "Exit" : "Target"}</span>
+                        <span className="font-mono text-green-400">{rrSummary.targetLabel}</span>
+                    </div>
+                )}
+                {rrSummary.profitStr != null && (
+                    <div className="flex items-center gap-2 ml-auto">
+                        <span className="text-gray-500">Profit</span>
+                        <span
+                            className={`font-semibold ${rrSummary.profitStr.startsWith("+") ? "text-green-400" : "text-red-400"}`}
+                        >
+                            {rrSummary.profitStr}
+                        </span>
+                    </div>
+                )}
             </div>
         </div>
     );

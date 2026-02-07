@@ -6,32 +6,53 @@ import {
     type IPrimitivePaneRenderer,
     type IPrimitivePaneView,
 } from "lightweight-charts";
+import type { CanvasRenderingTarget2D } from "fancy-canvas";
 
-export class RiskRewardPlugin implements ISeriesPrimitive {
+export interface RiskRewardLabels {
+    /** Label for risk zone (e.g. "-3") */
+    riskLabel?: string;
+    /** Label for reward zone (e.g. "+6") */
+    rewardLabel?: string;
+    /** Actual profit (e.g. "$12.50") */
+    profitLabel?: string;
+    /** True if trade was profitable; when false, exit zone is drawn red */
+    isProfit?: boolean;
+}
+
+export class RiskRewardPlugin implements ISeriesPrimitive<unknown> {
     _chart: IChartApi | undefined;
-    _series: ISeriesApi<any> | undefined;
+    _series: ISeriesApi<"Candlestick"> | undefined;
 
     _entry: number;
     _sl: number;
     _tp: number;
     _startTime: Time | null = null;
     _endTime: Time | null = null;
+    _isBuy: boolean;
+    _useMae: boolean;
+    _labels: RiskRewardLabels;
 
     constructor(
         entry: number,
         sl: number,
         tp: number,
         startTime: Time | null = null,
-        endTime: Time | null = null
+        endTime: Time | null = null,
+        isBuy: boolean = true,
+        useMae: boolean = false,
+        labels: RiskRewardLabels = {}
     ) {
         this._entry = entry;
         this._sl = sl;
         this._tp = tp;
         this._startTime = startTime;
         this._endTime = endTime;
+        this._isBuy = isBuy;
+        this._useMae = useMae;
+        this._labels = labels;
     }
 
-    attached({ chart, series, requestUpdate }: { chart: IChartApi; series: ISeriesApi<any>; requestUpdate: () => void }) {
+    attached({ chart, series, requestUpdate }: { chart: IChartApi; series: ISeriesApi<"Candlestick">; requestUpdate: () => void }) {
         this._chart = chart;
         this._series = series;
         this.requestUpdate = requestUpdate;
@@ -44,12 +65,24 @@ export class RiskRewardPlugin implements ISeriesPrimitive {
 
     requestUpdate() { }
 
-    updateData(entry: number, sl: number, tp: number, startTime: Time | null, endTime: Time | null) {
+    updateData(
+        entry: number,
+        sl: number,
+        tp: number,
+        startTime: Time | null,
+        endTime: Time | null,
+        isBuy?: boolean,
+        useMae?: boolean,
+        labels?: RiskRewardLabels
+    ) {
         this._entry = entry;
         this._sl = sl;
         this._tp = tp;
         this._startTime = startTime;
         this._endTime = endTime;
+        if (isBuy !== undefined) this._isBuy = isBuy;
+        if (useMae !== undefined) this._useMae = useMae;
+        if (labels) this._labels = { ...this._labels, ...labels };
         this.requestUpdate();
     }
 
@@ -64,11 +97,14 @@ export class RiskRewardPlugin implements ISeriesPrimitive {
                     this._tp,
                     this._startTime,
                     this._endTime,
+                    this._isBuy,
+                    this._useMae,
+                    this._labels,
                     this._chart!,
                     this._series!
                 );
             },
-            zOrder: 'normal'
+            zOrder: () => 'normal' as const
         }];
     }
 
@@ -84,11 +120,21 @@ class RiskRewardPaneRenderer implements IPrimitivePaneRenderer {
         private _tp: number,
         private _startTime: Time | null,
         private _endTime: Time | null,
+        private _isBuy: boolean,
+        private _useMae: boolean,
+        private _labels: RiskRewardLabels,
         private _chart: IChartApi,
-        private _series: ISeriesApi<any>
+        private _series: ISeriesApi<"Candlestick">
     ) { }
 
-    draw(target: CanvasRenderingContext2D) {
+    draw(target: CanvasRenderingTarget2D) {
+        target.useMediaCoordinateSpace((scope) => {
+            const ctx = scope.context;
+            this._drawImpl(ctx);
+        });
+    }
+
+    private _drawImpl(target: CanvasRenderingContext2D) {
         const entryY = this._series.priceToCoordinate(this._entry);
         const slY = this._series.priceToCoordinate(this._sl);
         const tpY = this._series.priceToCoordinate(this._tp);
@@ -101,7 +147,6 @@ class RiskRewardPaneRenderer implements IPrimitivePaneRenderer {
 
         // --- Calculate X Coordinates ---
 
-        // 1. Start X
         let startX = -1000;
         if (this._startTime) {
             const coord = timeScale.timeToCoordinate(this._startTime as Time);
@@ -111,20 +156,17 @@ class RiskRewardPaneRenderer implements IPrimitivePaneRenderer {
             if (left) startX = left;
         }
 
-        // 2. End X
         let endX: number | null = null;
         if (this._endTime) {
             const coord = timeScale.timeToCoordinate(this._endTime as Time);
             if (coord !== null) endX = coord;
         }
 
-        // If no explicit end time (open trade) or off-screen right, extend to visible right
         if (endX === null) {
             const right = timeScale.logicalToCoordinate(visibleRange.to);
             if (right) endX = right;
         }
 
-        // Clamp to visible area for safety
         const leftEdge = timeScale.logicalToCoordinate(visibleRange.from) ?? 0;
         const finalStartX = Math.max(leftEdge, startX);
         const finalEndX = endX ?? (timeScale.logicalToCoordinate(visibleRange.to) ?? 0);
@@ -132,31 +174,52 @@ class RiskRewardPaneRenderer implements IPrimitivePaneRenderer {
         const width = finalEndX - finalStartX;
         if (width <= 0) return;
 
-        // --- Draw ---
+        // --- Draw zones (Y increases downward, higher price = smaller Y) ---
 
-        // Risk Zone (SL) - Red
+        // Risk Zone - Red (below entry for Buy, above entry for Sell). Only draw when on correct side (no extra box above profit).
+        const riskHeight = this._isBuy ? slY - entryY : entryY - slY;
+        if (riskHeight > 1) {
+            target.save();
+            target.fillStyle = 'rgba(185, 28, 28, 0.25)';
+            if (this._isBuy) {
+                target.fillRect(finalStartX, entryY, width, riskHeight);
+            } else {
+                target.fillRect(finalStartX, slY, width, riskHeight);
+            }
+            target.restore();
+        }
+
+        // Exit/Target Zone - Green when profit, red when loss (e.g. hit stop loss)
+        const isProfit = this._labels.isProfit !== false;
         target.save();
-        target.fillStyle = 'rgba(239, 68, 68, 0.2)';
-        const riskHeight = slY - entryY;
-        target.fillRect(finalStartX, entryY, width, riskHeight);
+        target.fillStyle = isProfit ? 'rgba(22, 101, 52, 0.25)' : 'rgba(185, 28, 28, 0.25)';
+        if (this._isBuy) {
+            const rewardHeight = entryY - tpY;
+            if (rewardHeight > 1) {
+                target.fillRect(finalStartX, tpY, width, rewardHeight);
+            } else if (rewardHeight < -1) {
+                target.fillRect(finalStartX, entryY, width, -rewardHeight);
+            }
+        } else {
+            const rewardHeight = tpY - entryY;
+            if (rewardHeight > 1) {
+                target.fillRect(finalStartX, entryY, width, rewardHeight);
+            } else if (rewardHeight < -1) {
+                target.fillRect(finalStartX, tpY, width, -rewardHeight);
+            }
+        }
         target.restore();
 
-        // Reward Zone (TP) - Green
+        // Entry Line (Separator) - dashed horizontal
         target.save();
-        target.fillStyle = 'rgba(34, 197, 94, 0.2)';
-        const rewardHeight = tpY - entryY;
-        target.fillRect(finalStartX, entryY, width, rewardHeight);
-        target.restore();
-
-        // Entry Line (Separator)
-        target.save();
-        target.strokeStyle = 'rgba(156, 163, 175, 0.8)'; // Gray-400
+        target.strokeStyle = 'rgba(156, 163, 175, 0.9)';
         target.lineWidth = 1;
-        target.setLineDash([4, 4]); // Dashed
+        target.setLineDash([4, 4]);
         target.beginPath();
         target.moveTo(finalStartX, entryY);
         target.lineTo(finalEndX, entryY);
         target.stroke();
         target.restore();
+
     }
 }

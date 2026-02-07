@@ -117,3 +117,48 @@ export function estimateGrossProfit(
   const pointValue = getPointValue(symbol);
   return priceDiff * volume * pointValue;
 }
+
+/** Point size for non-forex instruments (smallest price step). */
+const POINT_SIZE: Record<string, number> = {
+  US30: 1,
+  US100: 1,
+  NAS100: 1,
+  XAUUSD: 0.01,
+  GOLD: 0.01,
+};
+
+function getPointSize(symbol: string): number {
+  const upper = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  for (const [key, val] of Object.entries(POINT_SIZE)) {
+    if (upper.includes(key.replace(/[^A-Z0-9]/g, ""))) {
+      return val;
+    }
+  }
+  if (upper === "XAUUSD" || upper === "GOLD" || upper.startsWith("XAU")) return 0.01;
+  return 1;
+}
+
+/**
+ * Convert price difference to pips (forex) or points (indices/metals) for display.
+ * Positive = favorable, negative = adverse.
+ */
+export function priceDiffToPips(priceDiff: number, symbol: string): number {
+  if (!Number.isFinite(priceDiff)) return 0;
+  const upper = symbol.toUpperCase();
+  if (isForex(upper)) {
+    const pipSize = getPipSize(upper);
+    return priceDiff / pipSize;
+  }
+  const pointSize = getPointSize(upper);
+  return priceDiff / pointSize;
+}
+
+/**
+ * Format price difference as pips/points label (e.g. "-3", "+6").
+ */
+export function formatPipsLabel(priceDiff: number, symbol: string): string {
+  const pips = priceDiffToPips(priceDiff, symbol);
+  const rounded = Math.round(pips * 10) / 10; // 1 decimal
+  const sign = rounded > 0 ? "+" : rounded < 0 ? "" : "";
+  return `${sign}${rounded}`;
+}
