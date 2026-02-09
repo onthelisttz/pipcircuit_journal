@@ -8,6 +8,7 @@ import { ProfitTimelineChart } from "./ProfitTimelineChart";
 import { TimeframeSelector } from "./TimeframeSelector";
 import { ChartControls } from "./ChartControls";
 import { useChartData } from "@ui/hooks/useChartData";
+import type { DrawingToolType, TradeCandlestickChartRef } from "./TradeCandlestickChart";
 
 export interface TradeChartViewProps {
     /** Trade to visualize */
@@ -39,9 +40,11 @@ export function TradeChartView({
     const [showProfitTimeline, setShowProfitTimeline] = useState(true);
     const [showMAE, setShowMAE] = useState(true);
     const [showMFE, setShowMFE] = useState(true);
+    const [showRiskReward, setShowRiskReward] = useState(true);
     const [isExpanded, setIsExpanded] = useState(false);
+    const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
     const chartContainerRef = useRef<HTMLDivElement>(null);
-    const candlestickChartRef = useRef<{ fitContent: () => void } | null>(null);
+    const candlestickChartRef = useRef<TradeCandlestickChartRef | null>(null);
     const profitChartRef = useRef<{ fitContent: () => void } | null>(null);
 
     // Fetch chart data using custom hook
@@ -56,11 +59,15 @@ export function TradeChartView({
         setTimeframe(newTimeframe);
     }, []);
 
-    // Reset view - switch to M1, scroll to trade, fit charts (delay to allow M1 data to load)
+    // Reset view - switch to M1, scroll to trade, fit charts, remove all drawing tools (delay to allow M1 data to load)
     const handleResetView = useCallback(() => {
+        // Remove all drawing tools immediately
+        candlestickChartRef.current?.removeAllDrawingTools();
+        setDrawingTool(null); // Clear active drawing tool selection
+        
         setTimeframe("M1");
         setTimeout(() => {
-            candlestickChartRef.current?.scrollToTrade?.();
+            candlestickChartRef.current?.scrollToTrade();
             candlestickChartRef.current?.fitContent();
             profitChartRef.current?.fitContent();
         }, 150);
@@ -122,9 +129,13 @@ export function TradeChartView({
                     onToggleMAE={() => setShowMAE((prev) => !prev)}
                     showMFE={showMFE}
                     onToggleMFE={() => setShowMFE((prev) => !prev)}
+                    showRiskReward={showRiskReward}
+                    onToggleRiskReward={() => setShowRiskReward((prev) => !prev)}
                     isExpanded={isExpanded}
                     onToggleExpand={() => setIsExpanded((prev) => !prev)}
                     disabled={isLoading}
+                    drawingTool={drawingTool}
+                    onDrawingToolChange={setDrawingTool}
                 />
             </div>
             {error && (
@@ -147,6 +158,8 @@ export function TradeChartView({
                 showExitMarker={true}
                 onVisibleRangeChange={handleVisibleRangeChange}
                 isLoading={isLoading}
+                drawingTool={drawingTool}
+                showRiskReward={showRiskReward}
             />
             <ProfitTimelineChart
                 ref={profitChartRef}

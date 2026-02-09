@@ -10,12 +10,20 @@ import {
     ColorType,
     LineStyle,
     CandlestickSeries,
+    CrosshairMode,
 } from "lightweight-charts";
 import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
 import type { ChartBar, Trade } from "@domain/entities";
 import { Direction } from "@domain/enums";
 import { estimateGrossProfit, volumeToLots } from "@lib/pnl-estimate";
 import { RiskRewardPlugin } from "./plugins/RiskRewardPlugin";
+import { createLineToolsPlugin } from "lightweight-charts-line-tools-core";
+import { LineToolRectangle } from "lightweight-charts-line-tools-rectangle";
+import { registerLinesPlugin } from "lightweight-charts-line-tools-lines";
+import { registerPathPlugin } from "lightweight-charts-line-tools-path";
+import { registerLongShortPositionPlugin } from "lightweight-charts-line-tools-long-short-position";
+
+export type DrawingToolType = "Path" | "TrendLine" | "Rectangle" | "LongShortPosition";
 
 export interface TradeCandlestickChartProps {
     /** Chart bar data to display */
@@ -32,11 +40,16 @@ export interface TradeCandlestickChartProps {
     onVisibleRangeChange?: (from: number, to: number) => void;
     /** Loading state */
     isLoading?: boolean;
+    /** Active drawing tool - when set, starts interactive drawing mode */
+    drawingTool?: DrawingToolType | null;
+    /** Show automatic risk/reward zones from trade data */
+    showRiskReward?: boolean;
 }
 
 export interface TradeCandlestickChartRef {
     fitContent: () => void;
     scrollToTrade: () => void;
+    removeAllDrawingTools: () => void;
 }
 
 /**
@@ -51,6 +64,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     height = 400,
     onVisibleRangeChange,
     isLoading = false,
+    drawingTool = null,
+    showRiskReward = true,
 }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -61,6 +76,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const [isChartReady, setIsChartReady] = useState(false);
 
     const riskRewardPluginRef = useRef<RiskRewardPlugin | null>(null);
+    const lineToolsRef = useRef<ReturnType<typeof createLineToolsPlugin> | null>(null);
 
     // Convert ChartBar data to Lightweight Charts format (sorted, deduplicated by time)
     const formatData = useCallback((bars: ChartBar[]): CandlestickData<Time>[] => {
@@ -116,7 +132,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 horzLines: { color: "#000000" }, // Pure Black Grid
             },
             crosshair: {
-                mode: 1, // Normal
+                mode: CrosshairMode.Normal, // Follows cursor position
                 vertLine: {
                     color: "#6b7280",
                     width: 1,
@@ -174,6 +190,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         chartRef.current = chart;
         seriesRef.current = series;
+
+        const lineTools = createLineToolsPlugin(chart, series);
+        lineTools.registerLineTool("Rectangle", LineToolRectangle);
+        registerLinesPlugin(lineTools as Parameters<typeof registerLinesPlugin>[0]);
+        registerPathPlugin(lineTools as Parameters<typeof registerPathPlugin>[0]);
+        registerLongShortPositionPlugin(lineTools as Parameters<typeof registerLongShortPositionPlugin>[0]);
+        lineToolsRef.current = lineTools;
+
         setIsChartReady(true);
 
         const handleResize = () => {
@@ -193,6 +217,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         }
 
         return () => {
+            lineToolsRef.current?.removeAllLineTools();
+            lineToolsRef.current = null;
             window.removeEventListener("resize", handleResize);
             entryLineRef.current = null;
             stopLossLineRef.current = null;
@@ -205,11 +231,54 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         };
     }, [height, onVisibleRangeChange]);
 
+    useEffect(() => {
+        if (!lineToolsRef.current || !drawingTool) return;
+        const longShortOptions =
+            drawingTool === "LongShortPosition"
+                ? ({
+                      showAutoText: false,
+                      showPriceAxisLabels: false,
+                      showTimeAxisLabels: false,
+                  } as Parameters<typeof lineToolsRef.current.addLineTool>[2])
+                : undefined;
+        lineToolsRef.current.addLineTool(drawingTool, undefined, longShortOptions);
+    }, [drawingTool]);
+
+    // Handle Delete key to remove selected drawing tools
+    useEffect(() => {
+        if (!isChartReady || !lineToolsRef.current) return;
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Delete or Backspace key
+            if ((e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                // Only delete if not typing in an input/textarea
+                const target = e.target as HTMLElement;
+                if (
+                    target.tagName === "INPUT" ||
+                    target.tagName === "TEXTAREA" ||
+                    target.isContentEditable
+                ) {
+                    return;
+                }
+                e.preventDefault();
+                lineToolsRef.current?.removeSelectedLineTools();
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [isChartReady]);
+
     useImperativeHandle(ref, () => ({
         fitContent: () => {
             chartRef.current?.timeScale().fitContent();
         },
         scrollToTrade,
+        removeAllDrawingTools: () => {
+            lineToolsRef.current?.removeAllLineTools();
+        },
     }), [scrollToTrade]);
 
     // Update chart data and auto-scroll to trade
@@ -230,7 +299,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
     // Manage R:R Visualization (Plugin + Price Lines) with Adaptive Scaling
     useEffect(() => {
-        if (!seriesRef.current || !isChartReady || !trade || data.length === 0) return;
+        if (!seriesRef.current || !isChartReady || !trade || data.length === 0 || !showRiskReward) {
+            // Remove plugin if hidden
+            if (riskRewardPluginRef.current && seriesRef.current) {
+                seriesRef.current.detachPrimitive(riskRewardPluginRef.current);
+                riskRewardPluginRef.current = null;
+            }
+            return;
+        }
 
         const series = seriesRef.current;
         const isBuy = trade.direction === Direction.Buy;
@@ -415,7 +491,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             series.detachPrimitive(riskRewardPluginRef.current);
             riskRewardPluginRef.current = null;
         }
-    }, [data, isChartReady, trade]);
+    }, [data, isChartReady, trade, showRiskReward]);
 
     return (
         <div className="relative w-full" style={{ height }}>

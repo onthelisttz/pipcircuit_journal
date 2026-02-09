@@ -379,6 +379,25 @@ export function TradePanelContent({
           <>
             {/* Quick nav */}
             <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2">
+              <div className="flex gap-1">
+                {tabs.map((tab) => {
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={`rounded p-1.5 ${
+                        activeTab === tab.id
+                          ? "bg-accent text-accent-foreground"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      }`}
+                      title={tab.label}
+                    >
+                      <Icon className="h-4 w-4" />
+                    </button>
+                  );
+                })}
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={goPrev}
@@ -399,25 +418,6 @@ export function TradePanelContent({
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>
-              </div>
-              <div className="flex gap-1">
-                {tabs.map((tab) => {
-                  const Icon = tab.icon;
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => setActiveTab(tab.id)}
-                      className={`rounded p-1.5 ${
-                        activeTab === tab.id
-                          ? "bg-accent text-accent-foreground"
-                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                      }`}
-                      title={tab.label}
-                    >
-                      <Icon className="h-4 w-4" />
-                    </button>
-                  );
-                })}
               </div>
             </div>
 

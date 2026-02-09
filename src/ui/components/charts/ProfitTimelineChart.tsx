@@ -182,7 +182,7 @@ export const ProfitTimelineChart = forwardRef<ProfitTimelineChartRef, ProfitTime
                 visible: false, // Hide time scale, sync with main chart
             },
             crosshair: {
-                mode: 0, // Hidden
+                mode: 1, // Hidden
             },
         });
 

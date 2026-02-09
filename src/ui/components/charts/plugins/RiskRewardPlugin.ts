@@ -52,7 +52,12 @@ export class RiskRewardPlugin implements ISeriesPrimitive<unknown> {
         this._labels = labels;
     }
 
-    attached({ chart, series, requestUpdate }: { chart: IChartApi; series: ISeriesApi<"Candlestick">; requestUpdate: () => void }) {
+    attached(param: unknown) {
+        const { chart, series, requestUpdate } = param as {
+            chart: IChartApi;
+            series: ISeriesApi<"Candlestick">;
+            requestUpdate: () => void;
+        };
         this._chart = chart;
         this._series = series;
         this.requestUpdate = requestUpdate;
