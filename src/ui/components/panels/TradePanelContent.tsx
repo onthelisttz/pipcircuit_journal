@@ -422,7 +422,11 @@ export function TradePanelContent({
             </div>
 
             {/* Tab content */}
-            <div className="flex-1 overflow-y-auto p-4">
+            <div
+              className={`flex-1 overflow-y-auto px-4 pb-4 ${
+                activeTab === "chart" ? "pt-0" : "pt-4"
+              }`}
+            >
               <TradePanelDetailTabs
                 tradeId={selectedTradeId}
                 activeTab={activeTab}
