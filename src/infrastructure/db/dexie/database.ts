@@ -7,6 +7,7 @@ import type {
   Observation,
   ObservationCategory,
   SyncJob,
+  SymbolSyncProgress,
   Tag,
   Trade,
   TradeNote,
@@ -15,6 +16,9 @@ import type {
 import { registerMigrations } from "./migrations";
 
 export interface SyncMetaRecord {
+  /** Composite key: userId:accountId */
+  key: string;
+  userId: string;
   accountId: string;
   lastSyncTime?: Date;
   lastTradeId?: string;
@@ -36,6 +40,7 @@ export class AppDexie extends Dexie {
   accounts!: Table<Account, number>;
   sync_queue!: Table<SyncJob, number>;
   sync_meta!: Table<SyncMetaRecord, string>;
+  symbol_sync_progress!: Table<SymbolSyncProgress, number>;
   settings!: Table<SettingRecord, string>;
   daily_summaries!: Table<DailySummary, number>;
 

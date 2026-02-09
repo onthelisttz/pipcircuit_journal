@@ -7,9 +7,14 @@ import { seedDefaultTags } from "@infrastructure/db/dexie/seedTags";
 import { seedDefaultObservationCategories } from "@infrastructure/db/dexie/seedObservationCategories";
 import { TradePanel, ObservationPanel } from "@ui/components/panels";
 import { TradePanelProvider, ObservationPanelProvider } from "@ui/providers";
+import { useRealtimeSync } from "@ui/hooks/useRealtimeSync";
+import { SyncInitializer } from "@ui/components/sync";
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Start realtime sync when user is logged in
+  useRealtimeSync();
 
   useEffect(() => {
     void seedDefaultTags();
@@ -20,6 +25,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     <AuthGuard>
       <TradePanelProvider>
         <ObservationPanelProvider>
+          <SyncInitializer />
           <div className="flex h-screen overflow-hidden bg-background text-foreground">
             <Sidebar className="hidden md:flex" />
             {isSidebarOpen && (

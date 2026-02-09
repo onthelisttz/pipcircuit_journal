@@ -1,12 +1,17 @@
 import type { IChartBarRepository } from "@application/ports/repositories";
 import type { ICTraderAPI } from "@application/ports/services";
 import type { ChartBar, ChartTimeframe, Trade } from "@domain/entities";
+import { isOnline } from "@infrastructure/sync/utils/connection";
+
+const MIN_BARS_FOR_CHART = 200;
 
 export interface LoadChartWindowParams {
     accessToken?: string;
     trade: Trade;
     timeframe: ChartTimeframe;
     windowDays?: number;
+    /** Broker identifier for broker-based queries (optional) */
+    broker?: string;
 }
 
 export interface LoadChartWindowResult {
@@ -25,7 +30,8 @@ export interface LoadChartWindowResult {
 export class LoadChartWindowUseCase {
     constructor(
         private readonly api: ICTraderAPI,
-        private readonly chartBarRepository: IChartBarRepository
+        private readonly chartBarRepository: IChartBarRepository,
+        private readonly supabaseChartBarRepository?: IChartBarRepository
     ) { }
 
     /**
@@ -64,17 +70,33 @@ export class LoadChartWindowUseCase {
     async execute(params: LoadChartWindowParams): Promise<LoadChartWindowResult> {
         const windowDays = params.windowDays ?? 2;
         const { from, to } = this.calculateWindow(params.trade, windowDays);
+        const minBars = MIN_BARS_FOR_CHART;
 
-        // Try cache first
-        const cachedBars = await this.chartBarRepository.getByWindow(
+        // Step 1: Try Dexie cache first (use broker if provided for correct lookup)
+        let cachedBars = await this.chartBarRepository.getByWindow(
             params.trade.symbol,
             params.timeframe,
             from,
-            to
+            to,
+            params.broker
         );
 
-        // If we have reasonable cached data, use it
-        if (cachedBars.length > 10) {
+        // Fallback: if broker was provided but few bars found, try without broker (broker mismatch or legacy data)
+        if (cachedBars.length < minBars && params.broker) {
+            const fallbackBars = await this.chartBarRepository.getByWindow(
+                params.trade.symbol,
+                params.timeframe,
+                from,
+                to,
+                undefined
+            );
+            if (fallbackBars.length > cachedBars.length) {
+                cachedBars = fallbackBars;
+            }
+        }
+
+        // Use cache if we have enough bars (trade markers can show even if bars don't cover exact trade time)
+        if (cachedBars.length >= minBars) {
             return {
                 bars: cachedBars.sort((a, b) => a.timestamp - b.timestamp),
                 fromCache: true,
@@ -83,8 +105,50 @@ export class LoadChartWindowUseCase {
             };
         }
 
-        // Fallback to API if access token provided
-        if (params.accessToken) {
+        // Step 2: Dexie has insufficient data, try Supabase if available and online
+        if (this.supabaseChartBarRepository && isOnline() && cachedBars.length < minBars) {
+            try {
+                let supabaseBars = await this.supabaseChartBarRepository.getByWindow(
+                    params.trade.symbol,
+                    params.timeframe,
+                    from,
+                    to,
+                    params.broker
+                );
+
+                if (supabaseBars.length === 0 && params.broker) {
+                    supabaseBars = await this.supabaseChartBarRepository.getByWindow(
+                        params.trade.symbol,
+                        params.timeframe,
+                        from,
+                        to,
+                        undefined
+                    );
+                }
+
+                if (supabaseBars.length >= minBars) {
+                    // Sync Supabase bars to Dexie for next time
+                    await this.chartBarRepository.upsertMany(supabaseBars);
+                    
+                    return {
+                        bars: supabaseBars.sort((a, b) => a.timestamp - b.timestamp),
+                        fromCache: true, // From Supabase cache
+                        windowStart: from,
+                        windowEnd: to,
+                    };
+                }
+                // Use Supabase bars even if incomplete if better than Dexie
+                if (supabaseBars.length > cachedBars.length) {
+                    await this.chartBarRepository.upsertMany(supabaseBars);
+                    cachedBars = supabaseBars;
+                }
+            } catch (error) {
+                console.warn("Failed to load from Supabase, falling back to API:", error);
+            }
+        }
+
+        // Step 3: Both Dexie and Supabase have insufficient data, fetch from cTrader API
+        if (params.accessToken && cachedBars.length < minBars) {
             try {
                 const apiBars = await this.api.getBars(
                     params.accessToken,
@@ -95,9 +159,21 @@ export class LoadChartWindowUseCase {
                     params.trade.accountId
                 );
 
-                // Store in cache for next time
+                // Store in Dexie first (offline-first)
                 if (apiBars.length > 0) {
-                    await this.chartBarRepository.upsertMany(apiBars);
+                    const barsWithBroker = params.broker
+                        ? apiBars.map((bar) => ({ ...bar, broker: params.broker }))
+                        : apiBars;
+                    await this.chartBarRepository.upsertMany(barsWithBroker);
+
+                    // Sync to Supabase if available and online
+                    if (this.supabaseChartBarRepository && isOnline()) {
+                        try {
+                            await this.supabaseChartBarRepository.upsertMany(barsWithBroker);
+                        } catch (error) {
+                            console.warn("Failed to sync to Supabase:", error);
+                        }
+                    }
                 }
 
                 return {

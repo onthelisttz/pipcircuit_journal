@@ -17,6 +17,8 @@ export interface TradeChartViewProps {
     initialTimeframe?: ChartTimeframe;
     /** Access token for API calls (optional) */
     accessToken?: string;
+    /** Broker identifier for cache lookup (Dexie/Supabase - improves chart loading from local data) */
+    broker?: string;
     /** Main chart height */
     chartHeight?: number;
     /** Profit timeline height */
@@ -33,6 +35,7 @@ export function TradeChartView({
     trade,
     initialTimeframe = "M1",
     accessToken,
+    broker,
     chartHeight = 400,
     profitTimelineHeight = 200,
 }: TradeChartViewProps) {
@@ -47,11 +50,12 @@ export function TradeChartView({
     const candlestickChartRef = useRef<TradeCandlestickChartRef | null>(null);
     const profitChartRef = useRef<{ fitContent: () => void } | null>(null);
 
-    // Fetch chart data using custom hook
+    // Fetch chart data using custom hook (broker enables Dexie/Supabase cache lookup)
     const { data, isLoading, error, refetch } = useChartData({
         trade,
         timeframe,
         accessToken,
+        broker,
     });
 
     // Handle timeframe change

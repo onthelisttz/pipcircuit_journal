@@ -40,7 +40,7 @@ export function DrawdownChart({ data }: DrawdownChartProps) {
     <div className="rounded-xl border border-border bg-card p-4">
       <h3 className="text-sm font-medium text-foreground mb-4">Drawdown</h3>
       <div className="h-48">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minHeight={0}>
           <AreaChart data={chartData}>
             <defs>
               <linearGradient id="drawdownGradient" x1="0" y1="0" x2="0" y2="1">

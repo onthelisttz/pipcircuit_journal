@@ -2,6 +2,7 @@
 
 import type { Trade } from "@domain/entities";
 import { TradeChartView } from "@ui/components/charts";
+import { useAccount } from "@ui/hooks/useAccount";
 
 export interface TradeChartTabProps {
     /** Trade to display charts for */
@@ -17,6 +18,9 @@ export interface TradeChartTabProps {
  * candlestick chart, profit timeline, and chart controls.
  */
 export function TradeChartTab({ trade, accessToken }: TradeChartTabProps) {
+    const { accounts } = useAccount();
+    const broker = accounts.find((a) => a.accountNumber === trade.accountId)?.broker;
+
     return (
         <div className="space-y-4">
             {/* Header */}
@@ -31,6 +35,7 @@ export function TradeChartTab({ trade, accessToken }: TradeChartTabProps) {
             <TradeChartView
                 trade={trade}
                 accessToken={accessToken}
+                broker={broker}
                 initialTimeframe="M1"
                 chartHeight={400}
                 profitTimelineHeight={200}

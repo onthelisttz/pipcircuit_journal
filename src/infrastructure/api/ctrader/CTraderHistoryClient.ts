@@ -13,23 +13,43 @@ export class CTraderHistoryClient {
     to: number,
     accountNumber?: string
   ): Promise<CTraderBarRecord[]> {
-    const response = await fetch("/api/ctrader/bars", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        accessToken,
-        symbol,
-        timeframe,
-        from,
-        to,
-        accountNumber: accountNumber ?? undefined,
-      }),
+    console.log(`[CTraderHistoryClient] Making API request for ${symbol}`, {
+      timeframe,
+      from: new Date(from).toISOString(),
+      to: new Date(to).toISOString(),
+      accountNumber,
+      hasAccessToken: !!accessToken,
     });
-    const data = (await response.json()) as { bars?: CTraderBarRecord[]; error?: string };
-    if (!response.ok || data.error) {
-      const msg = data.error ?? `Failed to fetch bars (${response.status})`;
-      throw new Error(msg);
+
+    try {
+      const response = await fetch("/api/ctrader/bars", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken,
+          symbol,
+          timeframe,
+          from,
+          to,
+          accountNumber: accountNumber ?? undefined,
+        }),
+      });
+
+      console.log(`[CTraderHistoryClient] Response status: ${response.status} for ${symbol}`);
+
+      const data = (await response.json()) as { bars?: CTraderBarRecord[]; error?: string };
+      
+      if (!response.ok || data.error) {
+        const msg = data.error ?? `Failed to fetch bars (${response.status})`;
+        console.error(`[CTraderHistoryClient] API error for ${symbol}:`, msg);
+        throw new Error(msg);
+      }
+
+      console.log(`[CTraderHistoryClient] Received ${data.bars?.length ?? 0} bars for ${symbol}`);
+      return data.bars ?? [];
+    } catch (error) {
+      console.error(`[CTraderHistoryClient] Fetch error for ${symbol}:`, error);
+      throw error;
     }
-    return data.bars ?? [];
   }
 }

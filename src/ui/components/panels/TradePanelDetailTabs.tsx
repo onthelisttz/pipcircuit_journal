@@ -2,7 +2,7 @@
 
 import { format, formatDistanceStrict } from "date-fns";
 import { Loader2 } from "lucide-react";
-import { useTrade } from "@ui/hooks";
+import { useTrade, useAccount } from "@ui/hooks";
 import { TokenStorage } from "@infrastructure/auth";
 import { TradeChartView } from "@ui/components/charts";
 import { TradeJournalEditor } from "./TradeJournalEditor";
@@ -27,6 +27,7 @@ export function TradePanelDetailTabs({
   activeTab,
 }: TradePanelDetailTabsProps) {
   const { trade, isLoading, error } = useTrade(tradeId);
+  const { accounts } = useAccount();
 
   if (isLoading) {
     return (
@@ -208,12 +209,14 @@ export function TradePanelDetailTabs({
 
   if (activeTab === "chart") {
     const token = TokenStorage.getGlobal();
+    const broker = accounts.find((a) => a.accountNumber === trade.accountId)?.broker;
     return (
       <div className="-mx-2">
         <TradeChartView
           trade={trade}
           initialTimeframe="M1"
           accessToken={token?.accessToken}
+          broker={broker}
           chartHeight={280}
           profitTimelineHeight={200}
         />

@@ -147,7 +147,7 @@ export function ReturnsCharts({ annual, monthly }: ReturnsChartsProps) {
               No data
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minHeight={0}>
               <BarChart data={annualData} margin={{ top: 12, right: 12, left: 12, bottom: 12 }} stackOffset="sign" barGap={4}>
                 {BAR_CHART_DEFS}
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.6} vertical={false} />
@@ -181,7 +181,7 @@ export function ReturnsCharts({ annual, monthly }: ReturnsChartsProps) {
               No data
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minHeight={0}>
               <BarChart data={monthlyData} margin={{ top: 12, right: 12, left: 12, bottom: 12 }} stackOffset="sign" barGap={4}>
                 {BAR_CHART_DEFS}
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.6} vertical={false} />

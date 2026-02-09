@@ -128,7 +128,7 @@ export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         <div className="h-56">
           <p className="text-xs text-muted-foreground mb-2">By Count</p>
-          <ResponsiveContainer width="100%" height="90%">
+          <ResponsiveContainer width="100%" height="90%" minHeight={0}>
             <PieChart>
               <Pie
                 data={countData}
@@ -161,7 +161,7 @@ export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
         </div>
         <div className="h-56">
           <p className="text-xs text-muted-foreground mb-2">By P&L</p>
-          <ResponsiveContainer width="100%" height="90%">
+          <ResponsiveContainer width="100%" height="90%" minHeight={0}>
             <PieChart>
               <Pie
                 data={profitData}
@@ -194,7 +194,7 @@ export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
         </div>
         <div className="h-56">
           <p className="text-xs text-muted-foreground mb-2">By Win Rate</p>
-          <ResponsiveContainer width="100%" height="90%">
+          <ResponsiveContainer width="100%" height="90%" minHeight={0}>
             <PieChart>
               <Pie
                 data={winRateData}

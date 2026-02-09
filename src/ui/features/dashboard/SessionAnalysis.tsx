@@ -60,7 +60,7 @@ export function SessionAnalysis({ data }: SessionAnalysisProps) {
     <div className="rounded-xl border border-border bg-card p-4">
       <h3 className="text-sm font-medium text-foreground mb-4">Session Analysis</h3>
       <div className="h-64">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minHeight={0}>
           <RadarChart data={radarData}>
             <PolarGrid />
             <PolarAngleAxis

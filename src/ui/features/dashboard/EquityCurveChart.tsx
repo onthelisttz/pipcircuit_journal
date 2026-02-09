@@ -39,7 +39,7 @@ export function EquityCurveChart({ data }: EquityCurveChartProps) {
     <div className="rounded-xl border border-border bg-card p-4">
       <h3 className="text-sm font-medium text-foreground mb-4">Equity Curve</h3>
       <div className="h-64">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minHeight={0}>
           <AreaChart data={chartData}>
             <defs>
               <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">

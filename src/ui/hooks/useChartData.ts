@@ -3,8 +3,10 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import type { Trade, ChartTimeframe, ChartBar } from "@domain/entities";
 import { DexieChartBarRepository } from "@infrastructure/db/dexie/repositories";
+import { SupabaseChartBarRepository } from "@infrastructure/db/supabase/repositories";
 import { CTraderAPI } from "@infrastructure/api/ctrader";
 import { LoadChartWindowUseCase } from "@application/use-cases/charts";
+import { useAuth } from "./useAuth";
 
 export interface UseChartDataOptions {
     /** Trade to fetch chart data for */
@@ -17,6 +19,8 @@ export interface UseChartDataOptions {
     windowDays?: number;
     /** Whether to enable the query */
     enabled?: boolean;
+    /** Broker identifier for broker-based queries (optional, improves query performance) */
+    broker?: string;
 }
 
 export interface UseChartDataResult {
@@ -53,6 +57,7 @@ export function useChartData({
     accessToken,
     windowDays = 2,
     enabled = true,
+    broker,
 }: UseChartDataOptions): UseChartDataResult {
     const [data, setData] = useState<ChartBar[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -62,11 +67,15 @@ export function useChartData({
     const [windowEnd, setWindowEnd] = useState(0);
 
     // Create use case with dependencies
+    const { user } = useAuth();
     const useCase = useMemo(() => {
         const chartBarRepository = new DexieChartBarRepository();
+        const supabaseChartBarRepository = user?.id 
+            ? new SupabaseChartBarRepository(user.id)
+            : undefined;
         const api = new CTraderAPI();
-        return new LoadChartWindowUseCase(api, chartBarRepository);
-    }, []);
+        return new LoadChartWindowUseCase(api, chartBarRepository, supabaseChartBarRepository);
+    }, [user?.id]);
 
     // Fetch chart data
     const fetchData = useCallback(async () => {
@@ -81,6 +90,7 @@ export function useChartData({
                 timeframe,
                 accessToken,
                 windowDays,
+                broker,
             });
 
             // Apply memory cap
@@ -99,7 +109,7 @@ export function useChartData({
         } finally {
             setIsLoading(false);
         }
-    }, [enabled, trade, timeframe, accessToken, windowDays, useCase]);
+    }, [enabled, trade, timeframe, accessToken, windowDays, broker, useCase]);
 
     // Fetch data on mount and when dependencies change
     useEffect(() => {
@@ -118,7 +128,8 @@ export function useChartData({
                 trade.symbol,
                 timeframe,
                 newWindowStart,
-                windowStart
+                windowStart,
+                broker
             );
 
             if (previousBars.length > 0) {
@@ -132,7 +143,7 @@ export function useChartData({
         } catch (err) {
             console.error("Failed to fetch previous data:", err);
         }
-    }, [windowStart, isLoading, trade.symbol, timeframe, windowDays]);
+    }, [windowStart, isLoading, trade.symbol, timeframe, windowDays, broker]);
 
     // Lazy loading: fetch next chunk
     const fetchNext = useCallback(async () => {
@@ -146,7 +157,8 @@ export function useChartData({
                 trade.symbol,
                 timeframe,
                 windowEnd,
-                newWindowEnd
+                newWindowEnd,
+                broker
             );
 
             if (nextBars.length > 0) {
@@ -160,7 +172,7 @@ export function useChartData({
         } catch (err) {
             console.error("Failed to fetch next data:", err);
         }
-    }, [windowEnd, isLoading, trade.symbol, timeframe, windowDays]);
+    }, [windowEnd, isLoading, trade.symbol, timeframe, windowDays, broker]);
 
     return {
         data,

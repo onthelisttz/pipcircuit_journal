@@ -1,14 +1,18 @@
 /**
  * Sync Infrastructure
  *
- * Implementations will be added in Phase 4 (Sync Engine).
+ * Provides sync service implementations for offline-first data synchronization
  */
 
-// Placeholder export to make this a valid module
-export const SYNC_MODULE_PLACEHOLDER = true;
-
-// Future implementations:
-// export { SyncQueueProcessor } from './SyncQueueProcessor';
-// export { ConflictResolver } from './ConflictResolver';
-// export { SyncScheduler } from './SyncScheduler';
-// export { OnlineStatusMonitor } from './OnlineStatusMonitor';
+export { BaseSyncService } from "./BaseSyncService";
+export { ChartBarSyncService } from "./ChartBarSyncService";
+export { SyncQueueManager } from "./SyncQueueManager";
+export type { QueueProcessorOptions } from "./SyncQueueManager";
+export { BarSyncWorker } from "./BarSyncWorker";
+export type { BarSyncWorkerOptions } from "./BarSyncWorker";
+export { SyncOrchestrator } from "./SyncOrchestrator";
+export type { SyncOrchestratorOptions } from "./SyncOrchestrator";
+export { RealtimeSubscriptionManager } from "./RealtimeSubscriptionManager";
+export type { RealtimeCallbacks } from "./RealtimeSubscriptionManager";
+export { progressEventEmitter } from "./ProgressEventEmitter";
+export * from "./utils";

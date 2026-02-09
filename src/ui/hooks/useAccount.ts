@@ -6,11 +6,15 @@ import { TokenStorage } from "@infrastructure/auth";
 import { Direction, OrderType } from "@domain/enums";
 import { DexieTradeRepository } from "@infrastructure/db/dexie";
 import { DexieAccountRepository } from "@infrastructure/db/dexie";
+import { db } from "@infrastructure/db/dexie/database";
 import { useAccountStore } from "@ui/state";
 import { estimateGrossProfit } from "@lib/pnl-estimate";
 
 const accountRepository = new DexieAccountRepository();
 const tradeRepository = new DexieTradeRepository();
+
+// Lock to prevent concurrent syncs
+let syncInProgress = false;
 
 export function useAccount() {
   const { accounts, activeAccountId, setAccounts, setActiveAccountId, setLastAccountsSyncAt } =
@@ -24,170 +28,174 @@ export function useAccount() {
   }, [setAccounts, setActiveAccountId]);
 
   const syncFromCTrader = useCallback(async () => {
-    const token = TokenStorage.getGlobal();
-    if (!token) {
+    // Prevent concurrent syncs
+    if (syncInProgress) {
+      console.log("[useAccount] Sync already in progress, skipping...");
       return;
     }
 
-    const response = await fetch("/api/ctrader/accounts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accessToken: token.accessToken }),
-    });
-    const data = (await response.json()) as { accounts?: Record<string, unknown>[]; error?: string };
-    if (!response.ok || data.error) {
-      throw new Error(data.error ?? "Failed to load accounts");
-    }
-    if (!data.accounts || data.accounts.length === 0) {
-      return;
-    }
-
-    for (const raw of data.accounts) {
-      const accountNumber = String(
-        raw["accountNumber"] ??
-          raw["ctidTraderAccountId"] ??
-          raw["accountId"] ??
-          raw["login"] ??
-          raw["id"]
-      );
-      if (!accountNumber || accountNumber === "undefined") {
-        continue;
+    syncInProgress = true;
+    try {
+      const token = TokenStorage.getGlobal();
+      if (!token) {
+        return;
       }
-      const rawBalance =
-        typeof raw["balance"] === "number"
-          ? raw["balance"]
-          : typeof raw["balance"] === "string"
-            ? Number.parseFloat(raw["balance"])
-            : undefined;
-      const rawEquity =
-        typeof raw["equity"] === "number"
-          ? raw["equity"]
-          : typeof raw["equity"] === "string"
-            ? Number.parseFloat(raw["equity"])
-            : undefined;
-      const precision =
-        typeof raw["moneyDigits"] === "number"
-          ? raw["moneyDigits"]
-          : typeof raw["currencyDigits"] === "number"
-            ? raw["currencyDigits"]
-            : typeof raw["balanceDigits"] === "number"
-              ? raw["balanceDigits"]
-              : typeof raw["digits"] === "number"
-                ? raw["digits"]
-                : 2;
-      const normalizeMoney = (value?: number) => {
-        if (value === undefined || Number.isNaN(value)) {
-          return undefined;
-        }
-        if (precision > 0 && Number.isInteger(value)) {
-          return value / 10 ** precision;
-        }
-        if (Number.isInteger(value) && value >= 1000) {
-          return value / 100;
-        }
-        return value;
-      };
-      const balance = normalizeMoney(rawBalance);
-      const equity = normalizeMoney(rawEquity);
-      const accountType = String(
-        raw["accountType"] ??
-          raw["type"] ??
-          raw["traderAccountType"] ??
-          raw["accountTypeName"] ??
-          raw["environment"] ??
-          raw["environmentType"] ??
-          raw["brokerType"] ??
-          ""
-      ).toLowerCase();
-      const liveFlag =
-        typeof raw["live"] === "boolean"
-          ? raw["live"]
-          : typeof raw["isLive"] === "boolean"
-            ? raw["isLive"]
-            : typeof raw["isLiveAccount"] === "boolean"
-              ? raw["isLiveAccount"]
-              : typeof raw["isDemo"] === "boolean"
-                ? !raw["isDemo"]
+
+      const response = await fetch("/api/ctrader/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: token.accessToken }),
+      });
+      const data = (await response.json()) as { accounts?: Record<string, unknown>[]; error?: string };
+      if (!response.ok || data.error) {
+        throw new Error(data.error ?? "Failed to load accounts");
+      }
+      if (!data.accounts || data.accounts.length === 0) {
+        return;
+      }
+
+      // Use transaction to prevent race conditions
+      await db.transaction("rw", db.accounts, async () => {
+        for (const raw of data.accounts) {
+          const accountNumber = String(
+            raw["accountNumber"] ??
+              raw["ctidTraderAccountId"] ??
+              raw["accountId"] ??
+              raw["login"] ??
+              raw["id"]
+          );
+          if (!accountNumber || accountNumber === "undefined") {
+            continue;
+          }
+          const rawBalance =
+            typeof raw["balance"] === "number"
+              ? raw["balance"]
+              : typeof raw["balance"] === "string"
+                ? Number.parseFloat(raw["balance"])
                 : undefined;
-      const nameHint = `${raw["name"] ?? ""} ${raw["brokerName"] ?? ""} ${raw["server"] ?? ""}`.toLowerCase();
-      const type =
-        accountType.includes("demo") ||
-        nameHint.includes("demo") ||
-        liveFlag === false
-          ? "Demo"
-          : accountType.includes("live") ||
-              nameHint.includes("live") ||
-              liveFlag === true
-            ? "Live"
-            : undefined;
-      const broker =
-        typeof raw["brokerTitle"] === "string"
-          ? raw["brokerTitle"]
-          : typeof raw["brokerName"] === "string"
-            ? raw["brokerName"]
-            : undefined;
-      const server =
-        typeof raw["server"] === "string" ? raw["server"] : broker ?? undefined;
-      const name =
-        typeof raw["name"] === "string"
-          ? raw["name"]
-          : broker ?? (typeof raw["server"] === "string" ? raw["server"] : undefined);
+          const rawEquity =
+            typeof raw["equity"] === "number"
+              ? raw["equity"]
+              : typeof raw["equity"] === "string"
+                ? Number.parseFloat(raw["equity"])
+                : undefined;
+          const precision =
+            typeof raw["moneyDigits"] === "number"
+              ? raw["moneyDigits"]
+              : typeof raw["currencyDigits"] === "number"
+                ? raw["currencyDigits"]
+                : typeof raw["balanceDigits"] === "number"
+                  ? raw["balanceDigits"]
+                  : typeof raw["digits"] === "number"
+                    ? raw["digits"]
+                    : 2;
+          const normalizeMoney = (value?: number) => {
+            if (value === undefined || Number.isNaN(value)) {
+              return undefined;
+            }
+            if (precision > 0 && Number.isInteger(value)) {
+              return value / 10 ** precision;
+            }
+            if (Number.isInteger(value) && value >= 1000) {
+              return value / 100;
+            }
+            return value;
+          };
+          const balance = normalizeMoney(rawBalance);
+          const equity = normalizeMoney(rawEquity);
+          const accountType = String(
+            raw["accountType"] ??
+              raw["type"] ??
+              raw["traderAccountType"] ??
+              raw["accountTypeName"] ??
+              raw["environment"] ??
+              raw["environmentType"] ??
+              raw["brokerType"] ??
+              ""
+          ).toLowerCase();
+          const liveFlag =
+            typeof raw["live"] === "boolean"
+              ? raw["live"]
+              : typeof raw["isLive"] === "boolean"
+                ? raw["isLive"]
+                : typeof raw["isLiveAccount"] === "boolean"
+                  ? raw["isLiveAccount"]
+                  : typeof raw["isDemo"] === "boolean"
+                    ? !raw["isDemo"]
+                    : undefined;
+          const nameHint = `${raw["name"] ?? ""} ${raw["brokerName"] ?? ""} ${raw["server"] ?? ""}`.toLowerCase();
+          const type =
+            accountType.includes("demo") ||
+            nameHint.includes("demo") ||
+            liveFlag === false
+              ? "Demo"
+              : accountType.includes("live") ||
+                  nameHint.includes("live") ||
+                  liveFlag === true
+                ? "Live"
+                : undefined;
+          const broker =
+            typeof raw["brokerTitle"] === "string"
+              ? raw["brokerTitle"]
+              : typeof raw["brokerName"] === "string"
+                ? raw["brokerName"]
+                : undefined;
+          const server =
+            typeof raw["server"] === "string" ? raw["server"] : broker ?? undefined;
+          const name =
+            typeof raw["name"] === "string"
+              ? raw["name"]
+              : broker ?? (typeof raw["server"] === "string" ? raw["server"] : undefined);
 
-      const existing = await accountRepository.getByAccountNumber(accountNumber);
-      const record: Account = {
-        accountNumber,
-        ctraderAccountId:
-          typeof raw["accountId"] === "number"
-            ? raw["accountId"]
-            : typeof raw["ctidTraderAccountId"] === "number"
-              ? raw["ctidTraderAccountId"]
-              : undefined,
-        platform: "cTrader",
-        name,
-        broker,
-        server,
-        type,
-        currency:
-          typeof raw["currency"] === "string"
-            ? raw["currency"]
-            : typeof raw["depositCurrency"] === "string"
-              ? raw["depositCurrency"]
-              : undefined,
-        balance,
-        equity,
-        leverage: typeof raw["leverage"] === "number" ? raw["leverage"] : undefined,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        // lastSyncAt is reserved for trade sync; preserve existing value so
-        // initial trade sync can fetch full history instead of "from now".
-        lastSyncAt: existing?.lastSyncAt ?? null,
-      };
-      if (existing?.id) {
-        await accountRepository.update(existing.id, {
-          accountNumber: record.accountNumber,
-          ctraderAccountId: record.ctraderAccountId,
-          platform: record.platform,
-          // Preserve user-renamed name if present; otherwise fall back to remote name.
-          name: existing.name ?? record.name,
-          broker: record.broker,
-          server: record.server,
-          type: record.type,
-          currency: record.currency,
-          balance: record.balance,
-          equity: record.equity,
-          leverage: record.leverage,
-          updatedAt: new Date(),
-        });
-      } else {
-        await accountRepository.create(record);
-      }
+          const existing = await accountRepository.getByAccountNumber(accountNumber);
+          const record: Account = {
+            ...(existing || {}), // Preserve existing fields (especially id and lastSyncAt)
+            accountNumber,
+            ctraderAccountId:
+              typeof raw["accountId"] === "number"
+                ? raw["accountId"]
+                : typeof raw["ctidTraderAccountId"] === "number"
+                  ? raw["ctidTraderAccountId"]
+                  : existing?.ctraderAccountId,
+            platform: "cTrader",
+            // Preserve user-renamed name if present; otherwise use remote name
+            name: existing?.name ?? name,
+            broker: broker ?? existing?.broker,
+            server: server ?? existing?.server,
+            type: type ?? existing?.type,
+            currency:
+              typeof raw["currency"] === "string"
+                ? raw["currency"]
+                : typeof raw["depositCurrency"] === "string"
+                  ? raw["depositCurrency"]
+                  : existing?.currency,
+            balance,
+            equity,
+            leverage: typeof raw["leverage"] === "number" ? raw["leverage"] : existing?.leverage,
+            createdAt: existing?.createdAt ?? new Date(),
+            updatedAt: new Date(),
+            // lastSyncAt is reserved for trade sync; preserve existing value so
+            // initial trade sync can fetch full history instead of "from now".
+            lastSyncAt: existing?.lastSyncAt ?? null,
+            isActive: existing?.isActive ?? false,
+          };
+          
+          if (existing?.id) {
+            await accountRepository.update(existing.id, record);
+          } else {
+            await accountRepository.create(record);
+          }
+        }
+      });
+
+      const refreshed = await accountRepository.list();
+      setAccounts(refreshed);
+      setLastAccountsSyncAt(new Date());
+      const active = refreshed.find((record) => record.isActive) ?? refreshed[0];
+      setActiveAccountId(active?.id ?? null);
+    } finally {
+      syncInProgress = false;
     }
-
-    const refreshed = await accountRepository.list();
-    setAccounts(refreshed);
-    setLastAccountsSyncAt(new Date());
-    const active = refreshed.find((record) => record.isActive) ?? refreshed[0];
-    setActiveAccountId(active?.id ?? null);
   }, [setAccounts, setActiveAccountId, setLastAccountsSyncAt]);
 
   const syncTradesForAccount = useCallback(

@@ -106,7 +106,7 @@ export function DayOfWeekChart({ data }: DayOfWeekChartProps) {
     <div className="rounded-xl border border-border bg-card p-4">
       <h3 className="text-sm font-medium text-foreground mb-4">Gain/Losses by day of week</h3>
       <div className="h-56">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minHeight={0}>
           <BarChart
             data={chartData}
             margin={{ top: 12, right: 12, left: 12, bottom: 12 }}

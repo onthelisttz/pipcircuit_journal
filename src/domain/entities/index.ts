@@ -14,3 +14,4 @@ export type { ChartBar, ChartTimeframe } from "./ChartBar";
 export type { Account, AccountType } from "./Account";
 export type { SyncJob } from "./SyncJob";
 export type { DailySummary } from "./DailySummary";
+export type { SymbolSyncProgress, SymbolSyncStatus } from "./SymbolSyncProgress";

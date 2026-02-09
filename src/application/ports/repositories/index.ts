@@ -12,5 +12,6 @@ export type { ITagRepository } from "./ITagRepository";
 export type { IChartBarRepository } from "./IChartBarRepository";
 export type { IAccountRepository } from "./IAccountRepository";
 export type { ISyncQueueRepository } from "./ISyncQueueRepository";
+export type { ISymbolSyncProgressRepository } from "./ISymbolSyncProgressRepository";
 export type { ISettingsRepository, SettingRecord } from "./ISettingsRepository";
 export type { IDailySummaryRepository } from "./IDailySummaryRepository";
