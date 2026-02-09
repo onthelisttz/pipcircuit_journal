@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useCallback, useRef, useMemo } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import type { Trade, ChartTimeframe } from "@domain/entities";
 import { Direction } from "@domain/enums";
+import { X } from "lucide-react";
 import { formatPipsLabel } from "@lib/pnl-estimate";
 import { TradeCandlestickChart } from "./TradeCandlestickChart";
 import { ProfitTimelineChart } from "./ProfitTimelineChart";
@@ -40,6 +41,7 @@ export function TradeChartView({
     const [showProfitTimeline, setShowProfitTimeline] = useState(true);
     const [showMAE, setShowMAE] = useState(true);
     const [showMFE, setShowMFE] = useState(true);
+    const [isExpanded, setIsExpanded] = useState(false);
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const candlestickChartRef = useRef<{ fitContent: () => void } | null>(null);
     const profitChartRef = useRef<{ fitContent: () => void } | null>(null);
@@ -56,10 +58,14 @@ export function TradeChartView({
         setTimeframe(newTimeframe);
     }, []);
 
-    // Reset view - fit both charts to content
+    // Reset view - switch to M1, scroll to trade, fit charts (delay to allow M1 data to load)
     const handleResetView = useCallback(() => {
-        candlestickChartRef.current?.fitContent();
-        profitChartRef.current?.fitContent();
+        setTimeframe("M1");
+        setTimeout(() => {
+            candlestickChartRef.current?.scrollToTrade?.();
+            candlestickChartRef.current?.fitContent();
+            profitChartRef.current?.fitContent();
+        }, 150);
     }, []);
 
     // RR summary for trade panel (entry, risk, target, profit)
@@ -110,6 +116,20 @@ export function TradeChartView({
         };
     }, [trade, data]);
 
+    // Close expanded view on Escape, prevent body scroll when expanded
+    useEffect(() => {
+        if (!isExpanded) return;
+        const handler = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setIsExpanded(false);
+        };
+        window.addEventListener("keydown", handler);
+        document.body.style.overflow = "hidden";
+        return () => {
+            window.removeEventListener("keydown", handler);
+            document.body.style.overflow = "";
+        };
+    }, [isExpanded]);
+
     // Handle visible range change for lazy loading
     const handleVisibleRangeChange = useCallback(
         (from: number, to: number) => {
@@ -130,19 +150,14 @@ export function TradeChartView({
         [data.length]
     );
 
-    return (
-        <div
-            ref={chartContainerRef}
-            className="flex flex-col gap-4 rounded-xl bg-gray-950/50 p-4"
-        >
-            {/* Header with controls */}
-            <div className="flex flex-wrap items-center justify-between gap-4">
+    const chartContent = (
+        <>
+            <div className="flex flex-nowrap items-center justify-between gap-3 overflow-x-auto">
                 <TimeframeSelector
                     value={timeframe}
                     onChange={handleTimeframeChange}
                     disabled={isLoading}
                 />
-
                 <ChartControls
                     onResetView={handleResetView}
                     showProfitTimeline={showProfitTimeline}
@@ -151,11 +166,11 @@ export function TradeChartView({
                     onToggleMAE={() => setShowMAE((prev) => !prev)}
                     showMFE={showMFE}
                     onToggleMFE={() => setShowMFE((prev) => !prev)}
+                    isExpanded={isExpanded}
+                    onToggleExpand={() => setIsExpanded((prev) => !prev)}
                     disabled={isLoading}
                 />
             </div>
-
-            {/* Error state */}
             {error && (
                 <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400">
                     <p>Failed to load chart data: {error.message}</p>
@@ -167,20 +182,16 @@ export function TradeChartView({
                     </button>
                 </div>
             )}
-
-            {/* Main candlestick chart */}
             <TradeCandlestickChart
                 ref={candlestickChartRef}
                 data={data}
                 trade={trade}
-                height={chartHeight}
+                height={isExpanded ? 550 : chartHeight}
                 showEntryMarker={true}
                 showExitMarker={true}
                 onVisibleRangeChange={handleVisibleRangeChange}
                 isLoading={isLoading}
             />
-
-            {/* Profit timeline chart */}
             <ProfitTimelineChart
                 ref={profitChartRef}
                 data={data}
@@ -190,8 +201,6 @@ export function TradeChartView({
                 showMAE={showMAE}
                 showMFE={showMFE}
             />
-
-            {/* RR summary panel - friendly risk-to-reward overview */}
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-3 text-xs">
                 <div className="flex items-center gap-2">
                     <span className="text-gray-500">Symbol</span>
@@ -234,6 +243,52 @@ export function TradeChartView({
                     </div>
                 )}
             </div>
+        </>
+    );
+
+    if (isExpanded) {
+        return (
+            <>
+                <div
+                    className="fixed inset-0 z-40 bg-black/80"
+                    onClick={() => setIsExpanded(false)}
+                    aria-hidden="true"
+                />
+                <div
+                    ref={chartContainerRef}
+                    className="fixed inset-4 z-50 flex flex-col gap-4 rounded-xl bg-gray-950 p-6 shadow-2xl"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Expanded chart"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-lg font-medium text-gray-200">
+                            {trade.symbol} – {trade.direction}
+                        </h3>
+                        <button
+                            onClick={() => setIsExpanded(false)}
+                            className="flex items-center gap-2 rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 transition-colors hover:bg-gray-700 hover:text-white"
+                            title="Collapse"
+                        >
+                            <X className="h-5 w-5" />
+                            Close
+                        </button>
+                    </div>
+                    <div className="flex flex-1 min-h-0 flex-col gap-4 overflow-auto">
+                        {chartContent}
+                    </div>
+                </div>
+            </>
+        );
+    }
+
+    return (
+        <div
+            ref={chartContainerRef}
+            className="flex flex-col gap-4 rounded-xl bg-gray-950/50 p-4"
+        >
+            {chartContent}
         </div>
     );
 }

@@ -1,47 +1,36 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
 import type { ChartTimeframe } from "@domain/entities";
 
 export interface TimeframeSelectorProps {
-    /** Currently selected timeframe */
     value: ChartTimeframe;
-    /** Callback when timeframe changes */
     onChange: (timeframe: ChartTimeframe) => void;
-    /** Disabled state */
     disabled?: boolean;
 }
 
 const TIMEFRAMES: ChartTimeframe[] = ["M1", "M5", "M15", "H1"];
 
-/**
- * TimeframeSelector - Timeframe button group
- *
- * Allows switching between different chart timeframes.
- */
 export function TimeframeSelector({
     value,
     onChange,
     disabled = false,
 }: TimeframeSelectorProps) {
     return (
-        <div className="flex items-center gap-1 rounded-lg bg-gray-800/50 p-1">
-            {TIMEFRAMES.map((tf) => (
-                <button
-                    key={tf}
-                    onClick={() => onChange(tf)}
-                    disabled={disabled}
-                    className={`
-            rounded-md px-3 py-1.5 text-xs font-medium transition-all
-            ${value === tf
-                            ? "bg-blue-600 text-white shadow-sm"
-                            : "text-gray-400 hover:bg-gray-700 hover:text-gray-200"
-                        }
-            ${disabled ? "cursor-not-allowed opacity-50" : ""}
-          `}
-                >
-                    {tf}
-                </button>
-            ))}
+        <div className="relative shrink-0">
+            <select
+                value={value}
+                onChange={(e) => onChange(e.target.value as ChartTimeframe)}
+                disabled={disabled}
+                className="h-6 appearance-none rounded border border-gray-700 bg-gray-800/50 pl-2 pr-6 text-[11px] font-medium text-gray-200 outline-none focus:ring-1 focus:ring-gray-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+                {TIMEFRAMES.map((tf) => (
+                    <option key={tf} value={tf}>
+                        {tf}
+                    </option>
+                ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-500" />
         </div>
     );
 }
