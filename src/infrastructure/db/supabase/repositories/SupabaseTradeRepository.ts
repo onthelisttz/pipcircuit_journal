@@ -15,14 +15,15 @@ interface SupabaseTrade {
   open_price: number;
   close_price: number | null;
   entry_price: number | null;
-  volume: number;
   lots: number | null;
+  balance: number | null;
   commission: number | null;
   swap: number | null;
   fee: number | null;
   gross_profit: number | null;
   net_profit: number | null;
   percent_gain: number | null;
+  pips: number | null;
   take_profit: number | null;
   stop_loss: number | null;
   placed_by: string | null;
@@ -49,14 +50,17 @@ function toDomain(row: SupabaseTrade): Trade {
     openPrice: Number(row.open_price),
     closePrice: row.close_price != null ? Number(row.close_price) : null,
     entryPrice: row.entry_price != null ? Number(row.entry_price) : null,
-    volume: Number(row.volume),
+    // Use lots as canonical size; volume column has been removed from Supabase.
+    volume: row.lots != null ? Number(row.lots) : 0,
     lots: row.lots != null ? Number(row.lots) : undefined,
+    balance: row.balance != null ? Number(row.balance) : undefined,
     commission: row.commission != null ? Number(row.commission) : undefined,
     swap: row.swap != null ? Number(row.swap) : undefined,
     fee: row.fee != null ? Number(row.fee) : undefined,
     grossProfit: row.gross_profit != null ? Number(row.gross_profit) : undefined,
     netProfit: row.net_profit != null ? Number(row.net_profit) : undefined,
     percentGain: row.percent_gain != null ? Number(row.percent_gain) : undefined,
+    pips: row.pips != null ? Number(row.pips) : undefined,
     takeProfit: row.take_profit != null ? Number(row.take_profit) : null,
     stopLoss: row.stop_loss != null ? Number(row.stop_loss) : null,
     placedBy: row.placed_by as Trade["placedBy"],
@@ -84,14 +88,15 @@ function toSupabase(t: Trade, userId: string): Record<string, unknown> {
     open_price: t.openPrice,
     close_price: t.closePrice ?? null,
     entry_price: t.entryPrice ?? null,
-    volume: t.volume,
     lots: t.lots ?? null,
+    balance: t.balance ?? null,
     commission: t.commission ?? null,
     swap: t.swap ?? null,
     fee: t.fee ?? null,
     gross_profit: t.grossProfit ?? null,
     net_profit: t.netProfit ?? null,
     percent_gain: t.percentGain ?? null,
+    pips: t.pips ?? null,
     take_profit: t.takeProfit ?? null,
     stop_loss: t.stopLoss ?? null,
     placed_by: t.placedBy ?? null,

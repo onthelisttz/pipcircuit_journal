@@ -8,6 +8,10 @@ export interface DashboardSummary {
   winRate: number;
   maxDrawdown: number;
   breakevenTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  winningProfit: number;
+  losingProfit: number;
   totalDeposits: number;
   percentFromPeak: number;
 }
@@ -34,6 +38,18 @@ export class GetDashboardSummaryUseCase {
     // Closed = has a closeTime; missing P&L counts as 0.
     const closed = trades.filter((t) => t.closeTime);
     const netProfit = closed.reduce((a, t) => a + (t.netProfit ?? t.grossProfit ?? 0), 0);
+    const { winningProfit, losingProfit } = closed.reduce(
+      (acc, t) => {
+        const p = t.netProfit ?? t.grossProfit ?? 0;
+        if (p > 0) {
+          acc.winningProfit += p;
+        } else if (p < 0) {
+          acc.losingProfit += p;
+        }
+        return acc;
+      },
+      { winningProfit: 0, losingProfit: 0 }
+    );
 
     const maxDrawdown = drawdownPoints.length > 0
       ? Math.max(...drawdownPoints.map((p) => p.drawdown))
@@ -50,6 +66,10 @@ export class GetDashboardSummaryUseCase {
       winRate: winRateResult.winRate,
       maxDrawdown,
       breakevenTrades: winRateResult.breakevenTrades,
+      winningTrades: winRateResult.winningTrades,
+      losingTrades: winRateResult.losingTrades,
+      winningProfit,
+      losingProfit,
       totalDeposits: 0,
       percentFromPeak,
     };

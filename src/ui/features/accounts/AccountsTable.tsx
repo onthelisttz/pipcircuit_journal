@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pencil, Check, Download } from "lucide-react";
 
 import { useAccount } from "@ui/hooks";
@@ -27,6 +27,15 @@ export function AccountsTable() {
   } | null>(null);
   const [nameInput, setNameInput] = useState("");
   const [syncingAccount, setSyncingAccount] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!errorMessage) return;
+    const timer = setTimeout(() => {
+      setErrorMessage(null);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [errorMessage]);
 
   if (accounts.length === 0) {
     return (
@@ -38,6 +47,11 @@ export function AccountsTable() {
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
+      {errorMessage && (
+        <div className="border-b border-border bg-destructive/5 px-4 py-2 text-xs text-destructive">
+          {errorMessage}
+        </div>
+      )}
       {renameTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
           <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-lg">
@@ -153,12 +167,23 @@ export function AccountsTable() {
                 <button
                   onClick={async () => {
                     if (syncingAccount) return;
+                    setErrorMessage(null);
                     setSyncingAccount(account.accountNumber);
                     try {
                       await syncTradesForAccount(
                         account.accountNumber,
                         account.ctraderAccountId
                       );
+                    } catch (error) {
+                      const message =
+                        error instanceof Error ? error.message : "Failed to sync trades";
+                      if (message === "Missing cTrader token") {
+                        setErrorMessage(
+                          "Please link your cTrader account before syncing trades."
+                        );
+                      } else {
+                        setErrorMessage(message);
+                      }
                     } finally {
                       setSyncingAccount(null);
                     }

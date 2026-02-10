@@ -27,6 +27,8 @@ type TradeRecord = {
   openPrice: string;
   closePrice: string;
   entryPrice: string;
+  /** Account balance after this deal (normalized to account currency, if available). */
+  balance: string;
   volume: string;
   filledVolume: string;
   commission: string;
@@ -404,6 +406,17 @@ export async function POST(request: Request) {
             ? (positionOpenTime.get(posId) ?? execTs)
             : execTs;
 
+          // Try to capture balance after this deal.
+          // cTrader ProtoOADeal may expose balance-like fields; we defensively
+          // look for common candidates and normalize using money digits.
+          const rawBalance =
+            toNumber(close?.["balance"]) ??
+            toNumber(close?.["equity"]) ??
+            toNumber(deal["balance"]) ??
+            toNumber(deal["equity"]);
+          const balance =
+            rawBalance !== undefined ? normalizeMoney(rawBalance, closeDigits) : undefined;
+
           const str = (v: unknown): string =>
             v === undefined || v === null ? "" : String(v);
           const numStr = (n: number | undefined): string =>
@@ -429,6 +442,7 @@ export async function POST(request: Request) {
             openPrice: numStr(close ? entryPrice : Number(deal["executionPrice"])),
             closePrice: numStr(Number(deal["executionPrice"])),
             entryPrice: numStr(entryPrice),
+            balance: numStr(balance),
             volume: numStr(volumeToLots(Number(deal["volume"]), symbolName)),
             filledVolume: numStr(volumeToLots(Number(deal["filledVolume"] ?? deal["volume"]), symbolName)),
             commission: numStr(commission),

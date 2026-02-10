@@ -31,8 +31,11 @@ function enrichWithEstimatedPnl(t: Trade): Trade {
 
   const entry = t.entryPrice ?? t.openPrice;
   const close = t.closePrice ?? t.openPrice;
-  const rawVol = t.volume ?? 0;
-  const vol = volumeToLots(rawVol, t.symbol ?? "");
+  // Prefer explicit lots when present; fall back to converting volume.
+  const vol =
+    t.lots != null && Number.isFinite(t.lots)
+      ? t.lots
+      : volumeToLots(t.volume ?? 0, t.symbol ?? "");
   if (!Number.isFinite(entry) || !Number.isFinite(close) || vol <= 0) return t;
 
   const closingDir = t.direction === Direction.Sell ? "Sell" : "Buy";

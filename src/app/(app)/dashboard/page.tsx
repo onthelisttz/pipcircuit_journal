@@ -196,6 +196,10 @@ export default function DashboardPage() {
               winRate={summary.winRate}
               maxDrawdown={summary.maxDrawdown}
               breakevenTrades={summary.breakevenTrades}
+              winningTrades={summary.winningTrades}
+              losingTrades={summary.losingTrades}
+              winningProfit={summary.winningProfit}
+              losingProfit={summary.losingProfit}
               percentFromPeak={summary.percentFromPeak}
               onCardClick={handleSummaryCardClick}
             />

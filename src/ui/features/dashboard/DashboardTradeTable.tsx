@@ -19,6 +19,8 @@ type SortKey =
   | "closePrice"
   | "netProfit"
   | "balance"
+  | "gain"
+  | "pips"
   | "duration"
   | "commission";
 
@@ -129,8 +131,14 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
           vb = b.closeTime ? (b.closeTime instanceof Date ? b.closeTime.getTime() : new Date(b.closeTime).getTime()) : 0;
           return mult * (va - vb);
         case "lots":
-          va = volumeToLots(a.volume ?? 0, a.symbol ?? "");
-          vb = volumeToLots(b.volume ?? 0, b.symbol ?? "");
+          va =
+            a.lots != null && Number.isFinite(a.lots)
+              ? a.lots
+              : volumeToLots(a.volume ?? 0, a.symbol ?? "");
+          vb =
+            b.lots != null && Number.isFinite(b.lots)
+              ? b.lots
+              : volumeToLots(b.volume ?? 0, b.symbol ?? "");
           return mult * (va - vb);
         case "entryPrice":
           va = a.entryPrice ?? a.openPrice ?? 0;
@@ -145,8 +153,16 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
           vb = b.netProfit ?? b.grossProfit ?? 0;
           return mult * (va - vb);
         case "balance":
-          va = a.id != null ? balanceByTradeId.get(a.id) ?? 0 : 0;
-          vb = b.id != null ? balanceByTradeId.get(b.id) ?? 0 : 0;
+          va = a.balance ?? (a.id != null ? balanceByTradeId.get(a.id) ?? 0 : 0);
+          vb = b.balance ?? (b.id != null ? balanceByTradeId.get(b.id) ?? 0 : 0);
+          return mult * (va - vb);
+        case "gain":
+          va = a.percentGain ?? 0;
+          vb = b.percentGain ?? 0;
+          return mult * (va - vb);
+        case "pips":
+          va = a.pips ?? 0;
+          vb = b.pips ?? 0;
           return mult * (va - vb);
         case "duration":
           const da = a.closeTime
@@ -310,6 +326,24 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
                 Balance <SortIcon sortKey="balance" currentKey={sortKey} dir={sortDir} />
               </button>
             </th>
+            <th className="px-4 py-3 text-right font-medium">
+              <button
+                type="button"
+                onClick={() => handleSort("gain")}
+                className="ml-auto flex items-center gap-1.5 hover:text-foreground"
+              >
+                Gain % <SortIcon sortKey="gain" currentKey={sortKey} dir={sortDir} />
+              </button>
+            </th>
+            <th className="px-4 py-3 text-right font-medium">
+              <button
+                type="button"
+                onClick={() => handleSort("pips")}
+                className="ml-auto flex items-center gap-1.5 hover:text-foreground"
+              >
+                Pips <SortIcon sortKey="pips" currentKey={sortKey} dir={sortDir} />
+              </button>
+            </th>
             <th className="px-4 py-3 text-left font-medium">
               <button
                 type="button"
@@ -334,7 +368,10 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
           {paginatedTrades.map((trade) => {
             const profit = trade.netProfit ?? trade.grossProfit ?? 0;
             const isPositive = profit >= 0;
-            const lots = volumeToLots(trade.volume ?? 0, trade.symbol ?? "");
+            const lots =
+              trade.lots != null && Number.isFinite(trade.lots)
+                ? trade.lots
+                : volumeToLots(trade.volume ?? 0, trade.symbol ?? "");
 
             return (
               <tr
@@ -367,7 +404,29 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
                   {formatProfit(profit)}
                 </td>
                 <td className="px-4 py-2.5 text-right font-medium text-muted-foreground">
-                  {trade.id != null ? formatProfit(balanceByTradeId.get(trade.id)) : "-"}
+                  {trade.balance != null
+                    ? formatProfit(trade.balance)
+                    : trade.id != null
+                      ? formatProfit(balanceByTradeId.get(trade.id))
+                      : "-"}
+                </td>
+                <td
+                  className={`px-4 py-2.5 text-right tabular-nums ${
+                    (trade.percentGain ?? 0) >= 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-destructive"
+                  }`}
+                >
+                  {trade.percentGain != null ? `${trade.percentGain.toFixed(1)}%` : "—"}
+                </td>
+                <td
+                  className={`px-4 py-2.5 text-right tabular-nums ${
+                    (trade.pips ?? 0) >= 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-destructive"
+                  }`}
+                >
+                  {trade.pips != null ? trade.pips.toFixed(1) : "—"}
                 </td>
                 <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
                   {getDuration(trade.openTime, trade.closeTime)}
@@ -385,7 +444,7 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
             <td colSpan={2} className="px-4 py-2 text-right text-muted-foreground font-medium">
               Long
             </td>
-            <td colSpan={6} className="px-4 py-2 text-right text-muted-foreground">
+            <td colSpan={8} className="px-4 py-2 text-right text-muted-foreground">
               {longCount} trades
             </td>
             <td
@@ -395,7 +454,7 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
             >
               {formatProfit(longPnl)}
             </td>
-            <td colSpan={2} />
+            <td colSpan={3} />
           </tr>
           <tr
             onClick={() => onSummaryClick?.("short", shortIds)}
@@ -404,7 +463,7 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
             <td colSpan={2} className="px-4 py-2 text-right text-muted-foreground font-medium">
               Short
             </td>
-            <td colSpan={6} className="px-4 py-2 text-right text-muted-foreground">
+            <td colSpan={8} className="px-4 py-2 text-right text-muted-foreground">
               {shortCount} trades
             </td>
             <td
@@ -414,7 +473,7 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
             >
               {formatProfit(shortPnl)}
             </td>
-            <td colSpan={2} />
+            <td colSpan={3} />
           </tr>
           <tr
             onClick={() => onSummaryClick?.("all", allIds)}
@@ -423,7 +482,7 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
             <td colSpan={2} className="px-4 py-3 text-right text-foreground">
               Total
             </td>
-            <td colSpan={6} className="px-4 py-3 text-right text-foreground">
+            <td colSpan={8} className="px-4 py-3 text-right text-foreground">
               {trades.length} trades
             </td>
             <td
@@ -433,7 +492,7 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
             >
               {formatProfit(totalPnl)}
             </td>
-            <td colSpan={2} />
+            <td colSpan={3} />
           </tr>
         </tbody>
       </table>

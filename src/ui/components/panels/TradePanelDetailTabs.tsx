@@ -47,7 +47,10 @@ export function TradePanelDetailTabs({
 
   if (activeTab === "details") {
     const profit = trade.netProfit ?? trade.grossProfit ?? 0;
-    const lots = volumeToLots(trade.volume ?? 0, trade.symbol ?? "");
+    const lots =
+      trade.lots != null && Number.isFinite(trade.lots)
+        ? trade.lots
+        : volumeToLots(trade.volume ?? 0, trade.symbol ?? "");
     const openDate = trade.openTime ? new Date(trade.openTime) : null;
     const closeDate = trade.closeTime ? new Date(trade.closeTime) : null;
     const duration =
@@ -152,7 +155,30 @@ export function TradePanelDetailTabs({
                 }`}
               >
                 {trade.percentGain >= 0 ? "+" : ""}
-                {trade.percentGain.toFixed(2)}%
+                {trade.percentGain.toFixed(1)}%
+              </p>
+            </div>
+          )}
+          {trade.balance != null && (
+            <div>
+              <span className="text-muted-foreground">Balance</span>
+              <p className="font-medium">
+                {trade.balance >= 0 ? "$" : "-$"}
+                {Math.abs(trade.balance).toFixed(2)}
+              </p>
+            </div>
+          )}
+          {trade.pips != null && (
+            <div>
+              <span className="text-muted-foreground">Pips</span>
+              <p
+                className={`font-medium ${
+                  trade.pips >= 0
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-destructive"
+                }`}
+              >
+                {trade.pips.toFixed(1)}
               </p>
             </div>
           )}

@@ -16,6 +16,10 @@ interface SummaryCardsProps {
   winRate: number;
   maxDrawdown: number;
   breakevenTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  winningProfit: number;
+  losingProfit: number;
   percentFromPeak: number;
   /** Called when a card is clicked - receives card key for context */
   onCardClick?: (cardKey: string) => void;
@@ -44,9 +48,19 @@ export function SummaryCards({
   winRate,
   maxDrawdown,
   breakevenTrades,
+  winningTrades,
+  losingTrades,
+  winningProfit,
+  losingProfit,
   percentFromPeak,
   onCardClick,
 }: SummaryCardsProps) {
+  // Defensive defaults in case new fields are missing from older data
+  const safeWinningTrades = winningTrades ?? 0;
+  const safeLosingTrades = losingTrades ?? 0;
+  const safeWinningProfit = winningProfit ?? 0;
+  const safeLosingProfit = losingProfit ?? 0;
+
   const cards = [
     {
       key: "net-profit",
@@ -81,20 +95,20 @@ export function SummaryCards({
       clickable: false,
     },
     {
-      key: "breakeven-trades",
-      label: "Breakeven Trades",
-      value: breakevenTrades.toString(),
+      key: "winning-trades",
+      label: "Winning Trades",
+      value: safeWinningTrades.toString(),
       icon: Target,
       positive: true,
       clickable: true,
     },
     {
-      key: "percent-from-peak",
-      label: "% from Peak",
-      value: `${percentFromPeak.toFixed(1)}%`,
-      icon: Percent,
-      positive: percentFromPeak >= 90,
-      clickable: false,
+      key: "losing-trades",
+      label: "Losing Trades",
+      value: safeLosingTrades.toString(),
+      icon: Target,
+      positive: false,
+      clickable: true,
     },
   ];
 
@@ -124,15 +138,42 @@ export function SummaryCards({
               <button
                 type="button"
                 onClick={() => onCardClick!(card.key)}
-                className={`mt-1 block w-full text-left text-lg font-semibold focus:outline-none ${
-                  card.label === "Net Profit"
-                    ? netProfit >= 0
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-destructive"
-                    : "text-foreground"
-                }`}
+                className="mt-1 block w-full text-left focus:outline-none"
               >
-                {card.value}
+                {card.key === "winning-trades" || card.key === "losing-trades" ? (
+                  <div className="text-sm">
+                    <span className="text-muted-foreground">
+                      {card.key === "winning-trades" ? safeWinningTrades : safeLosingTrades} trades
+                    </span>
+                    <span
+                      className={`ml-2 font-semibold ${
+                        card.key === "winning-trades"
+                          ? safeWinningProfit >= 0
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-destructive"
+                          : "text-destructive"
+                      }`}
+                    >
+                      {formatMoney(
+                        card.key === "winning-trades" ? safeWinningProfit : safeLosingProfit
+                      )}
+                    </span>
+                  </div>
+                ) : (
+                  <p
+                    className={`text-lg font-semibold ${
+                      card.label === "Net Profit"
+                        ? netProfit >= 0
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-destructive"
+                        : card.label === "Max Drawdown"
+                          ? "text-destructive"
+                          : "text-foreground"
+                    }`}
+                  >
+                    {card.value}
+                  </p>
+                )}
               </button>
             ) : (
               <p
@@ -141,7 +182,9 @@ export function SummaryCards({
                     ? netProfit >= 0
                       ? "text-emerald-600 dark:text-emerald-400"
                       : "text-destructive"
-                    : "text-foreground"
+                    : card.label === "Max Drawdown"
+                      ? "text-destructive"
+                      : "text-foreground"
                 }`}
               >
                 {card.value}

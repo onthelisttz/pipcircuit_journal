@@ -13,6 +13,8 @@ export interface AssetPerformance {
   worstTrade: number;
   avgDurationMs: number;
   fee: number;
+  /** Average percent gain per closed trade for this symbol (using per-trade percentGain). */
+  avgGainPercent: number;
 }
 
 export interface GetPerformanceByAssetInput {
@@ -34,7 +36,7 @@ export class GetPerformanceByAssetUseCase {
 
     const bySymbol = new Map<
       string,
-      { profits: number[]; durations: number[]; fees: number[] }
+      { profits: number[]; durations: number[]; fees: number[]; percents: number[] }
     >();
 
     for (const trade of closed) {
@@ -48,21 +50,26 @@ export class GetPerformanceByAssetUseCase {
         trade.closeTime && trade.openTime
           ? trade.closeTime.getTime() - trade.openTime.getTime()
           : 0;
+      const percent = trade.percentGain ?? 0;
 
       const entry = bySymbol.get(symbol) ?? {
         profits: [],
         durations: [],
         fees: [],
+        percents: [],
       };
       entry.profits.push(net);
       if (durationMs > 0) entry.durations.push(durationMs);
       entry.fees.push(totalFee);
+      if (trade.percentGain != null && Number.isFinite(trade.percentGain)) {
+        entry.percents.push(percent);
+      }
       bySymbol.set(symbol, entry);
     }
 
     return Array.from(bySymbol.entries())
       .filter(([symbol]) => !/^\d+$/.test(symbol))
-      .map(([symbol, { profits, durations, fees }]) => {
+      .map(([symbol, { profits, durations, fees, percents }]) => {
         const count = profits.length;
         const profit = profits.reduce((a, b) => a + b, 0);
         const winProfits = profits.filter((p) => p > 0);
@@ -79,6 +86,10 @@ export class GetPerformanceByAssetUseCase {
             ? durations.reduce((a, b) => a + b, 0) / durations.length
             : 0;
         const feeTotal = fees.reduce((a, b) => a + b, 0);
+        const avgGainPercent =
+          percents.length > 0
+            ? percents.reduce((a, b) => a + b, 0) / percents.length
+            : 0;
         return {
           symbol,
           count,
@@ -92,6 +103,7 @@ export class GetPerformanceByAssetUseCase {
           worstTrade,
           avgDurationMs,
           fee: feeTotal,
+          avgGainPercent,
         };
       })
       .sort((a, b) => b.count - a.count);

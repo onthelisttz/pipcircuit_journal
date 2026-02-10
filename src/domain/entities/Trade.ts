@@ -21,6 +21,10 @@ export interface Trade {
   grossProfit?: number;
   netProfit?: number;
   percentGain?: number;
+  /** Account balance after this trade (if known). */
+  balance?: number;
+  /** Net pips/points gained or lost in this trade. */
+  pips?: number;
   takeProfit?: number | null;
   stopLoss?: number | null;
   placedBy?: PlacedBy;

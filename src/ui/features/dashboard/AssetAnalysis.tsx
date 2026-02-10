@@ -4,20 +4,7 @@ import { useState, useMemo } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 
-interface AssetPerformance {
-  symbol: string;
-  count: number;
-  wins: number;
-  losses: number;
-  profit: number;
-  winRate: number;
-  avgWin: number;
-  avgLoss: number;
-  bestTrade: number;
-  worstTrade: number;
-  avgDurationMs: number;
-  fee: number;
-}
+import type { AssetPerformance } from "@application/use-cases/analytics";
 
 type AssetClickType = "count" | "wins" | "losses";
 
@@ -35,7 +22,20 @@ const CHART_COLORS = [
   "var(--chart-5)",
 ];
 
-type SortKey = "symbol" | "count" | "wins" | "losses" | "profit" | "winRate" | "avgWin" | "avgLoss" | "bestTrade" | "worstTrade" | "avgDurationMs" | "fee";
+type SortKey =
+  | "symbol"
+  | "count"
+  | "wins"
+  | "losses"
+  | "profit"
+  | "winRate"
+  | "avgGainPercent"
+  | "avgWin"
+  | "avgLoss"
+  | "bestTrade"
+  | "worstTrade"
+  | "avgDurationMs"
+  | "fee";
 type SortDir = "asc" | "desc";
 
 function formatMoney(n: number): string {
@@ -240,6 +240,7 @@ export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
                 {th("losses", "Losses")}
                 {th("winRate", "Win %")}
                 {th("profit", "Net P&L")}
+                {th("avgGainPercent", "Gain %")}
                 {th("avgWin", "Avg Win")}
                 {th("avgLoss", "Avg Loss")}
                 {th("bestTrade", "Best")}
@@ -275,9 +276,18 @@ export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">{row.winRate.toFixed(1)}%</td>
                   <td
-                    className={`px-3 py-2 font-medium ${row.profit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
+                    className={`px-3 py-2 font-medium ${
+                      row.profit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
+                    }`}
                   >
                     {formatMoney(row.profit)}
+                  </td>
+                  <td
+                    className={`px-3 py-2 font-medium ${
+                      row.avgGainPercent >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
+                    }`}
+                  >
+                    {row.avgGainPercent === 0 ? "—" : `${row.avgGainPercent.toFixed(1)}%`}
                   </td>
                   <td className="px-3 py-2 text-green-600 dark:text-green-400">
                     {row.avgWin > 0 ? formatMoney(row.avgWin) : "—"}

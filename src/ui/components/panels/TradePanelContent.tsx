@@ -67,8 +67,14 @@ export function TradePanelContent({
           cmp = (a.direction ?? "").localeCompare(b.direction ?? "");
           break;
         case "size": {
-          const lotsA = volumeToLots(a.volume ?? 0, a.symbol ?? "");
-          const lotsB = volumeToLots(b.volume ?? 0, b.symbol ?? "");
+          const lotsA =
+            (a.lots != null && Number.isFinite(a.lots))
+              ? a.lots
+              : volumeToLots(a.volume ?? 0, a.symbol ?? "");
+          const lotsB =
+            (b.lots != null && Number.isFinite(b.lots))
+              ? b.lots
+              : volumeToLots(b.volume ?? 0, b.symbol ?? "");
           cmp = lotsA - lotsB;
           break;
         }
@@ -190,7 +196,10 @@ export function TradePanelContent({
                   </span>
                   <span className="text-muted-foreground">
                     {trades[selectedIndex].direction} ·{" "}
-                    {volumeToLots(trades[selectedIndex].volume ?? 0, trades[selectedIndex].symbol ?? "").toFixed(2)}{" "}
+                    {(
+                      trades[selectedIndex].lots ??
+                      volumeToLots(trades[selectedIndex].volume ?? 0, trades[selectedIndex].symbol ?? "")
+                    ).toFixed(2)}{" "}
                     lots
                   </span>
                 </div>
@@ -324,7 +333,10 @@ export function TradePanelContent({
                   {sortedTrades.map((t) => {
                     const profit = t.netProfit ?? t.grossProfit ?? 0;
                     const isSelected = t.id === selectedTradeId;
-                    const lots = volumeToLots(t.volume ?? 0, t.symbol ?? "");
+                    const lots =
+                      (t.lots != null && Number.isFinite(t.lots))
+                        ? t.lots
+                        : volumeToLots(t.volume ?? 0, t.symbol ?? "");
                     const dateVal = t.closeTime ?? t.openTime;
                     return (
                       <tr

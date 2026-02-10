@@ -30,6 +30,8 @@ function TradeCard({
 }) {
   const profit = trade.netProfit ?? trade.grossProfit ?? 0;
   const isPositive = profit >= 0;
+  const percent = trade.percentGain ?? null;
+  const balance = trade.balance ?? null;
 
   const content = (
     <>
@@ -37,7 +39,7 @@ function TradeCard({
         <div>
           <p className="font-medium text-foreground">{trade.symbol}</p>
           <p className="text-xs text-muted-foreground">
-            {format(new Date(trade.openTime), "MMM d, yyyy")}
+            {format(new Date(trade.openTime), "MMM d, yyyy HH:mm")}
           </p>
         </div>
         <span
@@ -55,8 +57,30 @@ function TradeCard({
           <ArrowDownRight className="w-3 h-3" />
         )}
         <span>
-          {trade.direction} {volumeToLots(trade.volume ?? 0, trade.symbol ?? "").toFixed(2)} lots
+          {trade.direction}{" "}
+          {(
+            trade.lots != null && Number.isFinite(trade.lots)
+              ? trade.lots
+              : volumeToLots(trade.volume ?? 0, trade.symbol ?? "")
+          ).toFixed(2)}{" "}
+          lots
         </span>
+        {percent != null && (
+          <span
+            className={`ml-2 font-medium ${
+              percent >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"
+            }`}
+          >
+            {percent >= 0 ? "+" : ""}
+            {percent.toFixed(1)}%
+          </span>
+        )}
+        {balance != null && (
+          <span className="ml-2 font-mono text-[11px] text-muted-foreground">
+            Bal {balance >= 0 ? "$" : "-$"}
+            {Math.abs(balance).toFixed(2)}
+          </span>
+        )}
       </div>
     </>
   );
@@ -78,8 +102,37 @@ export function BestWorstTradeCards({
   onBestClick,
   onWorstClick,
 }: BestWorstTradeCardsProps) {
-  const bestIds = best.map((t) => t.id).filter((id): id is number => id != null);
-  const worstIds = worst.map((t) => t.id).filter((id): id is number => id != null);
+  // Ensure best trades are profitable and worst trades are losing.
+  const bestTrades = best.filter((t) => (t.netProfit ?? t.grossProfit ?? 0) > 0);
+  const worstTrades = worst.filter((t) => (t.netProfit ?? t.grossProfit ?? 0) < 0);
+  const bestIds = bestTrades.map((t) => t.id).filter((id): id is number => id != null);
+  const worstIds = worstTrades.map((t) => t.id).filter((id): id is number => id != null);
+
+  const bestSummary = bestTrades.reduce(
+    (acc, t) => {
+      const pnl = t.netProfit ?? t.grossProfit ?? 0;
+      const gain = t.percentGain ?? 0;
+      return {
+        count: acc.count + 1,
+        profit: acc.profit + pnl,
+        gainPercent: acc.gainPercent + gain,
+      };
+    },
+    { count: 0, profit: 0, gainPercent: 0 }
+  );
+
+  const worstSummary = worstTrades.reduce(
+    (acc, t) => {
+      const pnl = t.netProfit ?? t.grossProfit ?? 0;
+      const gain = t.percentGain ?? 0;
+      return {
+        count: acc.count + 1,
+        profit: acc.profit + pnl,
+        gainPercent: acc.gainPercent + gain,
+      };
+    },
+    { count: 0, profit: 0, gainPercent: 0 }
+  );
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
@@ -87,16 +140,42 @@ export function BestWorstTradeCards({
         <button
           type="button"
           onClick={() => onBestClick?.(bestIds)}
-          className={`w-full text-left text-sm font-medium text-foreground mb-3 flex items-center gap-2 ${onBestClick ? "cursor-pointer hover:text-emerald-400 transition-colors" : ""}`}
+          className={`w-full text-left text-sm font-medium text-foreground mb-3 flex items-center justify-between gap-2 ${
+            onBestClick ? "cursor-pointer hover:text-emerald-400 transition-colors" : ""
+          }`}
         >
-          <ArrowUpRight className="w-4 h-4 text-emerald-500" />
-          Best Trades
+          <span className="inline-flex items-center gap-2">
+            <ArrowUpRight className="w-4 h-4 text-emerald-500" />
+            Best Trades
+          </span>
+          <span className="text-xs text-muted-foreground flex items-center gap-2">
+            <span>{bestSummary.count} trades</span>
+            <span
+              className={
+                bestSummary.profit >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-destructive"
+              }
+            >
+              {formatProfit(bestSummary.profit)}
+            </span>
+            <span
+              className={
+                bestSummary.gainPercent >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-destructive"
+              }
+            >
+              {bestSummary.gainPercent >= 0 ? "+" : ""}
+              {bestSummary.gainPercent.toFixed(1)}%
+            </span>
+          </span>
         </button>
         <div className="space-y-2">
-          {best.length === 0 ? (
+          {bestTrades.length === 0 ? (
             <p className="text-sm text-muted-foreground">No trades</p>
           ) : (
-            best.map((t) => (
+            bestTrades.map((t) => (
               <TradeCard
                 key={t.id ?? t.ticketId ?? t.openTime.toISOString()}
                 trade={t}
@@ -111,16 +190,29 @@ export function BestWorstTradeCards({
         <button
           type="button"
           onClick={() => onWorstClick?.(worstIds)}
-          className={`w-full text-left text-sm font-medium text-foreground mb-3 flex items-center gap-2 ${onWorstClick ? "cursor-pointer hover:text-destructive/80 transition-colors" : ""}`}
+          className={`w-full text-left text-sm font-medium text-foreground mb-3 flex items-center justify-between gap-2 ${
+            onWorstClick ? "cursor-pointer hover:text-destructive/80 transition-colors" : ""
+          }`}
         >
-          <ArrowDownRight className="w-4 h-4 text-destructive" />
-          Worst Trades
+          <span className="inline-flex items-center gap-2">
+            <ArrowDownRight className="w-4 h-4 text-destructive" />
+            Worst Trades
+          </span>
+          <span className="text-xs text-muted-foreground flex items-center gap-2">
+            <span>{worstSummary.count} trades</span>
+            <span className="text-destructive">
+              {formatProfit(worstSummary.profit)}
+            </span>
+            <span className="text-destructive">
+              {worstSummary.gainPercent.toFixed(1)}%
+            </span>
+          </span>
         </button>
         <div className="space-y-2">
-          {worst.length === 0 ? (
+          {worstTrades.length === 0 ? (
             <p className="text-sm text-muted-foreground">No trades</p>
           ) : (
-            worst.map((t) => (
+            worstTrades.map((t) => (
               <TradeCard
                 key={t.id ?? t.ticketId ?? t.openTime.toISOString()}
                 trade={t}

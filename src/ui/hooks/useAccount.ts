@@ -8,7 +8,7 @@ import { createAccountRepository, createTradeRepository } from "@infrastructure/
 import { db } from "@infrastructure/db/dexie/database";
 import { useAccountStore } from "@ui/state";
 import { useAuth } from "@ui/hooks/useAuth";
-import { estimateGrossProfit } from "@lib/pnl-estimate";
+import { estimateGrossProfit, volumeToLots, priceDiffToPips } from "@lib/pnl-estimate";
 
 // Lock to prevent concurrent syncs
 let syncInProgress = false;
@@ -212,6 +212,10 @@ export function useAccount() {
         const n = Number(v);
         return Number.isFinite(n) ? n : undefined;
       };
+      const roundMoney = (value: number | undefined): number | undefined => {
+        if (value === undefined || !Number.isFinite(value)) return undefined;
+        return Number(Number(value).toFixed(2));
+      };
 
       // First sync: no lastSyncAt -> full history (last 10 years).
       // Later syncs: incremental from lastSyncAt.
@@ -239,6 +243,7 @@ export function useAccount() {
         const closePrice = (closeTime ? parseNum(trade["closePrice"]) : undefined) ?? null;
         const symbol = String(trade["symbol"] ?? "");
         const volume = parseNum(trade["volume"]) ?? 0;
+        const lots = volumeToLots(volume, symbol);
         const direction = trade["direction"] === "Sell" ? Direction.Sell : Direction.Buy;
         let grossProfit = parseNum(trade["grossProfit"]);
         let netProfit = parseNum(trade["netProfit"]);
@@ -246,13 +251,13 @@ export function useAccount() {
         if (closeTime && (grossProfit === undefined || netProfit === undefined)) {
           const entryPrice = parseNum(trade["entryPrice"]) ?? openPrice;
           const close = closePrice ?? openPrice;
-          if (entryPrice != null && close != null && volume > 0) {
+          if (entryPrice != null && close != null && lots > 0) {
             const closingDir = direction === Direction.Sell ? "Sell" : "Buy";
             const openingDir = closingDir === "Sell" ? "Buy" : "Sell";
             const estimated = estimateGrossProfit(
               entryPrice,
               close,
-              volume,
+              lots,
               openingDir,
               symbol
             );
@@ -264,6 +269,38 @@ export function useAccount() {
                 (parseNum(trade["swap"]) ?? 0) +
                 (parseNum(trade["fee"]) ?? 0);
           }
+        }
+
+        // Normalize money fields to 2 decimals to avoid values like -9.399999999999999
+        grossProfit = grossProfit !== undefined ? roundMoney(grossProfit) : undefined;
+        netProfit = netProfit !== undefined ? roundMoney(netProfit) : undefined;
+
+        const commission = parseNum(trade["commission"]);
+        const swap = parseNum(trade["swap"]);
+        const fee = parseNum(trade["fee"]);
+
+        // Use per-trade balance (when available) and compute percent gain
+        // using the balance *before* the trade:
+        // preBalance = postBalance - netProfit
+        // percentGain = netProfit / preBalance * 100
+        const tradeBalance = parseNum(trade["balance"]);
+        let percentGain: number | undefined;
+        if (tradeBalance && netProfit !== undefined) {
+          const preBalance = tradeBalance - netProfit;
+          if (preBalance !== 0) {
+            percentGain = Number(((netProfit / preBalance) * 100).toFixed(1));
+          }
+        }
+
+        // Compute pips/points for the trade (positive = favorable).
+        let pips: number | undefined;
+        const entry = parseNum(trade["entryPrice"]) ?? openPrice;
+        const closeVal = closePrice ?? openPrice;
+        if (entry != null && closeVal != null && Number.isFinite(entry) && Number.isFinite(closeVal)) {
+          const isBuy = direction === Direction.Buy;
+          const priceDiff = isBuy ? closeVal - entry : entry - closeVal;
+          const rawPips = priceDiffToPips(priceDiff, symbol);
+          pips = Number(rawPips.toFixed(1));
         }
 
         return {
@@ -278,12 +315,15 @@ export function useAccount() {
           closePrice,
           entryPrice: parseNum(trade["entryPrice"]) ?? null,
           volume,
-          commission: parseNum(trade["commission"]),
-          swap: parseNum(trade["swap"]),
-          fee: parseNum(trade["fee"]),
+          lots,
+          commission,
+          swap,
+          fee,
           grossProfit,
           netProfit,
-          percentGain: parseNum(trade["percentGain"]),
+          percentGain,
+          balance: tradeBalance,
+          pips,
           createdAt: new Date(),
           updatedAt: new Date(),
         };
