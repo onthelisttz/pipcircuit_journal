@@ -4,6 +4,41 @@ import { isOnline } from "@infrastructure/sync/utils/connection";
 
 type CategoryResolver = (dexieCategoryId: number) => Promise<number | null>;
 
+type ObservationBulkUpsertRepo = IObservationRepository & {
+  bulkUpsertObservations: (observations: Observation[]) => Promise<void>;
+};
+
+type ObservationCategoryBulkUpsertRepo = IObservationRepository & {
+  bulkUpsertCategories: (categories: ObservationCategory[]) => Promise<void>;
+};
+
+type ObservationCategoryLookupRepo = IObservationRepository & {
+  getCategoryByName: (name: string) => Promise<ObservationCategory | null>;
+};
+
+const hasBulkUpsertObservations = (
+  repo: IObservationRepository | null
+): repo is ObservationBulkUpsertRepo =>
+  Boolean(
+    repo &&
+      typeof (repo as ObservationBulkUpsertRepo).bulkUpsertObservations === "function"
+  );
+
+const hasBulkUpsertCategories = (
+  repo: IObservationRepository | null
+): repo is ObservationCategoryBulkUpsertRepo =>
+  Boolean(
+    repo &&
+      typeof (repo as ObservationCategoryBulkUpsertRepo).bulkUpsertCategories === "function"
+  );
+
+const hasGetCategoryByName = (
+  repo: IObservationRepository | null
+): repo is ObservationCategoryLookupRepo =>
+  Boolean(
+    repo && typeof (repo as ObservationCategoryLookupRepo).getCategoryByName === "function"
+  );
+
 /**
  * Dual repository: reads from Dexie, writes to Dexie + Supabase (when online).
  * Real-time sync for observations and categories. Resolves category ID for observations.
@@ -40,8 +75,8 @@ export class DualObservationRepository implements IObservationRepository {
         ? await this.resolveCategoryId(observation.categoryId)
         : null;
       const obsForSupabase: Observation = { ...result, categoryId: supabaseCatId ?? undefined };
-      if ("bulkUpsertObservations" in (this.supabase as { bulkUpsertObservations?: (o: Observation[]) => Promise<void> })) {
-        await (this.supabase as { bulkUpsertObservations: (o: Observation[]) => Promise<void> }).bulkUpsertObservations([obsForSupabase]);
+      if (hasBulkUpsertObservations(this.supabase)) {
+        await this.supabase.bulkUpsertObservations([obsForSupabase]);
       }
     });
     return result;
@@ -64,8 +99,8 @@ export class DualObservationRepository implements IObservationRepository {
   async createCategory(category: ObservationCategory): Promise<ObservationCategory> {
     const result = await this.dexie.createCategory(category);
     await this.syncToSupabase(async () => {
-      if ("bulkUpsertCategories" in (this.supabase as { bulkUpsertCategories?: (c: ObservationCategory[]) => Promise<void> })) {
-        await (this.supabase as { bulkUpsertCategories: (c: ObservationCategory[]) => Promise<void> }).bulkUpsertCategories([result]);
+      if (hasBulkUpsertCategories(this.supabase)) {
+        await this.supabase.bulkUpsertCategories([result]);
       }
     });
     return result;
@@ -74,8 +109,8 @@ export class DualObservationRepository implements IObservationRepository {
   async updateCategory(id: number, updates: Partial<ObservationCategory>): Promise<ObservationCategory> {
     const result = await this.dexie.updateCategory(id, updates);
     await this.syncToSupabase(async () => {
-      if ("bulkUpsertCategories" in (this.supabase as { bulkUpsertCategories?: (c: ObservationCategory[]) => Promise<void> })) {
-        await (this.supabase as { bulkUpsertCategories: (c: ObservationCategory[]) => Promise<void> }).bulkUpsertCategories([result]);
+      if (hasBulkUpsertCategories(this.supabase)) {
+        await this.supabase.bulkUpsertCategories([result]);
       }
     });
     return result;
@@ -85,9 +120,9 @@ export class DualObservationRepository implements IObservationRepository {
     const cat = (await this.dexie.listCategories()).find((x) => x.id === id);
     await this.dexie.deleteCategory(id);
     await this.syncToSupabase(async () => {
-      if (cat && "getCategoryByName" in (this.supabase as { getCategoryByName?: (n: string) => Promise<ObservationCategory | null> })) {
-        const supabaseCat = await (this.supabase as { getCategoryByName: (n: string) => Promise<ObservationCategory | null> }).getCategoryByName(cat.name);
-        if (supabaseCat?.id) await this.supabase!.deleteCategory(supabaseCat.id);
+      if (cat && hasGetCategoryByName(this.supabase)) {
+        const supabaseCat = await this.supabase.getCategoryByName(cat.name);
+        if (supabaseCat?.id && this.supabase) await this.supabase.deleteCategory(supabaseCat.id);
       }
     });
   }

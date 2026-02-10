@@ -2,6 +2,28 @@ import type { ITradeRepository, TradeQuery } from "@application/ports/repositori
 import type { Trade } from "@domain/entities";
 import { isOnline } from "@infrastructure/sync/utils/connection";
 
+type TradeBulkUpsertRepo = ITradeRepository & {
+  bulkUpsert: (trades: Trade[]) => Promise<void>;
+};
+
+type TradeDeleteByAccountAndTicketRepo = ITradeRepository & {
+  deleteByAccountAndTicket: (accountId: string, ticketId: string) => Promise<void>;
+};
+
+const hasBulkUpsert = (
+  repo: ITradeRepository | null
+): repo is TradeBulkUpsertRepo =>
+  Boolean(repo && typeof (repo as TradeBulkUpsertRepo).bulkUpsert === "function");
+
+const hasDeleteByAccountAndTicket = (
+  repo: ITradeRepository | null
+): repo is TradeDeleteByAccountAndTicketRepo =>
+  Boolean(
+    repo &&
+      typeof (repo as TradeDeleteByAccountAndTicketRepo).deleteByAccountAndTicket ===
+        "function"
+  );
+
 /**
  * Dual repository: reads from Dexie, writes to Dexie + Supabase (when online).
  * Real-time sync for trades.
@@ -37,8 +59,8 @@ export class DualTradeRepository implements ITradeRepository {
   async create(trade: Trade): Promise<Trade> {
     const result = await this.dexie.create(trade);
     await this.syncToSupabase(async () => {
-      if ("bulkUpsert" in (this.supabase as { bulkUpsert?: (t: Trade[]) => Promise<void> })) {
-        await (this.supabase as { bulkUpsert: (t: Trade[]) => Promise<void> }).bulkUpsert([result]);
+      if (hasBulkUpsert(this.supabase)) {
+        await this.supabase.bulkUpsert([result]);
       }
     });
     return result;
@@ -47,8 +69,8 @@ export class DualTradeRepository implements ITradeRepository {
   async update(id: number, updates: Partial<Trade>): Promise<Trade> {
     const result = await this.dexie.update(id, updates);
     await this.syncToSupabase(async () => {
-      if ("bulkUpsert" in (this.supabase as { bulkUpsert?: (t: Trade[]) => Promise<void> })) {
-        await (this.supabase as { bulkUpsert: (t: Trade[]) => Promise<void> }).bulkUpsert([result]);
+      if (hasBulkUpsert(this.supabase)) {
+        await this.supabase.bulkUpsert([result]);
       }
     });
     return result;
@@ -58,14 +80,18 @@ export class DualTradeRepository implements ITradeRepository {
     const trade = await this.dexie.getById(id);
     await this.dexie.delete(id);
     await this.syncToSupabase(async () => {
-      if (trade?.accountId && trade?.ticketId && "deleteByAccountAndTicket" in (this.supabase as unknown as Record<string, unknown>)) {
-        await (this.supabase as unknown as { deleteByAccountAndTicket: (a: string, t: string) => Promise<void> }).deleteByAccountAndTicket(trade.accountId, trade.ticketId);
+      if (trade?.accountId && trade?.ticketId && hasDeleteByAccountAndTicket(this.supabase)) {
+        await this.supabase.deleteByAccountAndTicket(trade.accountId, trade.ticketId);
       }
     });
   }
 
   async bulkUpsert(trades: Trade[]): Promise<void> {
     await this.dexie.bulkUpsert(trades);
-    await this.syncToSupabase(() => (this.supabase as { bulkUpsert: (t: Trade[]) => Promise<void> }).bulkUpsert(trades));
+    await this.syncToSupabase(async () => {
+      if (hasBulkUpsert(this.supabase)) {
+        await this.supabase.bulkUpsert(trades);
+      }
+    });
   }
 }

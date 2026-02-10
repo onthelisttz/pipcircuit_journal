@@ -6,6 +6,29 @@ import { isOnline } from "@infrastructure/sync/utils/connection";
 type TradeResolver = (dexieTradeId: number) => Promise<number | null>;
 type TagResolver = (dexieTagId: number) => Promise<number | null>;
 
+type TagBulkUpsertRepo = ITagRepository & {
+  bulkUpsertTags: (tags: Tag[]) => Promise<void>;
+};
+
+type TagLookupRepo = ITagRepository & {
+  getByNameAndCategory: (
+    name: string,
+    category: string
+  ) => Promise<{ id?: number } | null>;
+};
+
+const hasBulkUpsertTags = (
+  repo: ITagRepository | null
+): repo is TagBulkUpsertRepo =>
+  Boolean(repo && typeof (repo as TagBulkUpsertRepo).bulkUpsertTags === "function");
+
+const hasGetByNameAndCategory = (
+  repo: ITagRepository | null
+): repo is TagLookupRepo =>
+  Boolean(
+    repo && typeof (repo as TagLookupRepo).getByNameAndCategory === "function"
+  );
+
 /**
  * Dual repository: reads from Dexie, writes to Dexie + Supabase (when online).
  * Real-time sync for tags and trade-tag links. Resolves IDs for FK mapping.
@@ -39,8 +62,8 @@ export class DualTagRepository implements ITagRepository {
   async create(tag: Tag): Promise<Tag> {
     const result = await this.dexie.create(tag);
     await this.syncToSupabase(async () => {
-      if ("bulkUpsertTags" in (this.supabase as { bulkUpsertTags?: (t: Tag[]) => Promise<void> })) {
-        await (this.supabase as { bulkUpsertTags: (t: Tag[]) => Promise<void> }).bulkUpsertTags([result]);
+      if (hasBulkUpsertTags(this.supabase)) {
+        await this.supabase.bulkUpsertTags([result]);
       }
     });
     return result;
@@ -49,8 +72,8 @@ export class DualTagRepository implements ITagRepository {
   async update(id: number, updates: Partial<Tag>): Promise<Tag> {
     const result = await this.dexie.update(id, updates);
     await this.syncToSupabase(async () => {
-      if ("bulkUpsertTags" in (this.supabase as { bulkUpsertTags?: (t: Tag[]) => Promise<void> })) {
-        await (this.supabase as { bulkUpsertTags: (t: Tag[]) => Promise<void> }).bulkUpsertTags([result]);
+      if (hasBulkUpsertTags(this.supabase)) {
+        await this.supabase.bulkUpsertTags([result]);
       }
     });
     return result;
@@ -60,11 +83,14 @@ export class DualTagRepository implements ITagRepository {
     const tag = await this.dexie.getById(id);
     await this.dexie.delete(id);
     await this.syncToSupabase(async () => {
-      if (tag && "getByNameAndCategory" in (this.supabase as { getByNameAndCategory?: (n: string, c: string) => Promise<{ id?: number } | null> })) {
-        const supabaseTag = await (this.supabase as { getByNameAndCategory: (n: string, c: string) => Promise<{ id?: number } | null> }).getByNameAndCategory(tag.name, tag.category);
-        if (supabaseTag?.id) await this.supabase!.delete(supabaseTag.id);
-      } else {
-        await this.supabase!.delete(id);
+      if (tag && hasGetByNameAndCategory(this.supabase)) {
+        const supabaseTag = await this.supabase.getByNameAndCategory(
+          tag.name,
+          tag.category
+        );
+        if (supabaseTag?.id && this.supabase) await this.supabase.delete(supabaseTag.id);
+      } else if (this.supabase) {
+        await this.supabase.delete(id);
       }
     });
   }
