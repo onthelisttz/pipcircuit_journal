@@ -4,6 +4,8 @@ import { existsSync } from "fs";
 import { join } from "path";
 
 const PKGS = [
+  // Build core first so dependent packages can resolve types.
+  "lightweight-charts-line-tools-core",
   "lightweight-charts-line-tools-rectangle",
   "lightweight-charts-line-tools-lines",
   "lightweight-charts-line-tools-path",
@@ -20,7 +22,8 @@ for (const pkg of PKGS) {
   }
   console.log(`Building ${pkg}...`);
   try {
-    execSync("bun install && bun run build", {
+    // Use root-installed tooling and avoid local installs that shadow built deps.
+    execSync("bunx rollup -c", {
       cwd: pkgPath,
       stdio: "inherit",
     });
