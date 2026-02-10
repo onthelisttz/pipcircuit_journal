@@ -23,7 +23,7 @@ export function SyncStatusCard() {
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-foreground">Chart Data Sync Status</h2>
         {overallProgress.syncingSymbols > 0 && (
-          <div className="flex items-center gap-2 text-sm text-blue-400">
+          <div className="flex items-center gap-2 text-sm text-primary">
             <Loader2 className="h-4 w-4 animate-spin" />
             <span>Syncing...</span>
           </div>
@@ -39,31 +39,31 @@ export function SyncStatusCard() {
         </div>
 
         <div className="space-y-1">
-          <div className="flex items-center gap-1 text-xs text-gray-500">
-            <CheckCircle2 className="h-3 w-3 text-green-400" />
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <CheckCircle2 className="h-3 w-3 text-emerald-500" />
             Completed
           </div>
-          <div className="text-xl font-semibold text-green-400">
+          <div className="text-xl font-semibold text-emerald-500">
             {overallProgress.completedSymbols}
           </div>
         </div>
 
         <div className="space-y-1">
-          <div className="flex items-center gap-1 text-xs text-gray-500">
-            <Clock className="h-3 w-3 text-yellow-400" />
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Clock className="h-3 w-3 text-amber-500" />
             Syncing
           </div>
-          <div className="text-xl font-semibold text-yellow-400">
+          <div className="text-xl font-semibold text-amber-500">
             {overallProgress.syncingSymbols}
           </div>
         </div>
 
         <div className="space-y-1">
-          <div className="flex items-center gap-1 text-xs text-gray-500">
-            <XCircle className="h-3 w-3 text-red-400" />
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <XCircle className="h-3 w-3 text-destructive" />
             Failed
           </div>
-          <div className="text-xl font-semibold text-red-400">
+          <div className="text-xl font-semibold text-destructive">
             {overallProgress.failedSymbols}
           </div>
         </div>

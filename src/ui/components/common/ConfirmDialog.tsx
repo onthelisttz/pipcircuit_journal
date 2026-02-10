@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+
 export interface ConfirmDialogProps {
   open: boolean;
   onClose: () => void;
@@ -23,12 +26,18 @@ export function ConfirmDialog({
   variant = "default",
   isLoading = false,
 }: ConfirmDialogProps) {
-  if (!open) return null;
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!open || !mounted) return null;
 
   const isDanger = variant === "danger";
 
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 px-4">
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
       <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-lg">
         <h2 className="text-lg font-semibold text-foreground">{title}</h2>
         <p className="mt-2 text-sm text-muted-foreground">{message}</p>
@@ -53,6 +62,7 @@ export function ConfirmDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

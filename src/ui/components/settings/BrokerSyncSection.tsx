@@ -58,25 +58,25 @@ export function BrokerSyncSection({
       >
         <div className="flex items-center gap-3">
           {isExpanded ? (
-            <ChevronDown className="h-4 w-4 text-gray-500" />
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-gray-500" />
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
           )}
           <div>
             <h3 className="font-semibold text-foreground">{broker}</h3>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <span>{symbols.length} symbols</span>
               {completed > 0 && (
-                <span className="text-green-400">{completed} completed</span>
+                <span className="text-emerald-500">{completed} completed</span>
               )}
               {syncing > 0 && (
-                <span className="text-yellow-400">{syncing} syncing</span>
+                <span className="text-amber-500">{syncing} syncing</span>
               )}
               {failed > 0 && (
-                <span className="text-red-400">{failed} failed</span>
+                <span className="text-destructive">{failed} failed</span>
               )}
               {pending > 0 && (
-                <span className="text-gray-400">{pending} pending</span>
+                <span className="text-muted-foreground">{pending} pending</span>
               )}
             </div>
           </div>
@@ -94,7 +94,7 @@ export function BrokerSyncSection({
                 e.stopPropagation();
                 onRetryFailed?.(broker);
               }}
-              className="rounded p-1.5 text-red-400 hover:bg-red-400/10 transition-colors"
+              className="rounded p-1.5 text-destructive hover:bg-destructive/10 transition-colors"
               title="Retry failed syncs"
             >
               <RefreshCw className="h-4 w-4" />
@@ -107,7 +107,7 @@ export function BrokerSyncSection({
                 onSyncBroker?.(broker);
               }}
               disabled={isSyncing}
-              className="rounded p-1.5 text-blue-400 hover:bg-blue-400/10 transition-colors disabled:opacity-50"
+              className="rounded p-1.5 text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
               title="Sync all symbols"
             >
               <Play className="h-4 w-4" />
@@ -115,7 +115,7 @@ export function BrokerSyncSection({
           )}
           {isSyncing && (
             <>
-              <div className="rounded p-1.5 text-yellow-400">
+              <div className="rounded p-1.5 text-amber-500">
                 <RefreshCw className="h-4 w-4 animate-spin" />
               </div>
               <button
@@ -123,7 +123,7 @@ export function BrokerSyncSection({
                   e.stopPropagation();
                   onCancelBrokerSync?.(broker);
                 }}
-                className="rounded p-1.5 text-red-400 hover:bg-red-400/10 transition-colors"
+                className="rounded p-1.5 text-destructive hover:bg-destructive/10 transition-colors"
                 title="Cancel sync"
               >
                 <X className="h-4 w-4" />
@@ -137,7 +137,7 @@ export function BrokerSyncSection({
       {isExpanded && (
         <div className="border-t border-border/60 divide-y divide-border/60">
           {symbols.length === 0 ? (
-            <div className="p-4 text-center text-sm text-gray-500">
+            <div className="p-4 text-center text-sm text-muted-foreground">
               No symbols to sync
             </div>
           ) : (

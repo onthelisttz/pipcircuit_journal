@@ -708,15 +708,15 @@ export function ChartDataSyncSection() {
     <section className="rounded-xl border border-border bg-card p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-gray-100">Chart Data Sync</h2>
-          <p className="mt-1 text-sm text-gray-500">
+          <h2 className="text-xl font-semibold text-foreground">Chart Data Sync</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
             Manage synchronization of M1 chart bars for offline access
           </p>
         </div>
         <button
           onClick={handleRefresh}
           disabled={isLoading}
-          className="flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-800 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50"
         >
           <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
           Refresh
@@ -726,9 +726,9 @@ export function ChartDataSyncSection() {
       <SyncStatusCard />
 
       {error && (
-        <div className="rounded-lg border border-red-800 bg-red-900/20 p-4 text-red-300">
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-destructive">
           <p className="text-sm">{error}</p>
-          <p className="mt-1 text-xs text-red-200">
+          <p className="mt-1 text-xs text-destructive/80">
             Your existing local bars remain available. You can continue using the app and retry
             chart sync later when your connection or Supabase is healthy.
           </p>
@@ -755,8 +755,8 @@ export function ChartDataSyncSection() {
       />
 
       {brokers.length === 0 ? (
-        <div className="rounded-lg border border-gray-800 bg-gray-900/30 p-8 text-center">
-          <p className="text-gray-500">
+        <div className="rounded-lg border border-border bg-muted/30 p-8 text-center">
+          <p className="text-muted-foreground">
             No sync progress found. Sync will start automatically after importing trades.
           </p>
         </div>

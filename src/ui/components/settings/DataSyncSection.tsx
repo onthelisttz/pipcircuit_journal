@@ -95,18 +95,18 @@ export function DataSyncSection() {
     <section className="rounded-xl border border-border bg-card p-6 space-y-4">
       <div className="space-y-3">
         <div>
-          <h2 className="text-xl font-semibold text-gray-100">Data Sync</h2>
-          <p className="mt-1 text-sm text-gray-500">
+          <h2 className="text-xl font-semibold text-foreground">Data Sync</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
             Sync trades, accounts, notes, tags, observations, settings, daily summaries, and chart
             sync progress (completed/pending) to the cloud. Chart bar data is synced separately in
             Chart Data Sync.
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <span className="flex items-center gap-2 text-sm text-gray-500">
+          <span className="flex items-center gap-2 text-sm text-muted-foreground">
             {online ? (
               <>
-                <Cloud className="h-4 w-4 text-green-500" />
+                <Cloud className="h-4 w-4 text-emerald-500" />
                 Online
               </>
             ) : (
@@ -119,7 +119,7 @@ export function DataSyncSection() {
           <button
             onClick={() => void handleSyncNow()}
             disabled={!user?.id || !online || isSyncing}
-            className="flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-800 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
             {isSyncing ? "Syncing..." : "Sync now"}
@@ -128,20 +128,20 @@ export function DataSyncSection() {
       </div>
 
       {/* Auto-push settings */}
-      <div className="rounded-lg border border-border bg-muted/40 p-4">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium text-gray-100">Auto-push while online</p>
-            <p className="mt-1 text-xs text-gray-500">
+        <div className="rounded-lg border border-border bg-muted/40 p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+            <p className="text-sm font-medium text-foreground">Auto-push while online</p>
+            <p className="mt-1 text-xs text-muted-foreground">
               When enabled, local changes are pushed to the cloud automatically while you&apos;re
               online. Full sync still runs on login or when you click &quot;Sync now&quot;.
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-sm text-gray-300">
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border-gray-600 bg-gray-900"
+                className="h-4 w-4 rounded border-border bg-background"
                 checked={autoPushEnabled}
                 onChange={async (e) => {
                   const enabled = e.target.checked;
@@ -161,8 +161,8 @@ export function DataSyncSection() {
           </div>
         </div>
 
-        <div className="mt-3 flex items-center gap-2 text-sm text-gray-300">
-          <span className={!autoPushEnabled ? "text-gray-600" : ""}>Every</span>
+        <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+          <span className={!autoPushEnabled ? "text-muted-foreground/60" : ""}>Every</span>
           <input
             type="number"
             min={1}
@@ -183,14 +183,14 @@ export function DataSyncSection() {
                 }
               }
             }}
-            className="w-20 rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-100 disabled:opacity-50"
+            className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground disabled:opacity-50"
           />
-          <span className={!autoPushEnabled ? "text-gray-600" : ""}>minutes</span>
+          <span className={!autoPushEnabled ? "text-muted-foreground/60" : ""}>minutes</span>
         </div>
       </div>
 
       {isSyncing && displayStep && (
-        <p className="mt-3 text-sm text-gray-400" data-sync-step>
+        <p className="mt-3 text-sm text-muted-foreground" data-sync-step>
           {displayStep}
         </p>
       )}
@@ -199,8 +199,8 @@ export function DataSyncSection() {
         <div
           className={`mt-4 rounded-lg p-3 text-sm ${
             lastSync.success
-              ? "border border-green-800 bg-green-900/20 text-green-300"
-              : "border border-red-800 bg-red-900/20 text-red-300"
+              ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              : "border border-destructive/40 bg-destructive/10 text-destructive"
           }`}
         >
           {lastSync.success ? (
@@ -208,7 +208,7 @@ export function DataSyncSection() {
           ) : (
             <>
               <p>{lastSync.error ?? "Sync failed."}</p>
-              <p className="mt-1 text-xs text-red-200">
+              <p className="mt-1 text-xs text-destructive/80">
                 Your local data is still safe. You can keep working offline and try syncing
                 again when your connection or Supabase is healthy.
               </p>
@@ -218,7 +218,7 @@ export function DataSyncSection() {
       )}
 
       {!user?.id && (
-        <p className="mt-4 text-sm text-amber-600">
+        <p className="mt-4 text-sm text-amber-600 dark:text-amber-400">
           Log in to sync your data to the cloud and access it on other devices.
         </p>
       )}

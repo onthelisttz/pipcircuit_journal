@@ -94,26 +94,26 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
   const getStatusIcon = () => {
     switch (progress.status) {
       case "completed":
-        return <CheckCircle2 className="h-4 w-4 text-green-400" />;
+        return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
       case "syncing":
-        return <Clock className="h-4 w-4 animate-pulse text-yellow-400" />;
+        return <Clock className="h-4 w-4 animate-pulse text-amber-500" />;
       case "failed":
-        return <XCircle className="h-4 w-4 text-red-400" />;
+        return <XCircle className="h-4 w-4 text-destructive" />;
       case "pending":
-        return <AlertCircle className="h-4 w-4 text-gray-400" />;
+        return <AlertCircle className="h-4 w-4 text-muted-foreground" />;
     }
   };
 
   const getStatusColor = () => {
     switch (progress.status) {
       case "completed":
-        return "text-green-400";
+        return "text-emerald-500";
       case "syncing":
-        return "text-yellow-400";
+        return "text-amber-500";
       case "failed":
-        return "text-red-400";
+        return "text-destructive";
       case "pending":
-        return "text-gray-400";
+        return "text-muted-foreground";
     }
   };
 
@@ -145,12 +145,12 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
 
           <div className="space-y-1 text-xs text-muted-foreground">
             {progress.status === "completed" && progress.totalBars > 0 && (
-              <div className="font-medium text-green-400">
+              <div className="font-medium text-emerald-500">
                 Total bars: {progress.totalBars.toLocaleString()}
               </div>
             )}
             {progress.status === "completed" && (barCounts.dexie !== null || barCounts.supabase !== null) && (
-              <div className="space-y-0.5 text-gray-400">
+              <div className="space-y-0.5 text-muted-foreground">
                 {barCounts.dexie !== null && (
                   <div>
                     Dexie: {barCounts.dexie.toLocaleString()} bars
@@ -162,7 +162,7 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
                   </div>
                 )}
                 {barCounts.dexie === null && barCounts.supabase === null && (
-                  <div className="text-gray-500 italic">Loading counts...</div>
+                  <div className="text-muted-foreground italic">Loading counts...</div>
                 )}
               </div>
             )}
@@ -195,7 +195,7 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
           </div>
 
           {progress.error && (
-            <div className="mt-2 text-xs text-red-400 bg-red-400/10 rounded p-2">
+            <div className="mt-2 text-xs text-destructive bg-destructive/10 rounded p-2">
               {progress.error}
             </div>
           )}
@@ -208,14 +208,14 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
               </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                 <div
-                  className="h-full bg-yellow-400 transition-all duration-300"
+                  className="h-full bg-amber-500 transition-all duration-300"
                   style={{ width: `${progress.progressPercent}%` }}
                 />
               </div>
             </div>
           )}
           {isDeleting && (
-            <div className="mt-2 flex items-center gap-2 text-xs text-amber-400">
+            <div className="mt-2 flex items-center gap-2 text-xs text-amber-500">
               <RefreshCw className="h-3.5 w-3.5 animate-spin" />
               <span>Deleting bars...</span>
             </div>
@@ -225,13 +225,13 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
         <div className="flex items-center gap-2">
           {isSyncing && !isStuck && (
             <>
-              <div className="rounded p-1.5 text-yellow-400">
+              <div className="rounded p-1.5 text-amber-500">
                 <RefreshCw className="h-4 w-4 animate-spin" />
               </div>
               {onCancel && (
                 <button
                   onClick={onCancel}
-                  className="rounded p-1.5 text-red-400 hover:bg-red-400/10 transition-colors"
+                  className="rounded p-1.5 text-destructive hover:bg-destructive/10 transition-colors"
                   title="Cancel sync"
                 >
                   <X className="h-4 w-4" />
@@ -245,7 +245,7 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
                 <button
                   onClick={onContinue}
                   disabled={isSyncing}
-                  className="rounded p-1.5 text-yellow-400 hover:bg-yellow-400/10 transition-colors disabled:opacity-50"
+                  className="rounded p-1.5 text-amber-500 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
                   title="Restart / continue sync"
                 >
                   <PlayCircle className="h-4 w-4" />
@@ -255,7 +255,7 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
                 <button
                   onClick={onResetToPending}
                   disabled={isSyncing}
-                  className="rounded p-1.5 text-gray-400 hover:bg-gray-400/10 transition-colors disabled:opacity-50"
+                  className="rounded p-1.5 text-muted-foreground hover:bg-muted/60 transition-colors disabled:opacity-50"
                   title="Reset to pending (clears stuck state)"
                 >
                   <RotateCcw className="h-4 w-4" />
@@ -267,7 +267,7 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
             <button
               onClick={onSync}
               disabled={isSyncing}
-              className="rounded p-1.5 text-red-400 hover:bg-red-400/10 transition-colors disabled:opacity-50"
+              className="rounded p-1.5 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
               title="Retry sync"
             >
               <RefreshCw className="h-4 w-4" />
@@ -277,7 +277,7 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
             <button
               onClick={onSync}
               disabled={isSyncing}
-              className="rounded p-1.5 text-blue-400 hover:bg-blue-400/10 transition-colors disabled:opacity-50"
+              className="rounded p-1.5 text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
               title="Start sync"
             >
               <Play className="h-4 w-4" />
@@ -287,7 +287,7 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
             <button
               onClick={onSync}
               disabled={isSyncing}
-              className="rounded p-1.5 text-gray-400 hover:bg-gray-400/10 transition-colors disabled:opacity-50"
+              className="rounded p-1.5 text-muted-foreground hover:bg-muted/60 transition-colors disabled:opacity-50"
               title="Sync new bars (incremental)"
             >
               <RefreshCw className="h-4 w-4" />
@@ -297,7 +297,7 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
             <button
               onClick={onDeleteBars}
               disabled={isSyncing || isDeleting}
-              className="rounded p-1.5 text-red-400/80 hover:bg-red-400/10 transition-colors disabled:opacity-50"
+              className="rounded p-1.5 text-destructive/80 hover:bg-destructive/10 transition-colors disabled:opacity-50"
               title={isDeleting ? "Deleting..." : "Delete bars and start over"}
             >
               {isDeleting ? (

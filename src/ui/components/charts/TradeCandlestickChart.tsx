@@ -44,6 +44,8 @@ export interface TradeCandlestickChartProps {
     drawingTool?: DrawingToolType | null;
     /** Show automatic risk/reward zones from trade data */
     showRiskReward?: boolean;
+    /** Auto-fit/scroll when data updates */
+    autoScrollOnData?: boolean;
 }
 
 export interface TradeCandlestickChartRef {
@@ -66,6 +68,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     isLoading = false,
     drawingTool = null,
     showRiskReward = true,
+    autoScrollOnData = true,
 }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -74,6 +77,9 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const stopLossLineRef = useRef<IPriceLine | null>(null);
     const exitLineRef = useRef<IPriceLine | null>(null);
     const [isChartReady, setIsChartReady] = useState(false);
+    const [isHovered, setIsHovered] = useState(false);
+    const prevVisibleRangeRef = useRef<{ from: number; to: number } | null>(null);
+    const prevFirstTsRef = useRef<number | null>(null);
 
     const riskRewardPluginRef = useRef<RiskRewardPlugin | null>(null);
     const lineToolsRef = useRef<ReturnType<typeof createLineToolsPlugin> | null>(null);
@@ -295,6 +301,101 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         };
     }, [isChartReady]);
 
+    // Keyboard navigation (scroll/zoom) when chart is hovered
+    useEffect(() => {
+        if (!isChartReady || !isHovered || !chartRef.current) return;
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            const target = e.target as HTMLElement | null;
+            if (
+                target?.tagName === "INPUT" ||
+                target?.tagName === "TEXTAREA" ||
+                target?.isContentEditable
+            ) {
+                return;
+            }
+
+            const timeScale = chartRef.current?.timeScale();
+            if (!timeScale) return;
+            const range = timeScale.getVisibleLogicalRange();
+            if (!range) return;
+
+            const span = range.to - range.from;
+            if (!Number.isFinite(span) || span <= 0) return;
+            const center = (range.from + range.to) / 2;
+            const scrollStep = e.shiftKey ? Math.max(20, span * 0.2) : Math.max(5, span * 0.1);
+
+            if (e.key === "ArrowLeft") {
+                timeScale.setVisibleLogicalRange({
+                    from: range.from - scrollStep,
+                    to: range.to - scrollStep,
+                });
+                e.preventDefault();
+                return;
+            }
+
+            if (e.key === "ArrowRight") {
+                timeScale.setVisibleLogicalRange({
+                    from: range.from + scrollStep,
+                    to: range.to + scrollStep,
+                });
+                e.preventDefault();
+                return;
+            }
+
+            if (e.key === "PageUp") {
+                const pageStep = Math.max(20, span * 0.6);
+                timeScale.setVisibleLogicalRange({
+                    from: range.from - pageStep,
+                    to: range.to - pageStep,
+                });
+                e.preventDefault();
+                return;
+            }
+
+            if (e.key === "PageDown") {
+                const pageStep = Math.max(20, span * 0.6);
+                timeScale.setVisibleLogicalRange({
+                    from: range.from + pageStep,
+                    to: range.to + pageStep,
+                });
+                e.preventDefault();
+                return;
+            }
+
+            if (e.key === "+" || e.key === "=") {
+                const newSpan = Math.max(5, span * 0.8);
+                timeScale.setVisibleLogicalRange({
+                    from: center - newSpan / 2,
+                    to: center + newSpan / 2,
+                });
+                e.preventDefault();
+                return;
+            }
+
+            if (e.key === "-" || e.key === "_") {
+                const newSpan = span * 1.25;
+                timeScale.setVisibleLogicalRange({
+                    from: center - newSpan / 2,
+                    to: center + newSpan / 2,
+                });
+                e.preventDefault();
+                return;
+            }
+
+            if (e.key === "0") {
+                timeScale.fitContent();
+                e.preventDefault();
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [isChartReady, isHovered]);
+
     useImperativeHandle(ref, () => ({
         fitContent: () => {
             chartRef.current?.timeScale().fitContent();
@@ -309,8 +410,38 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     useEffect(() => {
         if (!seriesRef.current || !isChartReady || data.length === 0) return;
 
+        const timeScale = chartRef.current?.timeScale();
+        if (!autoScrollOnData && timeScale) {
+            const visibleRange = timeScale.getVisibleLogicalRange();
+            prevVisibleRangeRef.current = visibleRange ? { ...visibleRange } : null;
+        }
+
         const formattedData = formatData(data);
         seriesRef.current.setData(formattedData);
+
+        if (!autoScrollOnData) {
+            if (timeScale && prevVisibleRangeRef.current && data.length > 0) {
+                const prevFirst = prevFirstTsRef.current;
+                const newFirst = data[0]?.timestamp ?? null;
+                let prependCount = 0;
+
+                if (prevFirst != null && newFirst != null && newFirst < prevFirst) {
+                    const idx = data.findIndex((bar) => bar.timestamp === prevFirst);
+                    if (idx > 0) prependCount = idx;
+                }
+
+                const range = prevVisibleRangeRef.current;
+                const nextRange = {
+                    from: range.from + prependCount,
+                    to: range.to + prependCount,
+                };
+                requestAnimationFrame(() => {
+                    timeScale.setVisibleLogicalRange(nextRange);
+                });
+            }
+            prevFirstTsRef.current = data[0]?.timestamp ?? null;
+            return;
+        }
 
         // Auto-scroll to trade location after data loads
         if (trade) {
@@ -319,7 +450,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         } else {
             chartRef.current?.timeScale().fitContent();
         }
-    }, [data, isChartReady, formatData, trade, scrollToTrade]);
+        prevFirstTsRef.current = data[0]?.timestamp ?? null;
+    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData]);
 
     // Manage R:R Visualization (Plugin + Price Lines) with Adaptive Scaling
     useEffect(() => {
@@ -536,7 +668,12 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     }, [data, isChartReady, trade, showRiskReward]);
 
     return (
-        <div className="relative w-full" style={{ height }}>
+        <div
+            className="relative w-full"
+            style={{ height }}
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
+        >
             {/* Loading overlay */}
             {isLoading && (
                 <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-900/50">

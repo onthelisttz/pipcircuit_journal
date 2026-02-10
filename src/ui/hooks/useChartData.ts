@@ -133,17 +133,35 @@ export function useChartData({
             );
 
             if (previousBars.length > 0) {
+                let added = 0;
                 setData((prev) => {
-                    const combined = [...previousBars, ...prev];
-                    // Apply memory cap, keeping most recent
-                    return combined.length > MAX_BARS ? combined.slice(-MAX_BARS) : combined;
+                    const earliest = prev[0]?.timestamp ?? null;
+                    const filtered = earliest != null
+                        ? previousBars.filter((bar) => bar.timestamp < earliest)
+                        : previousBars;
+                    if (filtered.length === 0) return prev;
+
+                    added = filtered.length;
+                    const combined = [...filtered, ...prev];
+                    let next = combined;
+                    if (combined.length > MAX_BARS) {
+                        // Keep earliest bars when paging left
+                        next = combined.slice(0, MAX_BARS);
+                        const newEnd = next[next.length - 1]?.timestamp;
+                        if (newEnd && newEnd !== windowEnd) {
+                            setWindowEnd(newEnd);
+                        }
+                    }
+                    return next;
                 });
-                setWindowStart(newWindowStart);
+                if (added > 0) {
+                    setWindowStart(newWindowStart);
+                }
             }
         } catch (err) {
             console.error("Failed to fetch previous data:", err);
         }
-    }, [windowStart, isLoading, trade.symbol, timeframe, windowDays, broker]);
+    }, [windowStart, windowEnd, isLoading, trade.symbol, timeframe, windowDays, broker]);
 
     // Lazy loading: fetch next chunk
     const fetchNext = useCallback(async () => {
@@ -164,15 +182,23 @@ export function useChartData({
             if (nextBars.length > 0) {
                 setData((prev) => {
                     const combined = [...prev, ...nextBars];
-                    // Apply memory cap, keeping most recent
-                    return combined.length > MAX_BARS ? combined.slice(-MAX_BARS) : combined;
+                    let next = combined;
+                    if (combined.length > MAX_BARS) {
+                        // Keep most recent bars when paging right
+                        next = combined.slice(-MAX_BARS);
+                        const newStart = next[0]?.timestamp;
+                        if (newStart && newStart !== windowStart) {
+                            setWindowStart(newStart);
+                        }
+                    }
+                    return next;
                 });
                 setWindowEnd(newWindowEnd);
             }
         } catch (err) {
             console.error("Failed to fetch next data:", err);
         }
-    }, [windowEnd, isLoading, trade.symbol, timeframe, windowDays, broker]);
+    }, [windowEnd, windowStart, isLoading, trade.symbol, timeframe, windowDays, broker]);
 
     return {
         data,

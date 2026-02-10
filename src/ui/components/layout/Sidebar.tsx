@@ -1,9 +1,10 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
     LayoutDashboard,
+    LineChart,
     Eye,
     Tag,
     Users,
@@ -22,10 +23,16 @@ const navItems = [
         href: "/dashboard",
         icon: LayoutDashboard,
     },
+ 
     {
         label: "Observations",
         href: "/observations",
         icon: Eye,
+    },
+    {
+        label: "Chart",
+        href: "/chart",
+        icon: LineChart,
     },
     {
         label: "Tags",
