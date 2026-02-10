@@ -442,7 +442,9 @@ export class HybridSyncChartBarsUseCase {
 
       // Recalculate totalBars from actual bars in Dexie to ensure accuracy
       // This is important because totalBars can get out of sync
-      const actualTotalBars = await this.dexieChartBarRepo.countBars(broker, symbol, "M1");
+      const actualTotalBars = this.dexieChartBarRepo.countBars
+        ? await this.dexieChartBarRepo.countBars(broker, symbol, "M1")
+        : totalBars;
       console.log(`[HybridSync] Recalculated totalBars from Dexie: ${actualTotalBars} (was ${totalBars})`);
 
       // For incremental sync, ensure we preserve the original firstBarDate
@@ -451,7 +453,9 @@ export class HybridSyncChartBarsUseCase {
         : firstBarDate;
 
       // Also recalculate date range from Dexie for accuracy
-      const actualDateRange = await this.dexieChartBarRepo.getDateRange(broker, symbol, "M1");
+      const actualDateRange = this.dexieChartBarRepo.getDateRange
+        ? await this.dexieChartBarRepo.getDateRange(broker, symbol, "M1")
+        : { firstBarDate: null, lastBarDate: null };
       const finalFirstBarDateFromDexie = actualDateRange.firstBarDate || finalFirstBarDate;
       const finalLastBarDate = actualDateRange.lastBarDate || lastBarDate;
 

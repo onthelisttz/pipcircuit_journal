@@ -26,4 +26,20 @@ export interface IChartBarRepository {
     from: number,
     to: number
   ): Promise<ChartBar[]>;
+  /**
+   * Count total bars for a broker+symbol+timeframe (optional for repos that support it).
+   */
+  countBars?(
+    broker: string,
+    symbol: string,
+    timeframe?: ChartTimeframe
+  ): Promise<number>;
+  /**
+   * Get date range for a broker+symbol+timeframe (optional for repos that support it).
+   */
+  getDateRange?(
+    broker: string,
+    symbol: string,
+    timeframe?: ChartTimeframe
+  ): Promise<{ firstBarDate: Date | null; lastBarDate: Date | null }>;
 }
