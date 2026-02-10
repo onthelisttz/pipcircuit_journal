@@ -2,6 +2,23 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { env } from "@config/env";
 
 let supabaseClient: SupabaseClient | null = null;
+let warnedMissingConfig = false;
+const missingConfigMessage =
+  "Supabase configuration missing. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables.";
+
+function createMissingClient(): SupabaseClient {
+  if (!warnedMissingConfig) {
+    warnedMissingConfig = true;
+    // Log once to help surface misconfiguration without breaking build-time evaluation.
+    // Actual use will still throw via the proxy below.
+    console.error(missingConfigMessage);
+  }
+  return new Proxy({} as SupabaseClient, {
+    get() {
+      throw new Error(missingConfigMessage);
+    },
+  });
+}
 
 /**
  * Get or create Supabase client instance
@@ -10,9 +27,8 @@ let supabaseClient: SupabaseClient | null = null;
 export function getSupabaseClient(): SupabaseClient {
   if (!supabaseClient) {
     if (!env.supabaseUrl || !env.supabaseAnonKey) {
-      throw new Error(
-        "Supabase configuration missing. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables."
-      );
+      supabaseClient = createMissingClient();
+      return supabaseClient;
     }
 
     supabaseClient = createClient(env.supabaseUrl, env.supabaseAnonKey, {
