@@ -29,10 +29,12 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
 
   const [title, setTitle] = useState("");
   const [categoryId, setCategoryId] = useState<number | null>(null);
+  const [managingCategories, setManagingCategories] = useState(false);
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showAddCategory, setShowAddCategory] = useState(false);
+  const [editingNames, setEditingNames] = useState<Record<number, string>>({});
 
   useEffect(() => {
     if (observation) {
@@ -41,6 +43,17 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
       setContent(observation.content || "<p></p>");
     }
   }, [observation]);
+
+  useEffect(() => {
+    // Keep local editable names in sync with latest categories
+    const map: Record<number, string> = {};
+    for (const c of categories) {
+      if (c.id != null) {
+        map[c.id] = c.name;
+      }
+    }
+    setEditingNames(map);
+  }, [categories]);
 
   const handleSave = useCallback(async () => {
     if (!observation?.id) return;
@@ -78,6 +91,44 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
       console.error("Failed to add category:", err);
     }
   }, [newCategoryName, refetchCategories, repo]);
+
+  const handleUpdateCategory = useCallback(
+    async (id: number) => {
+      const name = editingNames[id]?.trim();
+      if (!name) return;
+      try {
+        const now = new Date();
+        await repo.updateCategory(id, { name, updatedAt: now });
+        await refetchCategories();
+      } catch (err) {
+        console.error("Failed to update category:", err);
+      }
+    },
+    [editingNames, refetchCategories, repo]
+  );
+
+  const handleDeleteCategory = useCallback(
+    async (id: number) => {
+      // eslint-disable-next-line no-alert
+      const confirmed = window.confirm(
+        "Delete this category? Existing observations using it will keep their category until you change them."
+      );
+      if (!confirmed) return;
+      try {
+        await repo.deleteCategory(id);
+        // If the current observation used this category, clear it
+        if (categoryId === id && observation?.id) {
+          setCategoryId(null);
+          await repo.update(observation.id, { categoryId: null, updatedAt: new Date() });
+          await refetch();
+        }
+        await refetchCategories();
+      } catch (err) {
+        console.error("Failed to delete category:", err);
+      }
+    },
+    [categoryId, observation?.id, refetch, refetchCategories, repo]
+  );
 
   if (isLoading) {
     return (
@@ -160,15 +211,69 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
               </button>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => setShowAddCategory(true)}
-              className="rounded-lg border border-dashed border-border px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              + New
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setShowAddCategory(true)}
+                className="rounded-lg border border-dashed border-border px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                + New
+              </button>
+              <button
+                type="button"
+                onClick={() => setManagingCategories((v) => !v)}
+                className="rounded-lg border border-border px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                {managingCategories ? "Hide categories" : "Manage"}
+              </button>
+            </>
           )}
         </div>
+        {managingCategories && categories.length > 0 && (
+          <div className="mt-3 space-y-2 rounded-lg border border-dashed border-border bg-muted/30 p-2">
+            <p className="text-[11px] text-muted-foreground">
+              Rename or delete categories. Deleting does not change existing observations; you can
+              reassign them later.
+            </p>
+            <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+              {categories.map((c) =>
+                c.id == null ? null : (
+                  <div
+                    key={c.id}
+                    className="flex items-center gap-2 rounded-md bg-background px-2 py-1"
+                  >
+                    <div
+                      className="h-3 w-3 rounded-full border border-border"
+                      style={{ backgroundColor: c.color }}
+                    />
+                    <input
+                      type="text"
+                      value={editingNames[c.id] ?? c.name}
+                      onChange={(e) =>
+                        setEditingNames((prev) => ({ ...prev, [c.id!]: e.target.value }))
+                      }
+                      className="flex-1 rounded border border-border bg-background px-2 py-1 text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateCategory(c.id!)}
+                      className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCategory(c.id!)}
+                      className="rounded border border-destructive px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Meta - created/updated */}

@@ -72,12 +72,12 @@ export function Sidebar({ className }: { className?: string }) {
                 >
                     {!collapsed && (
                         <span className="text-lg font-semibold">
-                            Trading Journal
+                            pipCircuit
                         </span>
                     )}
                     {collapsed && (
                         <span className="text-lg font-bold text-sidebar-primary mx-auto">
-                            TJ
+                            PC
                         </span>
                     )}
                 </Link>

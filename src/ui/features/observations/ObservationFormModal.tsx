@@ -18,6 +18,7 @@ interface ObservationFormModalProps {
   showAddCategory: boolean;
   setShowAddCategory: (v: boolean) => void;
   onAddCategory: () => void;
+  onManageCategories?: () => void;
   onSubmit: (e: React.FormEvent) => void;
   saving: boolean;
   isEdit: boolean;
@@ -38,6 +39,7 @@ export function ObservationFormModal({
   showAddCategory,
   setShowAddCategory,
   onAddCategory,
+  onManageCategories,
   onSubmit,
   saving,
   isEdit,
@@ -126,13 +128,24 @@ export function ObservationFormModal({
                   </button>
                 </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowAddCategory(true)}
-                  className="rounded-lg border border-dashed border-border px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-                >
-                  + New category
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCategory(true)}
+                    className="rounded-lg border border-dashed border-border px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    + New category
+                  </button>
+                  {onManageCategories && (
+                    <button
+                      type="button"
+                      onClick={onManageCategories}
+                      className="rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+                    >
+                      Manage
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>

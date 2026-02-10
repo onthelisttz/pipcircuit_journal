@@ -1,4 +1,4 @@
-# Smart Trading Journal - Implementation Progress
+# pipCircuit - Implementation Progress
 
 > **Last Updated**: 2026-01-27
 

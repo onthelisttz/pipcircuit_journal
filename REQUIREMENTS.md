@@ -1,6 +1,6 @@
-# Smart Trading Journal - Requirements
+# pipCircuit - Requirements
 
-This document defines the comprehensive requirements for an offline-first trading journal
+This document defines the comprehensive requirements for pipCircuit, an offline-first trading journal
 with high performance, using cTrader Open API. Features are informed by UI analysis of
 iridio dashboard and trader waves reference designs.
 

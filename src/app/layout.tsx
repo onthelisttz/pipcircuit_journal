@@ -4,9 +4,9 @@ import { AuthProvider, ThemeProvider } from "@ui/providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Smart Trading Journal",
+  title: "pipCircuit",
   description:
-    "Offline-first trading journal with analytics and multi-device sync",
+    "Offline-first trading analytics and journaling app with multi-device sync",
   keywords: ["trading", "journal", "forex", "ctrader", "analytics"],
 };
 

@@ -68,6 +68,8 @@ export function ObservationsPage() {
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [showManageCategories, setShowManageCategories] = useState(false);
+  const [editingNames, setEditingNames] = useState<Record<number, string>>({});
 
   // Persist filters whenever they change
   useEffect(() => {
@@ -85,6 +87,16 @@ export function ObservationsPage() {
       // ignore localStorage errors
     }
   }, [filters]);
+
+  useEffect(() => {
+    const map: Record<number, string> = {};
+    for (const c of categories) {
+      if (c.id != null) {
+        map[c.id] = c.name;
+      }
+    }
+    setEditingNames(map);
+  }, [categories]);
 
   const resetForm = useCallback(() => {
     setTitle("");
@@ -174,6 +186,42 @@ export function ObservationsPage() {
     }
   }, [newCategoryName, refetchCategories, repo]);
 
+  const handleUpdateCategory = useCallback(
+    async (id: number) => {
+      const name = editingNames[id]?.trim();
+      if (!name) return;
+      try {
+        const now = new Date();
+        await repo.updateCategory(id, { name, updatedAt: now });
+        await refetchCategories();
+      } catch (err) {
+        console.error("Failed to update category:", err);
+      }
+    },
+    [editingNames, refetchCategories, repo]
+  );
+
+  const handleDeleteCategory = useCallback(
+    async (id: number) => {
+      // eslint-disable-next-line no-alert
+      const confirmed = window.confirm(
+        "Delete this category? Existing observations using it will keep their category until you change them."
+      );
+      if (!confirmed) return;
+      try {
+        await repo.deleteCategory(id);
+        if (categoryId === id) {
+          setCategoryId(null);
+        }
+        await refetchCategories();
+        await refetch();
+      } catch (err) {
+        console.error("Failed to delete category:", err);
+      }
+    },
+    [categoryId, refetch, refetchCategories, repo]
+  );
+
   const observationIds = filteredObs.map((o) => o.id).filter((id): id is number => id != null);
 
   return (
@@ -211,6 +259,7 @@ export function ObservationsPage() {
         showAddCategory={showAddCategory}
         setShowAddCategory={setShowAddCategory}
         onAddCategory={handleAddCategory}
+        onManageCategories={() => setShowManageCategories(true)}
         onSubmit={handleSubmit}
         saving={saving}
         isEdit={editingId != null}
@@ -287,6 +336,74 @@ export function ObservationsPage() {
           </div>
         )}
       </div>
+
+      {showManageCategories && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-xl border border-border bg-card shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h2 className="text-sm font-semibold text-foreground">Manage categories</h2>
+              <button
+                type="button"
+                onClick={() => setShowManageCategories(false)}
+                className="rounded-lg px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                Close
+              </button>
+            </div>
+            <div className="p-3 space-y-2 max-h-[60vh] overflow-y-auto">
+              {categories.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  You don&apos;t have any categories yet. Add one from the form.
+                </p>
+              ) : (
+                <>
+                  <p className="text-[11px] text-muted-foreground">
+                    Rename or delete categories. Deleting does not change existing observations; you can
+                    reassign them later.
+                  </p>
+                  <div className="space-y-1">
+                    {categories.map((c) =>
+                      c.id == null ? null : (
+                        <div
+                          key={c.id}
+                          className="flex items-center gap-2 rounded-md bg-background px-2 py-1"
+                        >
+                          <div
+                            className="h-3 w-3 rounded-full border border-border"
+                            style={{ backgroundColor: c.color }}
+                          />
+                          <input
+                            type="text"
+                            value={editingNames[c.id] ?? c.name}
+                            onChange={(e) =>
+                              setEditingNames((prev) => ({ ...prev, [c.id!]: e.target.value }))
+                            }
+                            className="flex-1 rounded border border-border bg-background px-2 py-1 text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateCategory(c.id!)}
+                            className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCategory(c.id!)}
+                            className="rounded border border-destructive px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDialog
         open={deleteId != null}

@@ -10,7 +10,7 @@ export function LoginPage() {
       <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-sm">
         <h1 className="text-xl font-semibold text-foreground">Sign in</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Continue with Google to access your trading journal.
+          Continue with Google to access your pipCircuit workspace.
         </p>
         <button
           onClick={() => void login()}

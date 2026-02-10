@@ -1,4 +1,4 @@
-# Smart Trading Journal - Execution Plan
+# pipCircuit - Execution Plan
 
 This plan outlines the phased implementation approach following Clean Architecture and SOLID
 principles. Each phase has clear goals, deliverables, and exit criteria.

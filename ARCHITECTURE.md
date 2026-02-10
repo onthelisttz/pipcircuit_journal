@@ -1,7 +1,7 @@
 # Architecture - Clean Architecture and SOLID
 
 This document defines the architectural principles, layering, and detailed file structure
-for the Smart Trading Journal application. The architecture ensures business logic remains
+for the pipCircuit application. The architecture ensures business logic remains
 independent from frameworks, databases, and UI concerns.
 
 ---

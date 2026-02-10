@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { subDays, startOfDay, endOfDay } from "date-fns";
 import { TradeOutcome, Direction } from "@domain/enums";
 import { useAccount, useTradesByQuery } from "@ui/hooks";
+import type { TradeQuery } from "@application/ports/repositories";
 import { useTradePanel } from "@ui/providers";
 import {
   DashboardFilters,
@@ -86,13 +87,13 @@ export default function DashboardPage() {
   const panelQuery = useMemo(
     () =>
       accountId
-        ? {
-          accountId,
-          from: startOfDay(filters.from),
-          to: endOfDay(filters.to),
-          symbols: filters.symbols.length > 0 ? filters.symbols : undefined,
-          direction: filters.direction !== "Both" ? filters.direction : undefined,
-        }
+        ? ({
+            accountId,
+            from: startOfDay(filters.from),
+            to: endOfDay(filters.to),
+            symbols: filters.symbols.length > 0 ? filters.symbols : undefined,
+            direction: filters.direction !== "Both" ? filters.direction : undefined,
+          } as const)
         : null,
     [accountId, filters.from, filters.to, filters.symbols, filters.direction]
   );
@@ -104,10 +105,25 @@ export default function DashboardPage() {
 
   const handleSummaryCardClick = (cardKey: string) => {
     if (!panelQuery) return;
-    const query =
-      cardKey === "breakeven-trades"
-        ? { ...panelQuery, outcome: TradeOutcome.Breakeven }
-        : panelQuery;
+
+    const queryBase: TradeQuery = {
+      accountId: panelQuery.accountId,
+      from: panelQuery.from,
+      to: panelQuery.to,
+      symbols: panelQuery.symbols,
+      direction: panelQuery.direction,
+    };
+
+    let query: TradeQuery = queryBase;
+
+    if (cardKey === "breakeven-trades") {
+      query = { ...queryBase, outcome: TradeOutcome.Breakeven };
+    } else if (cardKey === "winning-trades") {
+      query = { ...queryBase, winsOnly: true };
+    } else if (cardKey === "losing-trades") {
+      query = { ...queryBase, lossesOnly: true };
+    }
+
     openPanel({ title: formatPanelTitle(cardKey), query });
   };
 
