@@ -2,6 +2,39 @@ import type { IAccountRepository } from "@application/ports/repositories";
 import type { Account } from "@domain/entities";
 import { isOnline } from "@infrastructure/sync/utils/connection";
 
+type AccountBulkUpsertRepo = IAccountRepository & {
+  bulkUpsert: (accounts: Account[]) => Promise<void>;
+};
+
+type AccountDeleteByNumberRepo = IAccountRepository & {
+  deleteByAccountNumber: (accountNumber: string) => Promise<void>;
+};
+
+type AccountSetActiveByNumberRepo = IAccountRepository & {
+  setActiveByAccountNumber: (accountNumber: string) => Promise<void>;
+};
+
+const hasBulkUpsert = (
+  repo: IAccountRepository | null
+): repo is AccountBulkUpsertRepo =>
+  Boolean(repo && typeof (repo as AccountBulkUpsertRepo).bulkUpsert === "function");
+
+const hasDeleteByAccountNumber = (
+  repo: IAccountRepository | null
+): repo is AccountDeleteByNumberRepo =>
+  Boolean(
+    repo &&
+      typeof (repo as AccountDeleteByNumberRepo).deleteByAccountNumber === "function"
+  );
+
+const hasSetActiveByAccountNumber = (
+  repo: IAccountRepository | null
+): repo is AccountSetActiveByNumberRepo =>
+  Boolean(
+    repo &&
+      typeof (repo as AccountSetActiveByNumberRepo).setActiveByAccountNumber === "function"
+  );
+
 /**
  * Dual repository: reads from Dexie, writes to Dexie + Supabase (when online).
  * Real-time sync for accounts.
@@ -37,8 +70,8 @@ export class DualAccountRepository implements IAccountRepository {
   async create(account: Account): Promise<Account> {
     const result = await this.dexie.create(account);
     await this.syncToSupabase(async () => {
-      if ("bulkUpsert" in (this.supabase as { bulkUpsert?: (a: Account[]) => Promise<void> })) {
-        await (this.supabase as { bulkUpsert: (a: Account[]) => Promise<void> }).bulkUpsert([result]);
+      if (hasBulkUpsert(this.supabase)) {
+        await this.supabase.bulkUpsert([result]);
       }
     });
     return result;
@@ -47,8 +80,8 @@ export class DualAccountRepository implements IAccountRepository {
   async update(id: number, updates: Partial<Account>): Promise<Account> {
     const result = await this.dexie.update(id, updates);
     await this.syncToSupabase(async () => {
-      if ("bulkUpsert" in (this.supabase as { bulkUpsert?: (a: Account[]) => Promise<void> })) {
-        await (this.supabase as { bulkUpsert: (a: Account[]) => Promise<void> }).bulkUpsert([result]);
+      if (hasBulkUpsert(this.supabase)) {
+        await this.supabase.bulkUpsert([result]);
       }
     });
     return result;
@@ -58,10 +91,10 @@ export class DualAccountRepository implements IAccountRepository {
     const account = await this.dexie.getById(id);
     await this.dexie.delete(id);
     await this.syncToSupabase(async () => {
-      if (account && "deleteByAccountNumber" in (this.supabase as { deleteByAccountNumber?: (a: string) => Promise<void> })) {
-        await (this.supabase as { deleteByAccountNumber: (a: string) => Promise<void> }).deleteByAccountNumber(account.accountNumber);
-      } else {
-        await this.supabase!.delete(id);
+      if (account && hasDeleteByAccountNumber(this.supabase)) {
+        await this.supabase.deleteByAccountNumber(account.accountNumber);
+      } else if (this.supabase) {
+        await this.supabase.delete(id);
       }
     });
   }
@@ -70,10 +103,10 @@ export class DualAccountRepository implements IAccountRepository {
     const account = await this.dexie.getById(accountId);
     await this.dexie.setActive(accountId);
     await this.syncToSupabase(async () => {
-      if (account && "setActiveByAccountNumber" in (this.supabase as { setActiveByAccountNumber?: (a: string) => Promise<void> })) {
-        await (this.supabase as { setActiveByAccountNumber: (a: string) => Promise<void> }).setActiveByAccountNumber(account.accountNumber);
-      } else {
-        await this.supabase!.setActive(accountId);
+      if (account && hasSetActiveByAccountNumber(this.supabase)) {
+        await this.supabase.setActiveByAccountNumber(account.accountNumber);
+      } else if (this.supabase) {
+        await this.supabase.setActive(accountId);
       }
     });
   }
