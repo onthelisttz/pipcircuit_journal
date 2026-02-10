@@ -33,11 +33,11 @@ export interface UseChartDataResult {
     /** Whether data came from cache */
     fromCache: boolean;
     /** Refetch function */
-    refetch: () => void;
+    refetch: () => Promise<void>;
     /** Fetch earlier data (for lazy loading) */
-    fetchPrevious: () => void;
+    fetchPrevious: () => Promise<void>;
     /** Fetch later data (for lazy loading) */
-    fetchNext: () => void;
+    fetchNext: () => Promise<void>;
     /** Window boundaries */
     windowStart: number;
     windowEnd: number;
