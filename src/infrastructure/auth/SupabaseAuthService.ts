@@ -3,6 +3,23 @@ import { createClient, type Session } from "@supabase/supabase-js";
 import type { AuthSession, AuthUser, IAuthService } from "@application/ports/services";
 import { env } from "@config/env";
 
+const missingConfigMessage =
+  "Supabase configuration missing. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables.";
+
+let warnedMissingConfig = false;
+
+function createMissingClient() {
+  if (!warnedMissingConfig) {
+    warnedMissingConfig = true;
+    console.error(missingConfigMessage);
+  }
+  return new Proxy({} as ReturnType<typeof createClient>, {
+    get() {
+      throw new Error(missingConfigMessage);
+    },
+  });
+}
+
 function toAuthUser(session: Session): AuthUser {
   const user = session.user;
   return {
@@ -23,10 +40,21 @@ function toAuthSession(session: Session): AuthSession {
 }
 
 export class SupabaseAuthService implements IAuthService {
-  private readonly client = createClient(env.supabaseUrl, env.supabaseAnonKey);
+  private client: ReturnType<typeof createClient> | null = null;
+
+  private getClient() {
+    if (!this.client) {
+      if (!env.supabaseUrl || !env.supabaseAnonKey) {
+        this.client = createMissingClient();
+      } else {
+        this.client = createClient(env.supabaseUrl, env.supabaseAnonKey);
+      }
+    }
+    return this.client;
+  }
 
   async signInWithGoogle(): Promise<void> {
-    await this.client.auth.signInWithOAuth({
+    await this.getClient().auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo: env.supabaseRedirectUri || undefined,
@@ -35,11 +63,11 @@ export class SupabaseAuthService implements IAuthService {
   }
 
   async signOut(): Promise<void> {
-    await this.client.auth.signOut();
+    await this.getClient().auth.signOut();
   }
 
   async getSession(): Promise<AuthSession | null> {
-    const { data } = await this.client.auth.getSession();
+    const { data } = await this.getClient().auth.getSession();
     if (!data.session) {
       return null;
     }
@@ -47,7 +75,7 @@ export class SupabaseAuthService implements IAuthService {
   }
 
   onAuthStateChange(callback: (session: AuthSession | null) => void): () => void {
-    const { data } = this.client.auth.onAuthStateChange((_event, session) => {
+    const { data } = this.getClient().auth.onAuthStateChange((_event, session) => {
       callback(session ? toAuthSession(session) : null);
     });
 
