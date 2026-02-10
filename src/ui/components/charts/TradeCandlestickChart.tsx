@@ -149,6 +149,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             rightPriceScale: {
                 borderColor: "#374151",
                 scaleMargins: { top: 0.15, bottom: 0.15 },
+                entireTextOnly: false,
             },
             timeScale: {
                 borderColor: "#374151",
@@ -173,6 +174,29 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                         day: "numeric",
                         hour: "2-digit",
                         minute: "2-digit",
+                    });
+                },
+                priceFormatter: (price: number) => {
+                    // Format price with thousand separators
+                    // Determine decimal places based on price magnitude and typical trading ranges
+                    let decimals = 5; // Default for FX pairs (e.g., 1.23456)
+                    
+                    if (price >= 100) {
+                        decimals = 3; // JPY pairs (e.g., 147.559)
+                    }
+                    if (price >= 1000) {
+                        decimals = 2; // Metals like XAUUSD (e.g., 3,412.70)
+                    }
+                    if (price >= 10000) {
+                        decimals = 1; // Indices like US30 (e.g., 44,824.6)
+                    }
+                    if (price >= 100000) {
+                        decimals = 0; // Very large indices (e.g., 429,503)
+                    }
+                    
+                    return price.toLocaleString(undefined, {
+                        minimumFractionDigits: decimals,
+                        maximumFractionDigits: decimals,
                     });
                 },
             },
@@ -337,12 +361,18 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 : Math.max(...barsForMae.map((b) => b.high));
         }
 
-        // Risk zone: use explicit SL when present, otherwise use MAE (Maximum Adverse Excursion)
+        // Check if trade is closed with actual profit/loss
+        const actualProfit = trade.netProfit ?? trade.grossProfit;
+        const isClosedTrade = trade.closeTime != null && actualProfit != null && Number.isFinite(actualProfit);
+        const isWinningTrade = isClosedTrade && (actualProfit ?? 0) > 0;
+
+        // Risk zone: use explicit SL when present, otherwise use MAE (Maximum Adverse Excursion).
+        // Show MAE only for winning trades (or open trades); for losing closed trades without SL, hide MAE entirely.
         const hasExplicitSL = stopLoss != null && Number.isFinite(stopLoss);
         const hasMae = rawMaePrice != null && Number.isFinite(rawMaePrice);
-        const showRiskZone = hasExplicitSL || hasMae;
-        const useMae = !hasExplicitSL && hasMae;
-        let maePrice = rawMaePrice;
+        const useMae = hasMae && !hasExplicitSL && (!isClosedTrade || isWinningTrade);
+        const showRiskZone = hasExplicitSL || useMae;
+        const maePrice = rawMaePrice;
 
         // --- ADAPTIVE SCALING LOGIC (Robust Power of 10) ---
         const avgPrice = data.reduce((sum, bar) => sum + bar.close, 0) / data.length;
@@ -364,7 +394,13 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         }
 
         // Risk price: SL/MAE. MAE from bars is in chart scale; when trade was scaled, maePrice needs same scale as entry for comparison.
-        const scaledRiskPrice = hasExplicitSL ? stopLoss : (hasMae ? (maePrice ?? entryPrice) : entryPrice);
+        // For trades where we don't want a visible risk zone, fall back to entryPrice so the rectangle collapses.
+        const scaledRiskPrice =
+            hasExplicitSL && stopLoss != null
+                ? stopLoss
+                : useMae && maePrice != null
+                    ? maePrice
+                    : entryPrice;
 
         // -----------------------------
 
@@ -413,9 +449,16 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         // 2. Build RR labels as dollar amounts (e.g. "-$3.00", "+$6.85")
         const lots = (trade.lots ?? volumeToLots(trade.volume ?? 0, symbol)) || 0.01;
         const direction = isBuy ? "Buy" : "Sell";
-        const rawRiskPrice = hasExplicitSL ? rawStopLoss : rawMaePrice;
+        const rawRiskPrice = hasExplicitSL
+            ? rawStopLoss
+            : useMae
+                ? rawMaePrice
+                : null;
 
         let riskLabel: string | undefined;
+        // Show risk label for:
+        // - trades with explicit SL (both wins and losses), or
+        // - MAE-based risk only when allowed by useMae (winning or open trades)
         if (showRiskZone && rawEntry != null && rawRiskPrice != null) {
             const riskDollar = estimateGrossProfit(rawEntry, rawRiskPrice, lots, direction, symbol);
             if (Number.isFinite(riskDollar) && Math.abs(riskDollar) < 1_000_000) {
@@ -425,7 +468,6 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         }
 
         let rewardLabel: string | undefined;
-        const actualProfit = trade.netProfit ?? trade.grossProfit;
         if (actualProfit != null && Number.isFinite(actualProfit) && Math.abs(actualProfit) < 1_000_000) {
             const sign = actualProfit >= 0 ? "+" : "";
             rewardLabel = `${sign}$${actualProfit.toFixed(2)}`;

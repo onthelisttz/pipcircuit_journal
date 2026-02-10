@@ -31,14 +31,44 @@ export class CTraderMapper {
   }
 
   static toChartBar(bar: CTraderBarRecord): ChartBar {
+    // Normalize broker-specific raw price formats to human-readable decimals,
+    // matching how trade prices are stored.
+    const normalizePrice = (symbol: string, price: number): number => {
+      const s = symbol.toUpperCase();
+
+      // Indices and metals often come as scaled integers (e.g. 448246000, 3412700)
+      // while FX pairs may already be proper decimals.
+      if (s.includes("XAU")) {
+        // XAUUSD-style prices: 3412700 -> 3412.7
+        return Number((price / 1000).toFixed(2));
+      }
+
+      if (s === "US30" || s === "NAS100" || s === "GER40" || s === "JPN225") {
+        // Index prices: 448246000 -> 44824.6, 233150000 -> 23315.0 etc.
+        return Number((price / 10000).toFixed(1));
+      }
+
+      if (s.endsWith("JPY")) {
+        // JPY pairs sometimes arrive scaled by 10: 14755.9 -> 147.559
+        // Heuristic: values >> 1000 are assumed to be scaled.
+        if (price > 1000) {
+          return Number((price / 100).toFixed(3));
+        }
+        return Number(price.toFixed(3));
+      }
+
+      // Default: assume already a proper FX-style decimal.
+      return Number(price.toFixed(5));
+    };
+
     return {
       symbol: bar.symbol,
       timeframe: bar.timeframe,
       timestamp: bar.timestamp,
-      open: bar.open,
-      high: bar.high,
-      low: bar.low,
-      close: bar.close,
+      open: normalizePrice(bar.symbol, bar.open),
+      high: normalizePrice(bar.symbol, bar.high),
+      low: normalizePrice(bar.symbol, bar.low),
+      close: normalizePrice(bar.symbol, bar.close),
       volume: bar.volume,
     };
   }
