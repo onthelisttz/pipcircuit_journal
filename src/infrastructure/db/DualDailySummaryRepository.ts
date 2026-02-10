@@ -2,6 +2,28 @@ import type { IDailySummaryRepository } from "@application/ports/repositories";
 import type { DailySummary } from "@domain/entities";
 import { isOnline } from "@infrastructure/sync/utils/connection";
 
+type DailySummaryBulkUpsertRepo = IDailySummaryRepository & {
+  bulkUpsert: (summaries: DailySummary[]) => Promise<void>;
+};
+
+type DailySummaryDeleteByAccountAndDateRepo = IDailySummaryRepository & {
+  deleteByAccountAndDate: (accountId: string, date: string) => Promise<void>;
+};
+
+const hasBulkUpsert = (
+  repo: IDailySummaryRepository | null
+): repo is DailySummaryBulkUpsertRepo =>
+  Boolean(repo && typeof (repo as DailySummaryBulkUpsertRepo).bulkUpsert === "function");
+
+const hasDeleteByAccountAndDate = (
+  repo: IDailySummaryRepository | null
+): repo is DailySummaryDeleteByAccountAndDateRepo =>
+  Boolean(
+    repo &&
+      typeof (repo as DailySummaryDeleteByAccountAndDateRepo).deleteByAccountAndDate ===
+        "function"
+  );
+
 /**
  * Dual repository: reads from Dexie, writes to Dexie + Supabase (when online).
  * Real-time sync for daily summaries. Uses accountId + date (no numeric ID mapping).
@@ -33,8 +55,8 @@ export class DualDailySummaryRepository implements IDailySummaryRepository {
   async create(summary: DailySummary): Promise<DailySummary> {
     const result = await this.dexie.create(summary);
     await this.syncToSupabase(async () => {
-      if ("bulkUpsert" in (this.supabase as { bulkUpsert?: (s: DailySummary[]) => Promise<void> })) {
-        await (this.supabase as { bulkUpsert: (s: DailySummary[]) => Promise<void> }).bulkUpsert([result]);
+      if (hasBulkUpsert(this.supabase)) {
+        await this.supabase.bulkUpsert([result]);
       }
     });
     return result;
@@ -43,8 +65,8 @@ export class DualDailySummaryRepository implements IDailySummaryRepository {
   async update(id: number, updates: Partial<DailySummary>): Promise<DailySummary> {
     const result = await this.dexie.update(id, updates);
     await this.syncToSupabase(async () => {
-      if ("bulkUpsert" in (this.supabase as { bulkUpsert?: (s: DailySummary[]) => Promise<void> })) {
-        await (this.supabase as { bulkUpsert: (s: DailySummary[]) => Promise<void> }).bulkUpsert([result]);
+      if (hasBulkUpsert(this.supabase)) {
+        await this.supabase.bulkUpsert([result]);
       }
     });
     return result;
@@ -54,10 +76,10 @@ export class DualDailySummaryRepository implements IDailySummaryRepository {
     const summary = this.dexie.getById ? await this.dexie.getById(id) : null;
     await this.dexie.delete(id);
     await this.syncToSupabase(async () => {
-      if (summary && "deleteByAccountAndDate" in (this.supabase as { deleteByAccountAndDate?: (a: string, d: string) => Promise<void> })) {
-        await (this.supabase as { deleteByAccountAndDate: (a: string, d: string) => Promise<void> }).deleteByAccountAndDate(summary.accountId, summary.date);
-      } else {
-        await this.supabase!.delete(id);
+      if (summary && hasDeleteByAccountAndDate(this.supabase)) {
+        await this.supabase.deleteByAccountAndDate(summary.accountId, summary.date);
+      } else if (this.supabase) {
+        await this.supabase.delete(id);
       }
     });
   }
