@@ -10,7 +10,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "db:push": "supabase db push"
   },
   "dependencies": {
     "@reiryoku/ctrader-layer": "^2.2.0",
@@ -59,6 +60,7 @@
     "patch-package": "^8.0.1",
     "prettier": "^3.8.1",
     "rollup": "^4.50.2",
+    "supabase": "^2.76.6",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.4.0",
     "typescript": "^5",
@@ -70,6 +72,7 @@
   ],
   "trustedDependencies": [
     "sharp",
-    "unrs-resolver"
+    "unrs-resolver",
+    "supabase"
   ]
 }

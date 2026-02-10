@@ -1,24 +1,25 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import { SetActiveAccountUseCase } from "@application/use-cases";
 import type { Account } from "@domain/entities";
 import { TokenStorage } from "@infrastructure/auth";
 import { Direction, OrderType } from "@domain/enums";
-import { DexieTradeRepository } from "@infrastructure/db/dexie";
-import { DexieAccountRepository } from "@infrastructure/db/dexie";
+import { createAccountRepository, createTradeRepository } from "@infrastructure/db/createDualRepositories";
 import { db } from "@infrastructure/db/dexie/database";
 import { useAccountStore } from "@ui/state";
+import { useAuth } from "@ui/hooks/useAuth";
 import { estimateGrossProfit } from "@lib/pnl-estimate";
-
-const accountRepository = new DexieAccountRepository();
-const tradeRepository = new DexieTradeRepository();
 
 // Lock to prevent concurrent syncs
 let syncInProgress = false;
 
 export function useAccount() {
+  const { user } = useAuth();
   const { accounts, activeAccountId, setAccounts, setActiveAccountId, setLastAccountsSyncAt } =
     useAccountStore();
+
+  const accountRepository = useMemo(() => createAccountRepository(user?.id), [user?.id]);
+  const tradeRepository = useMemo(() => createTradeRepository(user?.id), [user?.id]);
 
   const loadAccounts = useCallback(async () => {
     const records = await accountRepository.list();
@@ -196,7 +197,7 @@ export function useAccount() {
     } finally {
       syncInProgress = false;
     }
-  }, [setAccounts, setActiveAccountId, setLastAccountsSyncAt]);
+  }, [accountRepository, setAccounts, setActiveAccountId, setLastAccountsSyncAt]);
 
   const syncTradesForAccount = useCallback(
     async (accountNumber: string, ctraderAccountId?: number) => {
@@ -296,7 +297,7 @@ export function useAccount() {
         setAccounts(refreshed);
       }
     },
-    [setAccounts]
+    [accountRepository, tradeRepository, setAccounts]
   );
 
   const setActive = useCallback(
@@ -307,7 +308,7 @@ export function useAccount() {
       const refreshed = await accountRepository.list();
       setAccounts(refreshed);
     },
-    [setAccounts, setActiveAccountId]
+    [accountRepository, setAccounts, setActiveAccountId]
   );
 
   const renameAccount = useCallback(
@@ -316,7 +317,7 @@ export function useAccount() {
       const refreshed = await accountRepository.list();
       setAccounts(refreshed);
     },
-    [setAccounts]
+    [accountRepository, setAccounts]
   );
 
   const activeAccount: Account | undefined = accounts.find(

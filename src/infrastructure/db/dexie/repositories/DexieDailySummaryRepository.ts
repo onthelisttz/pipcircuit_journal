@@ -3,6 +3,10 @@ import type { DailySummary } from "@domain/entities";
 import { db } from "../database";
 
 export class DexieDailySummaryRepository implements IDailySummaryRepository {
+  async getById(id: number): Promise<DailySummary | null> {
+    return (await db.daily_summaries.get(id)) ?? null;
+  }
+
   async getByDate(accountId: string, date: string): Promise<DailySummary | null> {
     return (
       (await db.daily_summaries

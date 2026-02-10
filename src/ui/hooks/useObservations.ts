@@ -3,9 +3,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { startOfDay, endOfDay } from "date-fns";
 import type { Observation } from "@domain/entities";
-import { DexieObservationRepository } from "@infrastructure/db/dexie";
-
-const repo = new DexieObservationRepository();
+import { createObservationRepository } from "@infrastructure/db/createDualRepositories";
+import { useAuth } from "@ui/hooks/useAuth";
 
 function toTimeMs(v: Date | string | undefined | null): number {
   if (v == null) return 0;
@@ -20,6 +19,8 @@ export interface UseObservationsFilters {
 }
 
 export function useObservations(filters?: UseObservationsFilters) {
+  const { user } = useAuth();
+  const repo = useMemo(() => createObservationRepository(user?.id), [user?.id]);
   const [observations, setObservations] = useState<Observation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -36,7 +37,7 @@ export function useObservations(filters?: UseObservationsFilters) {
     } finally {
       setIsLoading(false);
     }
-  }, [filters?.categoryId]);
+  }, [filters?.categoryId, repo]);
 
   useEffect(() => {
     void load();

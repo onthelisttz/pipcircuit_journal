@@ -14,6 +14,8 @@ import { useSyncProgress } from "@ui/hooks/useSyncProgress";
 import { isOnline, onConnectionChange } from "@infrastructure/sync/utils/connection";
 import { SupabaseSyncQueue } from "@infrastructure/sync/SupabaseSyncQueue";
 import { SupabaseChartBarRepository } from "@infrastructure/db/supabase/repositories";
+import { FullSyncService } from "@infrastructure/sync/FullSyncService";
+import { useFullSyncProgressStore } from "@ui/state/fullSyncProgressStore";
 import { HybridSyncChartBarsUseCase } from "@application/use-cases/sync";
 import { DexieChartBarRepository } from "@infrastructure/db/dexie/repositories";
 import { CTraderAPI } from "@infrastructure/api/ctrader/CTraderAPI";
@@ -29,6 +31,7 @@ export function SyncInitializer() {
   const { user } = useAuth();
   const [isInitializing, setIsInitializing] = useState(false);
   const initializedRef = useRef(false);
+  const { startSync, updateStep, finishSync } = useFullSyncProgressStore();
   const progressRepo = useMemo(() => {
     const dexie = new DexieSymbolSyncProgressRepository();
     return user?.id
@@ -126,6 +129,30 @@ export function SyncInitializer() {
           } catch (error) {
             console.warn("[SyncInitializer] Failed to process Supabase sync queue:", error);
           }
+
+          // Full data sync: push local to cloud, then pull (new device gets data, returning device merges)
+          try {
+            startSync("Starting push…");
+            const fullSync = new FullSyncService(user.id);
+            const syncResult = await fullSync.sync({
+              onProgress: (step) => updateStep(step),
+            });
+            if (syncResult.push.success && syncResult.pull.success) {
+              console.log("[SyncInitializer] Full data sync completed");
+              // Refresh symbol sync progress so Chart Data Sync UI reflects restored bars
+              await refresh();
+              console.log("[SyncInitializer] Progress refreshed after full data sync");
+            } else {
+              console.warn("[SyncInitializer] Full data sync had issues:", {
+                push: syncResult.push.error,
+                pull: syncResult.pull.error,
+              });
+            }
+          } catch (error) {
+            console.warn("[SyncInitializer] Full data sync failed:", error);
+          } finally {
+            finishSync();
+          }
         }
       } catch (error) {
         console.error("[SyncInitializer] Failed to initialize sync:", error);
@@ -179,6 +206,66 @@ export function SyncInitializer() {
     }, 5 * 60 * 1000); // 5 minutes
 
     return () => {
+      clearInterval(interval);
+    };
+  }, [user?.id]);
+
+  // Periodic push-only sync: push local changes to cloud when online, honoring user auto-push settings
+  useEffect(() => {
+    if (!user?.id || !isOnline()) {
+      return;
+    }
+
+    let lastPushAt: number | null = null;
+    let cancelled = false;
+
+    const tick = async () => {
+      if (!user?.id || !isOnline() || cancelled) return;
+
+      try {
+        // Read auto-push settings from repository
+        const settingsRepo = createSettingsRepository(user.id);
+        const [enabledRec, intervalRec] = await Promise.all([
+          settingsRepo.get("sync.autoPushEnabled"),
+          settingsRepo.get("sync.autoPushIntervalMinutes"),
+        ]);
+
+        const enabled = enabledRec?.value === true;
+        if (!enabled) return;
+
+        const minutesRaw = typeof intervalRec?.value === "number" ? intervalRec.value : 10;
+        const minutes = Number.isFinite(minutesRaw) && minutesRaw > 0 ? minutesRaw : 10;
+        const intervalMs = minutes * 60 * 1000;
+
+        const now = Date.now();
+        if (lastPushAt != null && now - lastPushAt < intervalMs) {
+          return;
+        }
+
+        const fullSync = new FullSyncService(user.id);
+        const result = await fullSync.pushToSupabase();
+        lastPushAt = Date.now();
+
+        if (result.success) {
+          console.log("[SyncInitializer] Periodic auto-push completed");
+        } else {
+          console.warn("[SyncInitializer] Periodic auto-push failed:", result.error);
+        }
+      } catch (error) {
+        console.warn("[SyncInitializer] Periodic auto-push error:", error);
+      }
+    };
+
+    // Check settings once a minute and decide whether it's time to push
+    const interval = setInterval(() => {
+      void tick();
+    }, 60 * 1000); // 1 minute
+
+    // Kick off an immediate check on mount
+    void tick();
+
+    return () => {
+      cancelled = true;
       clearInterval(interval);
     };
   }, [user?.id]);
@@ -281,6 +368,11 @@ export function SyncInitializer() {
         // Network reconnected, check for stuck syncs
         console.log(`[SyncInitializer] Network reconnected, checking for stuck syncs...`);
         void resumeStuckSyncs();
+        // Push local data changes to cloud when back online
+        void new FullSyncService(user.id).pushToSupabase().then((r) => {
+          if (r.success) console.log("[SyncInitializer] Reconnect sync push completed");
+          else console.warn("[SyncInitializer] Reconnect sync push failed:", r.error);
+        });
       }
     });
 

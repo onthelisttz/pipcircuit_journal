@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { Tag } from "@domain/entities";
-import type { TagCategory } from "@domain/enums";
-import { DexieTagRepository } from "@infrastructure/db/dexie";
-
-const tagRepo = new DexieTagRepository();
+import { createTagRepository } from "@infrastructure/db/createDualRepositories";
+import { useAuth } from "@ui/hooks/useAuth";
 
 export function useTagsList() {
+  const { user } = useAuth();
+  const tagRepo = useMemo(() => createTagRepository(user?.id), [user?.id]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -24,7 +24,7 @@ export function useTagsList() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [tagRepo]);
 
   useEffect(() => {
     void load();
@@ -41,7 +41,7 @@ export function useTagsList() {
       setTags((prev) => [...prev, created]);
       return created;
     },
-    []
+    [tagRepo]
   );
 
   const update = useCallback(
@@ -51,13 +51,13 @@ export function useTagsList() {
       setTags((prev) => prev.map((t) => (t.id === id ? updated : t)));
       return updated;
     },
-    []
+    [tagRepo]
   );
 
   const remove = useCallback(async (id: number) => {
     await tagRepo.delete(id);
     setTags((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+  }, [tagRepo]);
 
   return { tags, isLoading, error, create, update, remove, refetch: load };
 }

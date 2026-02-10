@@ -5,15 +5,13 @@ import { subDays } from "date-fns";
 import { Plus, Loader2, Pencil, Trash2 } from "lucide-react";
 import { useObservations } from "@ui/hooks/useObservations";
 import { useObservationCategories } from "@ui/hooks/useObservationCategories";
+import { useObservationRepository } from "@ui/hooks/useObservationRepository";
 import { useObservationPanel } from "@ui/providers";
-import { DexieObservationRepository } from "@infrastructure/db/dexie";
 import { ConfirmDialog } from "@ui/components/common";
 import { ObservationFormModal } from "./ObservationFormModal";
 import { ObservationFilters } from "./ObservationFilters";
 import type { ObservationFiltersState } from "./ObservationFilters";
 import { format } from "date-fns";
-
-const repo = new DexieObservationRepository();
 
 function stripHtml(html: string): string {
   if (!html) return "";
@@ -58,6 +56,7 @@ export function ObservationsPage() {
   });
   const { observations: filteredObs, isLoading, refetch } = useObservations(filters);
   const { categories, refetch: refetchCategories } = useObservationCategories();
+  const repo = useObservationRepository();
   const { openPanel } = useObservationPanel();
 
   const [showModal, setShowModal] = useState(false);
@@ -124,7 +123,7 @@ export function ObservationsPage() {
         setSaving(false);
       }
     },
-    [title, categoryId, content, editingId, refetch, resetForm]
+    [title, categoryId, content, editingId, refetch, resetForm, repo]
   );
 
   const handleEdit = useCallback(
@@ -147,7 +146,7 @@ export function ObservationsPage() {
     } catch (err) {
       console.error("Failed to delete:", err);
     }
-  }, [deleteId, refetch]);
+  }, [deleteId, refetch, repo]);
 
   useEffect(() => {
     const defaultCategoryId = categories[0]?.id ?? null;
@@ -173,7 +172,7 @@ export function ObservationsPage() {
     } catch (err) {
       console.error("Failed to add category:", err);
     }
-  }, [newCategoryName, refetchCategories]);
+  }, [newCategoryName, refetchCategories, repo]);
 
   const observationIds = filteredObs.map((o) => o.id).filter((id): id is number => id != null);
 

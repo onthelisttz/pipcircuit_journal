@@ -1,15 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { Tag } from "@domain/entities";
 import type { Mindset, TagCategory } from "@domain/enums";
-import { DexieTagRepository } from "@infrastructure/db/dexie";
-import { DexieTradeRepository } from "@infrastructure/db/dexie";
-
-const tagRepo = new DexieTagRepository();
-const tradeRepo = new DexieTradeRepository();
+import { createTagRepository, createTradeRepository } from "@infrastructure/db/createDualRepositories";
+import { useAuth } from "@ui/hooks/useAuth";
 
 export function useTradeTags(tradeId: number | undefined) {
+  const { user } = useAuth();
+  const tagRepo = useMemo(() => createTagRepository(user?.id), [user?.id]);
+  const tradeRepo = useMemo(() => createTradeRepository(user?.id), [user?.id]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [tradeTags, setTradeTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -35,7 +35,7 @@ export function useTradeTags(tradeId: number | undefined) {
     } finally {
       setIsLoading(false);
     }
-  }, [tradeId]);
+  }, [tradeId, tagRepo]);
 
   useEffect(() => {
     void load();
@@ -53,7 +53,7 @@ export function useTradeTags(tradeId: number | undefined) {
         setError(err instanceof Error ? err : new Error("Failed to save tags"));
       }
     },
-    [tradeId]
+    [tradeId, tagRepo]
   );
 
   const updateRating = useCallback(
@@ -66,7 +66,7 @@ export function useTradeTags(tradeId: number | undefined) {
         setError(err instanceof Error ? err : new Error("Failed to save rating"));
       }
     },
-    [tradeId]
+    [tradeId, tradeRepo]
   );
 
   const updateMindset = useCallback(
@@ -79,7 +79,7 @@ export function useTradeTags(tradeId: number | undefined) {
         setError(err instanceof Error ? err : new Error("Failed to save mindset"));
       }
     },
-    [tradeId]
+    [tradeId, tradeRepo]
   );
 
   const tagsByCategory = allTags.reduce(

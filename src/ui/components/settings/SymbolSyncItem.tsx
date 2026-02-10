@@ -132,18 +132,18 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
   const lastBarDate = progress.lastBarDate || calculatedDates?.lastBarDate || null;
 
   return (
-    <div className="p-4 hover:bg-gray-800/30 transition-colors">
+    <div className="p-4 hover:bg-accent/30 transition-colors">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             {getStatusIcon()}
-            <span className="font-medium text-gray-100">{progress.symbol}</span>
+            <span className="font-medium text-foreground">{progress.symbol}</span>
             <span className={`text-xs ${getStatusColor()}`}>
               {progress.status}
             </span>
           </div>
 
-          <div className="space-y-1 text-xs text-gray-500">
+          <div className="space-y-1 text-xs text-muted-foreground">
             {progress.status === "completed" && progress.totalBars > 0 && (
               <div className="font-medium text-green-400">
                 Total bars: {progress.totalBars.toLocaleString()}
@@ -203,10 +203,10 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
           {progress.status === "syncing" && progress.progressPercent !== undefined && (
             <div className="mt-2 space-y-1">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-500">Progress</span>
-                <span className="text-gray-400">{progress.progressPercent}%</span>
+                  <span className="text-muted-foreground">Progress</span>
+                  <span className="text-muted-foreground">{progress.progressPercent}%</span>
               </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-800">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                 <div
                   className="h-full bg-yellow-400 transition-all duration-300"
                   style={{ width: `${progress.progressPercent}%` }}

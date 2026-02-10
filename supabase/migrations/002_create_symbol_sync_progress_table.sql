@@ -32,6 +32,7 @@ CREATE INDEX IF NOT EXISTS idx_symbol_sync_progress_broker
 ALTER TABLE symbol_sync_progress ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policy: Users can only access their own sync progress
+DROP POLICY IF EXISTS "Users can only access their own sync progress" ON symbol_sync_progress;
 CREATE POLICY "Users can only access their own sync progress"
   ON symbol_sync_progress
   FOR ALL
@@ -47,6 +48,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Trigger to automatically update updated_at
+DROP TRIGGER IF EXISTS symbol_sync_progress_updated_at ON symbol_sync_progress;
 CREATE TRIGGER symbol_sync_progress_updated_at
   BEFORE UPDATE ON symbol_sync_progress
   FOR EACH ROW

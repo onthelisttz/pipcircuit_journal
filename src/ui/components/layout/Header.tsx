@@ -5,6 +5,7 @@ import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
 import { SyncStatusBadge } from "./SyncStatusBadge";
 import { useAccount, useAuth } from "@ui/hooks";
+import { ConfirmDialog } from "@ui/components/common";
 
 /**
  * Header Component
@@ -16,6 +17,7 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
     const [mounted, setMounted] = useState(false);
     const [accountMenuOpen, setAccountMenuOpen] = useState(false);
     const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+    const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
     const accountMenuRef = useRef<HTMLDivElement | null>(null);
     const actionsMenuRef = useRef<HTMLDivElement | null>(null);
     const { activeAccount, accounts, setActive } = useAccount();
@@ -134,23 +136,23 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
                             role="menu"
                         >
                             {mounted && (
-                                <button
-                                    onClick={() =>
-                                        setTheme(theme === "dark" ? "light" : "dark")
-                                    }
-                                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left hover:bg-accent"
-                                    role="menuitem"
-                                >
-                                    {theme === "dark" ? (
-                                        <Sun className="w-4 h-4" />
-                                    ) : (
-                                        <Moon className="w-4 h-4" />
-                                    )}
-                                    <span>Toggle theme</span>
-                                </button>
+                              <button
+                                onClick={() =>
+                                  setTheme(theme === "dark" ? "light" : "dark")
+                                }
+                                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left hover:bg-accent"
+                                role="menuitem"
+                              >
+                                {theme === "dark" ? (
+                                  <Sun className="w-4 h-4" />
+                                ) : (
+                                  <Moon className="w-4 h-4" />
+                                )}
+                                <span>Toggle theme</span>
+                              </button>
                             )}
                             <button
-                                onClick={() => void logout()}
+                                onClick={() => setLogoutConfirmOpen(true)}
                                 className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left hover:bg-accent"
                                 role="menuitem"
                             >
@@ -161,6 +163,20 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
                     )}
                 </div>
             </div>
+
+            <ConfirmDialog
+              open={logoutConfirmOpen}
+              onClose={() => setLogoutConfirmOpen(false)}
+              onConfirm={() => {
+                setLogoutConfirmOpen(false);
+                void logout();
+              }}
+              title="Log out"
+              message="Are you sure you want to log out? Any unsynced local changes will be pushed the next time you log in on this device."
+              confirmLabel="Log out"
+              cancelLabel="Cancel"
+              variant="danger"
+            />
         </header>
     );
 }

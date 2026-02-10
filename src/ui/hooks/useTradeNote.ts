@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { TradeNote } from "@domain/entities";
-import { DexieNoteRepository } from "@infrastructure/db/dexie";
-
-const noteRepo = new DexieNoteRepository();
+import { createNoteRepository } from "@infrastructure/db/createDualRepositories";
+import { useAuth } from "@ui/hooks/useAuth";
 
 export function useTradeNote(tradeId: number | undefined, initialComment?: string | null) {
+  const { user } = useAuth();
+  const noteRepo = useMemo(() => createNoteRepository(user?.id), [user?.id]);
   const [note, setNote] = useState<TradeNote | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -41,7 +42,7 @@ export function useTradeNote(tradeId: number | undefined, initialComment?: strin
     } finally {
       setIsLoading(false);
     }
-  }, [tradeId, initialComment]);
+  }, [tradeId, initialComment, noteRepo]);
 
   useEffect(() => {
     void loadNote();
@@ -69,7 +70,7 @@ export function useTradeNote(tradeId: number | undefined, initialComment?: strin
         setError(err instanceof Error ? err : new Error("Failed to save note"));
       }
     },
-    [tradeId, note?.id]
+    [tradeId, note?.id, noteRepo]
   );
 
   return { note, isLoading, error, saveNote, refetch: loadNote };

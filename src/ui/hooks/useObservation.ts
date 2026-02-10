@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { Observation } from "@domain/entities";
-import { DexieObservationRepository } from "@infrastructure/db/dexie";
-
-const repo = new DexieObservationRepository();
+import { createObservationRepository } from "@infrastructure/db/createDualRepositories";
+import { useAuth } from "@ui/hooks/useAuth";
 
 export function useObservation(id: number | null) {
+  const { user } = useAuth();
+  const repo = useMemo(() => createObservationRepository(user?.id), [user?.id]);
   const [observation, setObservation] = useState<Observation | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -28,7 +29,7 @@ export function useObservation(id: number | null) {
     } finally {
       setIsLoading(false);
     }
-  }, [id]);
+  }, [id, repo]);
 
   useEffect(() => {
     void load();

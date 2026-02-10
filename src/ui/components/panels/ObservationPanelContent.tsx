@@ -4,14 +4,12 @@ import { useState, useEffect, useCallback } from "react";
 import { Loader2 } from "lucide-react";
 import { useObservation } from "@ui/hooks";
 import { useObservationCategories } from "@ui/hooks";
+import { useObservationRepository } from "@ui/hooks/useObservationRepository";
 import { RichTextEditor } from "@ui/components/common";
 import { format } from "date-fns";
-import { DexieObservationRepository } from "@infrastructure/db/dexie";
-
-const repo = new DexieObservationRepository();
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
-function debouncedSave(id: number, html: string, onDone: () => void) {
+function debouncedSave(repo: { update: (id: number, u: object) => Promise<unknown> }, id: number, html: string, onDone: () => void) {
   if (saveTimeout) clearTimeout(saveTimeout);
   saveTimeout = setTimeout(() => {
     saveTimeout = null;
@@ -25,6 +23,7 @@ interface ObservationPanelContentProps {
 }
 
 export function ObservationPanelContent({ observationId }: ObservationPanelContentProps) {
+  const repo = useObservationRepository();
   const { observation, isLoading, error, refetch } = useObservation(observationId);
   const { categories, refetch: refetchCategories } = useObservationCategories();
 
@@ -59,7 +58,7 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
     } finally {
       setSaving(false);
     }
-  }, [observation?.id, title, categoryId, content, refetch]);
+  }, [observation?.id, title, categoryId, content, refetch, repo]);
 
   const handleAddCategory = useCallback(async () => {
     if (!newCategoryName.trim()) return;
@@ -78,7 +77,7 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
     } catch (err) {
       console.error("Failed to add category:", err);
     }
-  }, [newCategoryName, refetchCategories]);
+  }, [newCategoryName, refetchCategories, repo]);
 
   if (isLoading) {
     return (
@@ -123,7 +122,7 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
               const v = e.target.value ? Number(e.target.value) : null;
               setCategoryId(v);
               if (v != null) {
-                repo.update(observation.id!, { categoryId: v, updatedAt: new Date() }).then(refetch);
+                repo.update(observation.id!, { categoryId: v, updatedAt: new Date() }).then(() => refetch());
               }
             }}
             className="rounded-lg border border-border bg-background px-3 py-2 text-sm min-w-[120px]"
@@ -187,7 +186,7 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
           value={content}
           onChange={(html) => {
             setContent(html);
-            debouncedSave(observation.id, html, refetch);
+            debouncedSave(repo, observation.id, html, refetch);
           }}
           placeholder="Write your observation…"
           minHeight="180px"

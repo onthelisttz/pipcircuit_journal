@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useCallback, useEffect } from "react";
-import { DexieTradeRepository } from "@infrastructure/db/dexie";
+import { createTradeRepository } from "@infrastructure/db/createDualRepositories";
 import {
   CalculateEquityCurveUseCase,
   CalculateDrawdownUseCase,
@@ -18,13 +18,14 @@ import {
 import type { DashboardFiltersState } from "@ui/features/dashboard/DashboardFilters";
 import { Direction } from "@domain/enums";
 import { startOfDay, endOfDay, startOfMonth, endOfMonth, format } from "date-fns";
-
-const tradeRepo = new DexieTradeRepository();
+import { useAuth } from "@ui/hooks/useAuth";
 
 export function useDashboard(
   accountId: string | undefined,
   filters: DashboardFiltersState
 ) {
+  const { user } = useAuth();
+  const tradeRepo = useMemo(() => createTradeRepository(user?.id), [user?.id]);
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<Awaited<ReturnType<GetDashboardSummaryUseCase["execute"]>> | null>(null);
   const [equityCurve, setEquityCurve] = useState<Awaited<ReturnType<CalculateEquityCurveUseCase["execute"]>>>([]);
@@ -133,6 +134,8 @@ export function useCalendarMonthReturns(
   symbols: string[],
   direction: Direction | "Both"
 ) {
+  const { user } = useAuth();
+  const tradeRepo = useMemo(() => createTradeRepository(user?.id), [user?.id]);
   const [daily, setDaily] = useState<Awaited<ReturnType<GetReturnsByPeriodUseCase["execute"]>>["daily"]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -164,12 +167,14 @@ export function useCalendarMonthReturns(
       })
       .catch(() => setDaily([]))
       .finally(() => setLoading(false));
-  }, [accountId, query]);
+  }, [accountId, query, tradeRepo]);
 
   return { daily, loading };
 }
 
 export function useDashboardSymbols(accountId: string | undefined): string[] {
+  const { user } = useAuth();
+  const tradeRepo = useMemo(() => createTradeRepository(user?.id), [user?.id]);
   const [symbols, setSymbols] = useState<string[]>([]);
 
   useEffect(() => {
@@ -186,7 +191,7 @@ export function useDashboardSymbols(accountId: string | undefined): string[] {
         setSymbols(s);
       })
       .catch(() => setSymbols([]));
-  }, [accountId]);
+  }, [accountId, tradeRepo]);
 
   return symbols;
 }

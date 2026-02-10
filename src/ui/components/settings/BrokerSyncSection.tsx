@@ -50,11 +50,11 @@ export function BrokerSyncSection({
   const hasSyncing = syncing > 0;
 
   return (
-    <div className="rounded-lg border border-gray-800 bg-gray-900/30">
+    <div className="rounded-lg border border-border bg-muted/40">
       {/* Header */}
       <div
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex w-full items-center justify-between p-4 cursor-pointer hover:bg-gray-800/50 transition-colors"
+        className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 cursor-pointer hover:bg-accent/40 transition-colors"
       >
         <div className="flex items-center gap-3">
           {isExpanded ? (
@@ -63,8 +63,8 @@ export function BrokerSyncSection({
             <ChevronRight className="h-4 w-4 text-gray-500" />
           )}
           <div>
-            <h3 className="font-semibold text-gray-100">{broker}</h3>
-            <div className="flex items-center gap-3 text-xs text-gray-500">
+            <h3 className="font-semibold text-foreground">{broker}</h3>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <span>{symbols.length} symbols</span>
               {completed > 0 && (
                 <span className="text-green-400">{completed} completed</span>
@@ -82,9 +82,9 @@ export function BrokerSyncSection({
           </div>
         </div>
 
-        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 sm:self-auto sm:justify-end" onClick={(e) => e.stopPropagation()}>
           {totalBars > 0 && (
-            <span className="text-xs text-gray-500">
+            <span className="text-xs text-muted-foreground">
               {totalBars.toLocaleString()} bars
             </span>
           )}
@@ -135,7 +135,7 @@ export function BrokerSyncSection({
 
       {/* Symbols List */}
       {isExpanded && (
-        <div className="border-t border-gray-800 divide-y divide-gray-800">
+        <div className="border-t border-border/60 divide-y divide-border/60">
           {symbols.length === 0 ? (
             <div className="p-4 text-center text-sm text-gray-500">
               No symbols to sync

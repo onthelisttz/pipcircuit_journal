@@ -19,9 +19,9 @@ export function SyncStatusCard() {
   };
 
   return (
-    <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-6">
+    <div className="rounded-xl border border-border bg-card p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-100">Chart Data Sync Status</h2>
+        <h2 className="text-lg font-semibold text-foreground">Chart Data Sync Status</h2>
         {overallProgress.syncingSymbols > 0 && (
           <div className="flex items-center gap-2 text-sm text-blue-400">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -32,8 +32,8 @@ export function SyncStatusCard() {
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <div className="space-y-1">
-          <div className="text-xs text-gray-500">Total Symbols</div>
-          <div className="text-xl font-semibold text-gray-100">
+          <div className="text-xs text-muted-foreground">Total Symbols</div>
+          <div className="text-xl font-semibold text-foreground">
             {overallProgress.totalSymbols}
           </div>
         </div>
@@ -71,8 +71,8 @@ export function SyncStatusCard() {
 
       <div className="mt-4 space-y-2">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-gray-500">Total Bars Synced</span>
-          <span className="font-medium text-gray-100">
+          <span className="text-muted-foreground">Total Bars Synced</span>
+          <span className="font-medium text-foreground">
             {formatNumber(overallProgress.totalBarsSynced)}
           </span>
         </div>
@@ -80,12 +80,12 @@ export function SyncStatusCard() {
         {overallProgress.totalSymbols > 0 && (
           <div className="space-y-1">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-500">Overall Progress</span>
-              <span className="font-medium text-gray-100">
+              <span className="text-muted-foreground">Overall Progress</span>
+              <span className="font-medium text-foreground">
                 {overallProgress.overallProgressPercent}%
               </span>
             </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-gray-800">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
               <div
                 className="h-full bg-blue-500 transition-all duration-300"
                 style={{ width: `${overallProgress.overallProgressPercent}%` }}

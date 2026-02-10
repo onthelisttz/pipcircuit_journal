@@ -28,6 +28,8 @@ export class RealtimeSubscriptionManager {
   private reconnectTimeout?: NodeJS.Timeout;
   private reconnectAttempts: number = 0;
   private readonly maxReconnectAttempts = 10;
+  /** Set when symbol_sync_progress subscription fails (e.g. Realtime not enabled for table) to avoid retries */
+  private skipSyncProgressRealtime: boolean = false;
 
   constructor() {
     this.supabase = getSupabaseClient();
@@ -62,8 +64,12 @@ export class RealtimeSubscriptionManager {
 
     try {
       await this.subscribeToChartBars(userId);
-      await this.subscribeToSyncProgress(userId);
-      
+      if (!this.skipSyncProgressRealtime) {
+        await this.subscribeToSyncProgress(userId);
+      } else {
+        console.log("[Realtime] Skipping symbol_sync_progress (previous binding error)");
+      }
+
       this.isConnected = true;
       this.callbacks.onConnectionChange?.(true);
       console.log("[Realtime] Subscriptions started for user:", userId);
@@ -172,12 +178,24 @@ export class RealtimeSubscriptionManager {
       .subscribe((status, err) => {
         if (status === "SUBSCRIBED") {
           console.log("[Realtime] Subscribed to symbol_sync_progress");
-        } else if (status === "CHANNEL_ERROR") {
-          console.error("[Realtime] Sync progress subscription error", err);
-          // Don't schedule reconnect for RLS/table issues - just log
-          // The table might not exist yet or RLS might be blocking
-          if (err) {
-            console.error("[Realtime] Error details:", err);
+        } else if (status === "CHANNEL_ERROR" || status === "CLOSED") {
+          const msg = err instanceof Error ? err.message : String(err ?? "");
+          if (msg.includes("mismatch") && msg.includes("postgres changes")) {
+            this.skipSyncProgressRealtime = true;
+            try {
+              channel.unsubscribe();
+            } catch (_) {}
+            this.subscriptions.delete("symbol_sync_progress");
+            console.warn(
+              "[Realtime] symbol_sync_progress subscription disabled (Realtime may not be enabled for this table in Supabase). Full sync still works."
+            );
+          } else if (err) {
+            console.error("[Realtime] Sync progress subscription error", err);
+          } else {
+            // Benign case: status changed but no error object provided
+            console.warn(
+              `[Realtime] Sync progress subscription status: ${status} (no error details provided)`
+            );
           }
         } else {
           console.log(`[Realtime] symbol_sync_progress subscription status: ${status}`);

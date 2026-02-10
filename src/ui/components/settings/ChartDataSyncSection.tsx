@@ -705,7 +705,7 @@ export function ChartDataSyncSection() {
   }, [refresh]);
 
   return (
-    <div className="space-y-6">
+    <section className="rounded-xl border border-border bg-card p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-gray-100">Chart Data Sync</h2>
@@ -728,6 +728,10 @@ export function ChartDataSyncSection() {
       {error && (
         <div className="rounded-lg border border-red-800 bg-red-900/20 p-4 text-red-300">
           <p className="text-sm">{error}</p>
+          <p className="mt-1 text-xs text-red-200">
+            Your existing local bars remain available. You can continue using the app and retry
+            chart sync later when your connection or Supabase is healthy.
+          </p>
         </div>
       )}
 
@@ -778,6 +782,6 @@ export function ChartDataSyncSection() {
           ))}
         </div>
       )}
-    </div>
+    </section>
   );
 }

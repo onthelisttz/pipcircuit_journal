@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { Trade } from "@domain/entities";
 import { GetTradeByIdUseCase } from "@application/use-cases/trades";
-import { DexieTradeRepository } from "@infrastructure/db/dexie";
-
-const tradeRepository = new DexieTradeRepository();
-const getTradeByIdUseCase = new GetTradeByIdUseCase(tradeRepository);
+import { createTradeRepository } from "@infrastructure/db/createDualRepositories";
+import { useAuth } from "@ui/hooks/useAuth";
 
 export function useTrade(id?: number) {
+    const { user } = useAuth();
+    const tradeRepository = useMemo(() => createTradeRepository(user?.id), [user?.id]);
+    const getTradeByIdUseCase = useMemo(() => new GetTradeByIdUseCase(tradeRepository), [tradeRepository]);
     const [trade, setTrade] = useState<Trade | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<Error | null>(null);
@@ -29,7 +30,7 @@ export function useTrade(id?: number) {
         } finally {
             setIsLoading(false);
         }
-    }, [id]);
+    }, [id, getTradeByIdUseCase]);
 
     useEffect(() => {
         void loadTrade();

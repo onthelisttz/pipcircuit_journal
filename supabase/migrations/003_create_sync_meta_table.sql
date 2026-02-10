@@ -27,6 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_meta_last_sync_time
 ALTER TABLE sync_meta ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policy: Users can only access their own sync metadata
+DROP POLICY IF EXISTS "Users can only access their own sync metadata" ON sync_meta;
 CREATE POLICY "Users can only access their own sync metadata"
   ON sync_meta
   FOR ALL
@@ -42,6 +43,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Trigger to automatically update updated_at
+DROP TRIGGER IF EXISTS sync_meta_updated_at ON sync_meta;
 CREATE TRIGGER sync_meta_updated_at
   BEFORE UPDATE ON sync_meta
   FOR EACH ROW

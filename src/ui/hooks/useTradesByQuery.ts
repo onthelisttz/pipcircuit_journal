@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { Trade } from "@domain/entities";
 import type { TradeQuery } from "@application/ports/repositories";
-import { DexieTradeRepository } from "@infrastructure/db/dexie";
-
-const tradeRepo = new DexieTradeRepository();
+import { createTradeRepository } from "@infrastructure/db/createDualRepositories";
+import { useAuth } from "@ui/hooks/useAuth";
 
 export function useTradesByQuery(query: TradeQuery | null) {
+  const { user } = useAuth();
+  const tradeRepo = useMemo(() => createTradeRepository(user?.id), [user?.id]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -28,7 +29,7 @@ export function useTradesByQuery(query: TradeQuery | null) {
     } finally {
       setIsLoading(false);
     }
-  }, [query]);
+  }, [query, tradeRepo]);
 
   useEffect(() => {
     void load();

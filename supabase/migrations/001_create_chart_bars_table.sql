@@ -37,6 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_chart_bars_synced_at
 ALTER TABLE chart_bars ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policy: Users can only access their own chart bars
+DROP POLICY IF EXISTS "Users can only access their own chart bars" ON chart_bars;
 CREATE POLICY "Users can only access their own chart bars"
   ON chart_bars
   FOR ALL
@@ -52,6 +53,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Trigger to automatically update updated_at
+DROP TRIGGER IF EXISTS chart_bars_updated_at ON chart_bars;
 CREATE TRIGGER chart_bars_updated_at
   BEFORE UPDATE ON chart_bars
   FOR EACH ROW

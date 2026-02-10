@@ -1,6 +1,7 @@
 "use client";
 
 import { ChartDataSyncSection } from "@ui/components/settings/ChartDataSyncSection";
+import { DataSyncSection } from "@ui/components/settings/DataSyncSection";
 
 export default function SettingsPage() {
   return (
@@ -13,9 +14,8 @@ export default function SettingsPage() {
       </div>
 
       <div className="space-y-8">
-        <section>
-          <ChartDataSyncSection />
-        </section>
+        <DataSyncSection />
+        <ChartDataSyncSection />
       </div>
     </div>
   );
