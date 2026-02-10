@@ -20,6 +20,7 @@ import { HybridSyncChartBarsUseCase } from "@application/use-cases/sync";
 import { DexieChartBarRepository } from "@infrastructure/db/dexie/repositories";
 import { CTraderAPI } from "@infrastructure/api/ctrader/CTraderAPI";
 import { TokenStorage } from "@infrastructure/auth";
+import { createSettingsRepository } from "@infrastructure/db/createDualRepositories";
 
 /**
  * SyncInitializer - Component that initializes sync after login

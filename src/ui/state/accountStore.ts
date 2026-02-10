@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import type { Account } from "@domain/entities";
 
@@ -27,6 +27,30 @@ interface AccountState {
   setLastAccountsSyncAt: (date: Date | null) => void;
 }
 
+type AccountPersistedState = Pick<AccountState, "lastAccountsSyncAt">;
+
+const storage: PersistStorage<AccountPersistedState> = {
+  getItem: (name) => {
+    const str = getDefaultStorage().getItem(name);
+    if (!str) return null;
+    try {
+      const parsed = JSON.parse(str) as StorageValue<AccountPersistedState>;
+      if (parsed?.state?.lastAccountsSyncAt) {
+        parsed.state.lastAccountsSyncAt = new Date(parsed.state.lastAccountsSyncAt);
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  },
+  setItem: (name, value) => {
+    getDefaultStorage().setItem(name, JSON.stringify(value));
+  },
+  removeItem: (name) => {
+    getDefaultStorage().removeItem(name);
+  },
+};
+
 export const useAccountStore = create<AccountState>()(
   persist(
     (set) => ({
@@ -42,27 +66,7 @@ export const useAccountStore = create<AccountState>()(
       partialize: (state) => ({
         lastAccountsSyncAt: state.lastAccountsSyncAt,
       }),
-      storage: {
-        getItem: (name) => {
-          const str = getDefaultStorage().getItem(name);
-          if (!str) return null;
-          try {
-            const parsed = JSON.parse(str);
-            if (parsed?.state?.lastAccountsSyncAt) {
-              parsed.state.lastAccountsSyncAt = new Date(parsed.state.lastAccountsSyncAt);
-            }
-            return parsed;
-          } catch {
-            return null;
-          }
-        },
-        setItem: (name, value) => {
-          getDefaultStorage().setItem(name, value);
-        },
-        removeItem: (name) => {
-          getDefaultStorage().removeItem(name);
-        },
-      },
+      storage,
     }
   )
 );

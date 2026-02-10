@@ -153,7 +153,7 @@ export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
                 }}
                 itemStyle={{ color: "var(--popover-foreground)" }}
                 labelStyle={{ color: "var(--popover-foreground)" }}
-                formatter={(value: number) => [value, "Trades"]}
+                formatter={(value?: number) => [value ?? 0, "Trades"]}
               />
               <Legend wrapperStyle={{ fontSize: "11px", color: "var(--foreground)" }} />
             </PieChart>
@@ -186,7 +186,10 @@ export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
                 }}
                 itemStyle={{ color: "var(--popover-foreground)" }}
                 labelStyle={{ color: "var(--popover-foreground)" }}
-                formatter={(value: number) => [`$${value.toFixed(2)}`, "P&L"]}
+                formatter={(value?: number) => {
+                  const num = typeof value === "number" ? value : 0;
+                  return [`$${num.toFixed(2)}`, "P&L"];
+                }}
               />
               <Legend wrapperStyle={{ fontSize: "11px", color: "var(--foreground)" }} />
             </PieChart>
@@ -219,7 +222,10 @@ export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
                 }}
                 itemStyle={{ color: "var(--popover-foreground)" }}
                 labelStyle={{ color: "var(--popover-foreground)" }}
-                formatter={(value: number) => [`${value.toFixed(1)}%`, "Win Rate"]}
+                formatter={(value?: number) => {
+                  const num = typeof value === "number" ? value : 0;
+                  return [`${num.toFixed(1)}%`, "Win Rate"];
+                }}
               />
               <Legend wrapperStyle={{ fontSize: "11px", color: "var(--foreground)" }} />
             </PieChart>

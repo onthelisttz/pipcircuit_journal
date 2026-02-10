@@ -120,7 +120,8 @@ export function TagsTable() {
       if (editing?.id) {
         await update(editing.id, form);
       } else {
-        await create(form);
+        const now = new Date();
+        await create({ ...form, createdAt: now, updatedAt: now });
       }
       closeModal();
     } catch {

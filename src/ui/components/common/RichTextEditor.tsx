@@ -118,7 +118,9 @@ export function RichTextEditor({
     if (!editor || !onChange) return;
     const onUpdate = () => onChange(editor.getHTML());
     editor.on("update", onUpdate);
-    return () => editor.off("update", onUpdate);
+    return () => {
+      editor.off("update", onUpdate);
+    };
   }, [editor, onChange]);
 
   const addImage = useCallback(() => {

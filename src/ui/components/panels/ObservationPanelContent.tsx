@@ -291,6 +291,7 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
           value={content}
           onChange={(html) => {
             setContent(html);
+            if (observation.id == null) return;
             debouncedSave(repo, observation.id, html, refetch);
           }}
           placeholder="Write your observation…"

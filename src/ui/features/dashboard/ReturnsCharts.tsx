@@ -27,6 +27,7 @@ const BAR_CHART_DEFS = (
 
 interface PeriodReturn {
   period: string;
+  dayOfWeek?: string;
   profit: number;
   tradeCount: number;
   winning: number;

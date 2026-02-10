@@ -174,7 +174,7 @@ export class SyncQueueManager {
     const completed = await this.syncQueueRepository.listByStatus(SyncStatus.Synced);
     const cutoff = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
 
-    const toDelete = completed.filter((job) => (job.timestamp || 0) < cutoff);
+    const toDelete = completed.filter((job) => job.timestamp.getTime() < cutoff);
     await Promise.all(toDelete.map((job) => this.syncQueueRepository.delete(job.id!)));
 
     return toDelete.length;

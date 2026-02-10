@@ -51,13 +51,14 @@ export function useAccount() {
       if (!response.ok || data.error) {
         throw new Error(data.error ?? "Failed to load accounts");
       }
-      if (!data.accounts || data.accounts.length === 0) {
+      const accountsData = data.accounts ?? [];
+      if (accountsData.length === 0) {
         return;
       }
 
       // Use transaction to prevent race conditions
       await db.transaction("rw", db.accounts, async () => {
-        for (const raw of data.accounts) {
+        for (const raw of accountsData) {
           const accountNumber = String(
             raw["accountNumber"] ??
               raw["ctidTraderAccountId"] ??

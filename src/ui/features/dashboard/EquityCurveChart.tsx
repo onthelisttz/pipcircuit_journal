@@ -72,7 +72,10 @@ export function EquityCurveChart({ data }: EquityCurveChartProps) {
               labelFormatter={(_, payload) =>
                 payload?.[0]?.payload?.displayDate ?? ""
               }
-              formatter={(value: number) => [`$${value.toFixed(2)}`, "Equity"]}
+              formatter={(value?: number) => {
+                const num = typeof value === "number" ? value : 0;
+                return [`$${num.toFixed(2)}`, "Equity"];
+              }}
             />
             <Area
               type="monotone"

@@ -70,7 +70,10 @@ export function DrawdownChart({ data }: DrawdownChartProps) {
               }}
               itemStyle={{ color: "var(--popover-foreground)" }}
               labelStyle={{ color: "var(--popover-foreground)" }}
-              formatter={(value: number) => [`$${value.toFixed(2)}`, "Drawdown"]}
+              formatter={(value?: number) => {
+                const num = typeof value === "number" ? value : 0;
+                return [`$${num.toFixed(2)}`, "Drawdown"];
+              }}
             />
             <Area
               type="monotone"
