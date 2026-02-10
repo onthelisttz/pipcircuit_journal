@@ -114,7 +114,7 @@ export class HybridSyncChartBarsUseCase {
 
         // Need incremental update - fetch only new data from cTrader
         console.log(`[HybridSync] Dexie has data but needs incremental update`);
-        const lastSyncTime = progress.lastSyncTime ? new Date(progress.lastSyncTime) : fromDate;
+        const lastSyncTime = progress?.lastSyncTime ? new Date(progress.lastSyncTime) : fromDate;
         return await this.syncFromCTrader(
           {
             ...params,
