@@ -47,13 +47,26 @@ async function ensureProtoFiles(): Promise<void> {
     "ctrader-layer"
   );
   const sourceDir = path.join(packageRoot, "protobuf");
-  const targetDir = path.join(packageRoot, "build", "protobuf");
-  await fs.mkdir(targetDir, { recursive: true });
-  const files = await fs.readdir(sourceDir);
-  await Promise.all(
-    files
-      .filter((file) => file.endsWith(".proto"))
-      .map((file) => fs.copyFile(path.join(sourceDir, file), path.join(targetDir, file)))
+  const buildDir = path.join(packageRoot, "build", "protobuf");
+  const requiredFiles = ["OpenApiCommonMessages.proto", "OpenApiMessages.proto"];
+
+  const hasAllProtoFiles = async (dir: string) => {
+    try {
+      await Promise.all(
+        requiredFiles.map((file) => fs.access(path.join(dir, file)))
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (await hasAllProtoFiles(sourceDir)) return;
+  if (await hasAllProtoFiles(buildDir)) return;
+
+  throw new Error(
+    "Missing ctrader-layer protobuf files in deployment output. " +
+      "Ensure Next.js output file tracing includes node_modules/@reiryoku/ctrader-layer/{protobuf,build/protobuf}/**/*."
   );
 }
 
