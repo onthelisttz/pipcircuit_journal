@@ -149,7 +149,7 @@ export abstract class BaseSyncService implements ISyncService {
   startRealtimeSync(userId: string): void {
     // Realtime sync is handled by useRealtimeSync hook in app layout
     // This method is kept for interface compatibility
-    console.log("[BaseSyncService] Realtime sync managed by useRealtimeSync hook");
+    
   }
 
   /**
@@ -158,7 +158,7 @@ export abstract class BaseSyncService implements ISyncService {
   stopRealtimeSync(): void {
     // Realtime sync is handled by useRealtimeSync hook in app layout
     // This method is kept for interface compatibility
-    console.log("[BaseSyncService] Realtime sync managed by useRealtimeSync hook");
+    
   }
 
   /**
@@ -191,7 +191,7 @@ export abstract class BaseSyncService implements ISyncService {
           multiplier: 2,
         },
         onJobComplete: (job, success) => {
-          console.log(`[SyncQueue] Job ${job.id} ${success ? "completed" : "failed"}`);
+          
         },
         onJobError: (job, error) => {
           console.error(`[SyncQueue] Job ${job.id} error:`, error);

@@ -36,6 +36,7 @@ const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
 ];
 
 const TIMEFRAMES: ChartTimeframe[] = ["M1", "M5", "M15", "H1"];
+const EDGE_FETCH_THRESHOLD = 10;
 
 const PLACEHOLDER_TRADE: Trade = {
   accountId: "",
@@ -104,8 +105,11 @@ export default function ChartPage() {
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedHeight, setExpandedHeight] = useState(640);
-  const lastFetchRef = useRef(0);
+  const lastPrevFetchRef = useRef(0);
+  const lastNextFetchRef = useRef(0);
   const fetchingPrevRef = useRef(false);
+  const fetchingNextRef = useRef(false);
+  const lastVisibleRangeRef = useRef<{ from: number; to: number } | null>(null);
   const chartRef = useRef<TradeCandlestickChartRef | null>(null);
   const symbolButtonRef = useRef<HTMLButtonElement>(null);
   const symbolMenuRef = useRef<HTMLDivElement>(null);
@@ -289,7 +293,7 @@ export default function ChartPage() {
 
   const chartEnabled = Boolean(selection && chartTrade);
 
-  const { data, isLoading, error, refetch, fetchPrevious } = useChartData({
+  const { data, isLoading, error, refetch, fetchPrevious, fetchNext } = useChartData({
     trade: chartTrade ?? PLACEHOLDER_TRADE,
     timeframe,
     accessToken,
@@ -299,30 +303,67 @@ export default function ChartPage() {
   });
 
   const handleVisibleRangeChange = useCallback(
-    (from: number, _to: number) => {
-      if (!selectedProgress || selectedProgress.status !== "completed") return;
+    (from: number, to: number) => {
       if (data.length === 0) return;
-      if (fetchingPrevRef.current) return;
 
-      const earliest = data[0]?.timestamp ?? null;
-      if (selectedProgress.firstBarDate && earliest != null) {
-        const firstTs = new Date(selectedProgress.firstBarDate).getTime();
-        if (earliest <= firstTs + 60_000) return;
-      }
+      const previousRange = lastVisibleRangeRef.current;
+      const currentCenter = (from + to) / 2;
+      const previousCenter = previousRange ? (previousRange.from + previousRange.to) / 2 : currentCenter;
+      const panDirection = Math.sign(currentCenter - previousCenter);
+      lastVisibleRangeRef.current = { from, to };
 
       const leftIndex = Math.floor(from);
-      if (leftIndex <= 10) {
+      const rightIndex = Math.ceil(to);
+      const nearLeft = leftIndex <= EDGE_FETCH_THRESHOLD;
+      const nearRight = rightIndex >= data.length - EDGE_FETCH_THRESHOLD;
+
+      let shouldFetchPrev = nearLeft;
+      let shouldFetchNext = nearRight;
+
+      // When both edges are visible (fast drags / broad zoom), fetch only in pan direction.
+      if (nearLeft && nearRight) {
+        if (panDirection < 0) {
+          shouldFetchNext = false;
+        } else if (panDirection > 0) {
+          shouldFetchPrev = false;
+        } else {
+          shouldFetchPrev = false;
+          shouldFetchNext = false;
+        }
+      }
+
+      if (shouldFetchPrev && !fetchingPrevRef.current) {
         const now = Date.now();
-        if (now - lastFetchRef.current < 800) return;
-        lastFetchRef.current = now;
-        fetchingPrevRef.current = true;
-        void fetchPrevious().finally(() => {
-          fetchingPrevRef.current = false;
-        });
+        if (now - lastPrevFetchRef.current >= 800) {
+          lastPrevFetchRef.current = now;
+          fetchingPrevRef.current = true;
+          void fetchPrevious().finally(() => {
+            fetchingPrevRef.current = false;
+          });
+        }
+      }
+
+      if (shouldFetchNext && !fetchingNextRef.current) {
+        const now = Date.now();
+        if (now - lastNextFetchRef.current >= 800) {
+          lastNextFetchRef.current = now;
+          fetchingNextRef.current = true;
+          void fetchNext().finally(() => {
+            fetchingNextRef.current = false;
+          });
+        }
       }
     },
-    [data, fetchPrevious, selectedProgress]
+    [data.length, fetchNext, fetchPrevious]
   );
+
+  useEffect(() => {
+    fetchingPrevRef.current = false;
+    fetchingNextRef.current = false;
+    lastPrevFetchRef.current = 0;
+    lastNextFetchRef.current = 0;
+    lastVisibleRangeRef.current = null;
+  }, [selection?.broker, selection?.symbol, timeframe]);
 
   const brokers = useMemo(() => {
     const map = new Map<string, typeof symbolProgress>();
@@ -552,7 +593,6 @@ export default function ChartPage() {
       </div>
     </>
   );
-
   return (
     <div className="flex min-h-0 flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">

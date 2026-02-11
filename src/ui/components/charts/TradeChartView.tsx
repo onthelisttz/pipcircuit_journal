@@ -44,6 +44,7 @@ export function TradeChartView({
     const [showMAE, setShowMAE] = useState(true);
     const [showMFE, setShowMFE] = useState(true);
     const [showRiskReward, setShowRiskReward] = useState(true);
+    const [showRiskRewardLabels, setShowRiskRewardLabels] = useState(true);
     const [isExpanded, setIsExpanded] = useState(false);
     const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
     const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -100,12 +101,12 @@ export function TradeChartView({
 
             if (from < dataLength * threshold) {
                 // User scrolled to left edge, could load more historical data
-                console.log("Near left edge - consider loading earlier data");
+                
             }
 
             if (to > dataLength * (1 - threshold)) {
                 // User scrolled to right edge, could load more recent data
-                console.log("Near right edge - consider loading later data");
+                
             }
         },
         [data.length]
@@ -135,6 +136,8 @@ export function TradeChartView({
                     onToggleMFE={() => setShowMFE((prev) => !prev)}
                     showRiskReward={showRiskReward}
                     onToggleRiskReward={() => setShowRiskReward((prev) => !prev)}
+                    showRiskRewardLabels={showRiskRewardLabels}
+                    onToggleRiskRewardLabels={() => setShowRiskRewardLabels((prev) => !prev)}
                     isExpanded={isExpanded}
                     onToggleExpand={() => setIsExpanded((prev) => !prev)}
                     disabled={isLoading}
@@ -164,6 +167,7 @@ export function TradeChartView({
                 isLoading={isLoading}
                 drawingTool={drawingTool}
                 showRiskReward={showRiskReward}
+                showRiskRewardLabels={showRiskRewardLabels}
             />
             <ProfitTimelineChart
                 ref={profitChartRef}

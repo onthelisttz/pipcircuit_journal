@@ -53,7 +53,7 @@ export class SupabaseSyncQueue {
         lastError: error || null,
       } as SyncJob);
 
-      console.log(`[SupabaseSyncQueue] Queued ${bars.length} bars for ${broker}:${symbol} retry`);
+      
     } catch (err) {
       console.error(`[SupabaseSyncQueue] Failed to queue retry:`, err);
     }
@@ -66,7 +66,7 @@ export class SupabaseSyncQueue {
     supabaseRepo: { upsertMany: (bars: ChartBar[]) => Promise<void> }
   ): Promise<{ processed: number; failed: number }> {
     if (!isOnline()) {
-      console.log(`[SupabaseSyncQueue] Offline, skipping queue processing`);
+      
       return { processed: 0, failed: 0 };
     }
 
@@ -82,7 +82,7 @@ export class SupabaseSyncQueue {
         return { processed: 0, failed: 0 };
       }
 
-      console.log(`[SupabaseSyncQueue] Processing ${pendingJobs.length} queued syncs`);
+      
 
       let processed = 0;
       let failed = 0;
@@ -153,9 +153,7 @@ export class SupabaseSyncQueue {
 
           // Success - remove from queue
           await db.sync_queue.delete(job.id!);
-          console.log(
-            `[SupabaseSyncQueue] Successfully synced ${chartBars.length} bars for ${payload.broker}:${payload.symbol}`
-          );
+          
           processed++;
 
           // Small delay between syncs

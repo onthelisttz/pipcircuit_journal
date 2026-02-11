@@ -1,4 +1,9 @@
+import type { Metadata } from "next";
 import { AccountsPageClient, AccountsTable } from "@ui/features/accounts";
+
+export const metadata: Metadata = {
+  title: "Accounts",
+};
 
 export default function AccountsPage() {
   return (

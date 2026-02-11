@@ -39,14 +39,14 @@ export class PlanBarSyncUseCase {
   ) {}
 
   async execute(params: PlanBarSyncParams): Promise<PlanBarSyncResult> {
-    console.log(`[PlanBarSync] Starting execution with ${params.analysis.length} brokers`);
+    
     const { analysis, daysBeforeFirstTrade = 14, includeCompleted = false } = params;
     const plans: SyncPlan[] = [];
     const brokers = new Set<string>();
     const symbols = new Set<string>();
 
     for (const brokerAnalysis of analysis) {
-      console.log(`[PlanBarSync] Processing broker: ${brokerAnalysis.broker} with ${brokerAnalysis.symbols.length} symbols`);
+      
       brokers.add(brokerAnalysis.broker);
 
       // Calculate sync start date (first trade - daysBeforeFirstTrade)
@@ -62,10 +62,10 @@ export class PlanBarSyncUseCase {
       // Batch create progress records for better performance
       const progressRecordsToUpsert: SymbolSyncProgress[] = [];
 
-      console.log(`[PlanBarSync] Processing ${brokerAnalysis.symbols.length} symbols for ${brokerAnalysis.broker}`);
+      
       for (let i = 0; i < brokerAnalysis.symbols.length; i++) {
         const symbol = brokerAnalysis.symbols[i];
-        console.log(`[PlanBarSync] Processing symbol ${i + 1}/${brokerAnalysis.symbols.length}: ${symbol}`);
+        
         
         try {
           symbols.add(symbol);
@@ -75,11 +75,11 @@ export class PlanBarSyncUseCase {
             brokerAnalysis.broker,
             symbol
           );
-          console.log(`[PlanBarSync] Existing record for ${symbol}:`, existing ? { id: existing.id, status: existing.status } : null);
+          
 
           // Skip if completed and includeCompleted is false
           if (existing?.status === "completed" && !includeCompleted) {
-            console.log(`[PlanBarSync] Skipping ${symbol} (already completed)`);
+            
             continue;
           }
 
@@ -99,17 +99,17 @@ export class PlanBarSyncUseCase {
           if (!existing) {
             progressRecord.firstBarDate = startDate;
             progressRecord.lastBarDate = endDate;
-            console.log(`[PlanBarSync] New record for ${symbol} with dates: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+            
           } else if (existing.status === "pending" || existing.status === "failed") {
             // Update date range for retry
             progressRecord.firstBarDate = startDate;
             progressRecord.lastBarDate = endDate;
-            console.log(`[PlanBarSync] Updating existing ${symbol} record for retry`);
+            
           }
 
           // Collect for batch upsert
           progressRecordsToUpsert.push(progressRecord);
-          console.log(`[PlanBarSync] Added ${symbol} to upsert list (total: ${progressRecordsToUpsert.length})`);
+          
 
           plans.push({
             broker: brokerAnalysis.broker,
@@ -124,35 +124,35 @@ export class PlanBarSyncUseCase {
         }
       }
       
-      console.log(`[PlanBarSync] Finished processing symbols. Total records to upsert: ${progressRecordsToUpsert.length}`);
+      
 
       // Batch upsert all progress records at once
       if (progressRecordsToUpsert.length > 0) {
-        console.log(`[PlanBarSync] Upserting ${progressRecordsToUpsert.length} progress records for ${brokerAnalysis.broker}`);
+        
         try {
           const repo = this.progressRepository as any;
           if (repo.upsertMany) {
-            console.log(`[PlanBarSync] Using batch upsertMany`);
+            
             await repo.upsertMany(progressRecordsToUpsert);
-            console.log(`[PlanBarSync] Batch upsert completed`);
+            
           } else {
-            console.log(`[PlanBarSync] Using individual upserts`);
+            
             // Fallback to individual upserts
             await Promise.all(progressRecordsToUpsert.map(record => {
-              console.log(`[PlanBarSync] Upserting ${record.broker}:${record.symbol}`);
+              
               return this.progressRepository.upsert(record);
             }));
-            console.log(`[PlanBarSync] Individual upserts completed`);
+            
           }
           
           // Verify records were created (with a small delay to ensure transaction is committed)
           await new Promise(resolve => setTimeout(resolve, 100));
-          console.log(`[PlanBarSync] Verifying ${progressRecordsToUpsert.length} records were created...`);
+          
           for (const record of progressRecordsToUpsert) {
             try {
               const verify = await this.progressRepository.getByBrokerAndSymbol(record.broker, record.symbol);
               if (verify) {
-                console.log(`[PlanBarSync] ✓ Verified: ${record.broker}:${record.symbol} exists (id: ${verify.id}, status: ${verify.status})`);
+                
               } else {
                 console.error(`[PlanBarSync] ✗ ERROR: ${record.broker}:${record.symbol} was not created!`);
               }
@@ -169,7 +169,7 @@ export class PlanBarSyncUseCase {
       }
     }
 
-    console.log(`[PlanBarSync] Execution completed: ${plans.length} plans, ${brokers.size} brokers, ${symbols.size} symbols`);
+    
     
     return {
       plans,

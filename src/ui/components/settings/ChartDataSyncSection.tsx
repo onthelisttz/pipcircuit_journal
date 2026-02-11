@@ -98,24 +98,24 @@ export function ChartDataSyncSection() {
       const accountNumber = brokerAccount?.accountNumber;
 
       // Create repositories and use case
-      console.log(`[ChartDataSync] Creating repositories and use case for ${broker}`);
+      
       const dexieChartRepo = new DexieChartBarRepository();
       const supabaseChartRepo = new SupabaseChartBarRepository(user.id);
       const api = new CTraderAPI();
       
-      console.log(`[ChartDataSync] Creating HybridSyncChartBarsUseCase`);
+      
       const syncUseCase = new HybridSyncChartBarsUseCase(
         api,
         dexieChartRepo,
         supabaseChartRepo,
         progressRepo
       );
-      console.log(`[ChartDataSync] Use case created successfully`);
+      
 
       // Sync each symbol (including completed - incremental sync from lastBarDate to now)
       for (const symbolProgress of brokerSymbols) {
         if (cancelRequestedRef.current) {
-          console.log(`[ChartDataSync] Sync cancelled by user`);
+          
           break;
         }
 
@@ -132,7 +132,7 @@ export function ChartDataSyncSection() {
             // Incremental sync: from last bar date to now (only new bars)
             fromDate = new Date(symbolProgress.lastBarDate);
             toDate = now;
-            console.log(`[ChartDataSync] Incremental sync for completed ${symbolProgress.symbol}`);
+            
           } else {
             // Full sync: from first bar date (or 14 days ago) to last bar date (or now)
             fromDate = symbolProgress.firstBarDate
@@ -143,22 +143,15 @@ export function ChartDataSyncSection() {
               : now;
           }
 
-          console.log(`[ChartDataSync] Starting sync for ${broker}:${symbolProgress.symbol}`, {
-            fromDate: fromDate.toISOString(),
-            toDate: toDate.toISOString(),
-            incremental: symbolProgress.status === "completed",
-            accountNumber,
-            hasAccessToken: !!token.accessToken,
-            tokenLength: token.accessToken?.length,
-          });
+          
 
-          console.log(`[ChartDataSync] About to call syncUseCase.execute for ${symbolProgress.symbol}`);
+          
           
           try {
           // Calculate timeout based on date range (allow 1 minute per month of data)
           const monthsDiff = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
           const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
-          console.log(`[ChartDataSync] Setting timeout to ${timeoutMs}ms for ${monthsDiff.toFixed(1)} months of data`);
+          
           
           const result = await Promise.race([
             syncUseCase.execute({
@@ -176,7 +169,7 @@ export function ChartDataSyncSection() {
             )
           ]) as Awaited<ReturnType<typeof syncUseCase.execute>>;
 
-            console.log(`[ChartDataSync] Sync completed for ${symbolProgress.symbol}:`, result);
+            
             if (!result.success && result.error?.includes("cancelled")) {
               break;
             }
@@ -205,7 +198,7 @@ export function ChartDataSyncSection() {
           const supabaseChartRepo = new SupabaseChartBarRepository(user.id);
           const queueResult = await SupabaseSyncQueue.processQueue(supabaseChartRepo);
           if (queueResult.processed > 0) {
-            console.log(`[ChartDataSync] Processed ${queueResult.processed} queued Supabase syncs`);
+            
             await refresh();
           }
         } catch (queueErr) {
@@ -270,27 +263,27 @@ export function ChartDataSyncSection() {
     try {
       // Get progress for this symbol
       const symbolProgress = await progressRepo.getByBrokerAndSymbol(broker, symbol);
-      console.log(`[ChartDataSync] Got progress for ${symbol}:`, symbolProgress);
+      
       
       // Get account for this broker
       const brokerAccount = accounts.find((acc) => acc.broker === broker);
       const accountNumber = brokerAccount?.accountNumber;
-      console.log(`[ChartDataSync] Found account for ${broker}:`, brokerAccount?.accountNumber);
+      
 
       // Create repositories and use case
-      console.log(`[ChartDataSync] Creating repositories and use case for single symbol ${symbol}`);
+      
       const dexieChartRepo = new DexieChartBarRepository();
       const supabaseChartRepo = new SupabaseChartBarRepository(user.id);
       const api = new CTraderAPI();
       
-      console.log(`[ChartDataSync] Creating HybridSyncChartBarsUseCase for ${symbol}`);
+      
       const syncUseCase = new HybridSyncChartBarsUseCase(
         api,
         dexieChartRepo,
         supabaseChartRepo,
         progressRepo
       );
-      console.log(`[ChartDataSync] Use case created successfully for ${symbol}`);
+      
 
       const now = new Date();
       let fromDate: Date;
@@ -300,7 +293,7 @@ export function ChartDataSyncSection() {
         // Incremental sync: from last bar date to now (only new bars)
         fromDate = new Date(symbolProgress.lastBarDate);
         toDate = now;
-        console.log(`[ChartDataSync] Incremental sync for completed ${symbol}`);
+        
       } else {
         // Full sync: from first bar date (or 14 days ago) to last bar date (or now)
         fromDate = symbolProgress?.firstBarDate
@@ -311,19 +304,14 @@ export function ChartDataSyncSection() {
           : now;
       }
 
-      console.log(`[ChartDataSync] Starting sync for ${broker}:${symbol}`, {
-        fromDate: fromDate.toISOString(),
-        toDate: toDate.toISOString(),
-        accountNumber,
-        hasAccessToken: !!token.accessToken,
-      });
+      
 
-      console.log(`[ChartDataSync] About to call syncUseCase.execute for ${symbol}`);
+      
       
       // Calculate timeout based on date range (allow 1 minute per month of data)
       const monthsDiff = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
       const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
-      console.log(`[ChartDataSync] Setting timeout to ${timeoutMs}ms for ${monthsDiff.toFixed(1)} months of data`);
+      
       
       const result = await Promise.race([
         syncUseCase.execute({
@@ -341,7 +329,7 @@ export function ChartDataSyncSection() {
         )
       ]) as Awaited<ReturnType<typeof syncUseCase.execute>>;
 
-      console.log(`[ChartDataSync] Sync completed for ${symbol}:`, result);
+      
 
       await refresh();
 
@@ -503,7 +491,7 @@ export function ChartDataSyncSection() {
         target.symbol,
         "M1"
       );
-      console.log(`[ChartDataSync] Deleted ${deletedLocal} bars from Dexie for ${target.symbol}`);
+      
 
       // Delete from Supabase (cloud) if online
       if (isOnline()) {
@@ -512,7 +500,7 @@ export function ChartDataSyncSection() {
           target.symbol,
           "M1"
         );
-        console.log(`[ChartDataSync] Deleted bars from Supabase for ${target.symbol}`);
+        
       }
 
       // Reset progress to pending so user can sync again
@@ -641,12 +629,7 @@ export function ChartDataSyncSection() {
         ? new Date(symbolProgress.lastBarDate)
         : new Date();
 
-      console.log(`[ChartDataSync] Continuing sync for ${broker}:${symbol}`, {
-        fromDate: fromDate.toISOString(),
-        toDate: toDate.toISOString(),
-        lastSyncTime: symbolProgress.lastSyncTime,
-        progressPercent: symbolProgress.progressPercent,
-      });
+      
 
       // Calculate timeout based on date range
       const monthsDiff = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
@@ -667,7 +650,7 @@ export function ChartDataSyncSection() {
         )
       ]) as Awaited<ReturnType<typeof syncUseCase.execute>>;
 
-      console.log(`[ChartDataSync] Continue sync completed for ${symbol}:`, result);
+      
       await refresh();
 
       // Process any Supabase sync retries

@@ -78,42 +78,34 @@ export function SyncInitializer() {
         );
 
         // Initialize sync (creates plans, doesn't execute them yet)
-        console.log(`[SyncInitializer] Calling InitializeSyncUseCase.execute...`);
+        
         const result = await initUseCase.execute({
           userId: user.id,
           forceFull: false,
         });
-        console.log(`[SyncInitializer] InitializeSyncUseCase result:`, {
-          success: result.success,
-          plans: result.plans.length,
-          brokers: result.brokers,
-          symbols: result.symbols,
-          error: result.error,
-        });
+        
 
         if (result.success && result.plans.length > 0) {
-          console.log(
-            `[SyncInitializer] Created ${result.plans.length} sync plans for ${result.brokers} brokers, ${result.symbols} symbols`
-          );
+          
 
           // Reload progress to show new plans
-          console.log(`[SyncInitializer] Refreshing progress...`);
+          
           // Add a small delay to ensure Dexie transaction is committed
           await new Promise(resolve => setTimeout(resolve, 200));
           await refresh();
-          console.log(`[SyncInitializer] Progress refreshed`);
+          
           
           // Force a second refresh after a bit more delay to ensure UI updates
           setTimeout(async () => {
-            console.log(`[SyncInitializer] Second refresh to ensure UI updates...`);
+            
             await refresh();
-            console.log(`[SyncInitializer] Second refresh completed`);
+            
           }, 500);
         } else {
           if (result.error) {
             console.error("[SyncInitializer] Sync initialization failed:", result.error);
           } else {
-            console.log(`[SyncInitializer] No sync plans needed (brokers: ${result.brokers}, symbols: ${result.symbols})`);
+            
           }
         }
 
@@ -123,9 +115,7 @@ export function SyncInitializer() {
             const supabaseRepo = new SupabaseChartBarRepository(user.id);
             const queueResult = await SupabaseSyncQueue.processQueue(supabaseRepo);
             if (queueResult.processed > 0 || queueResult.failed > 0) {
-              console.log(
-                `[SyncInitializer] Processed Supabase sync queue: ${queueResult.processed} succeeded, ${queueResult.failed} failed`
-              );
+              
             }
           } catch (error) {
             console.warn("[SyncInitializer] Failed to process Supabase sync queue:", error);
@@ -139,10 +129,10 @@ export function SyncInitializer() {
               onProgress: (step) => updateStep(step),
             });
             if (syncResult.push.success && syncResult.pull.success) {
-              console.log("[SyncInitializer] Full data sync completed");
+              
               // Refresh symbol sync progress so Chart Data Sync UI reflects restored bars
               await refresh();
-              console.log("[SyncInitializer] Progress refreshed after full data sync");
+              
             } else {
               console.warn("[SyncInitializer] Full data sync had issues:", {
                 push: syncResult.push.error,
@@ -191,7 +181,7 @@ export function SyncInitializer() {
         const supabaseRepo = new SupabaseChartBarRepository(user.id);
         const result = await SupabaseSyncQueue.processQueue(supabaseRepo);
         if (result.processed > 0) {
-          console.log(`[SyncInitializer] Processed ${result.processed} queued Supabase syncs`);
+          
         }
       } catch (error) {
         console.warn("[SyncInitializer] Error processing Supabase sync queue:", error);
@@ -248,7 +238,7 @@ export function SyncInitializer() {
         lastPushAt = Date.now();
 
         if (result.success) {
-          console.log("[SyncInitializer] Periodic auto-push completed");
+          
         } else {
           console.warn("[SyncInitializer] Periodic auto-push failed:", result.error);
         }
@@ -283,7 +273,7 @@ export function SyncInitializer() {
       }
 
       try {
-        console.log(`[SyncInitializer] Checking for stuck syncs to resume...`);
+        
         const allProgress = await progressRepo.getAll();
         
         // Find syncs that are stuck (syncing status but no recent activity)
@@ -301,11 +291,11 @@ export function SyncInitializer() {
         });
 
         if (stuckSyncs.length === 0) {
-          console.log(`[SyncInitializer] No stuck syncs found`);
+          
           return;
         }
 
-        console.log(`[SyncInitializer] Found ${stuckSyncs.length} stuck syncs, resuming...`);
+        
 
         const token = TokenStorage.getGlobal();
         if (!token) {
@@ -316,7 +306,7 @@ export function SyncInitializer() {
         // Resume each stuck sync
         for (const progress of stuckSyncs) {
           try {
-            console.log(`[SyncInitializer] Resuming stuck sync for ${progress.broker}:${progress.symbol}`);
+            
             
             const dexieChartRepo = new DexieChartBarRepository();
             const supabaseChartRepo = new SupabaseChartBarRepository(user.id);
@@ -367,12 +357,11 @@ export function SyncInitializer() {
     const unsubscribe = onConnectionChange((online) => {
       if (online && user?.id) {
         // Network reconnected, check for stuck syncs
-        console.log(`[SyncInitializer] Network reconnected, checking for stuck syncs...`);
+        
         void resumeStuckSyncs();
         // Push local data changes to cloud when back online
         void new FullSyncService(user.id).pushToSupabase().then((r) => {
-          if (r.success) console.log("[SyncInitializer] Reconnect sync push completed");
-          else console.warn("[SyncInitializer] Reconnect sync push failed:", r.error);
+          if (!r.success) console.warn("[SyncInitializer] Reconnect sync push failed:", r.error);
         });
       }
     });

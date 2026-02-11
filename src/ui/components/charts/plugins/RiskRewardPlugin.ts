@@ -181,11 +181,10 @@ class RiskRewardPaneRenderer implements IPrimitivePaneRenderer {
 
         // --- Draw zones (Y increases downward, higher price = smaller Y) ---
 
-        // Risk Zone - Red (below entry for Buy, above entry for Sell). 
-        // Only draw when there's a risk label (explicit SL or MAE for open trades).
-        // For closed trades without explicit SL, riskLabel will be undefined, so no risk zone is drawn.
+        // Risk Zone - Red (below entry for Buy, above entry for Sell).
+        // The zone is geometry-driven, independent from label visibility.
         const riskHeight = this._isBuy ? slY - entryY : entryY - slY;
-        if (this._labels.riskLabel && riskHeight > 1) {
+        if (riskHeight > 1) {
             target.save();
             target.fillStyle = 'rgba(185, 28, 28, 0.25)';
             if (this._isBuy) {

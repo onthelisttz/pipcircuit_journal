@@ -67,16 +67,10 @@ export class SyncChartBarsForSymbolUseCase {
       shouldCancel,
     } = params;
 
-    console.log(`[SyncChartBars] Starting sync execution for ${broker}:${symbol}`, {
-      userId,
-      fromDate: fromDate.toISOString(),
-      toDate: toDate.toISOString(),
-      accountNumber,
-      hasAccessToken: !!accessToken,
-    });
+    
 
     // Update status to syncing with timeout protection
-    console.log(`[SyncChartBars] About to update status to syncing for ${symbol}`);
+    
     try {
       await Promise.race([
         this.progressRepo.updateStatus(broker, symbol, "syncing" as SymbolSyncStatus),
@@ -84,11 +78,11 @@ export class SyncChartBarsForSymbolUseCase {
           setTimeout(() => reject(new Error("updateStatus timeout after 5 seconds")), 5000)
         )
       ]);
-      console.log(`[SyncChartBars] Status updated to syncing for ${symbol}`);
+      
     } catch (statusError) {
       console.error(`[SyncChartBars] Failed to update status to syncing:`, statusError);
       // Continue anyway - the sync can proceed even if status update fails
-      console.log(`[SyncChartBars] Continuing sync despite status update failure`);
+      
     }
 
     try {
@@ -96,7 +90,7 @@ export class SyncChartBarsForSymbolUseCase {
       const totalDays = Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24));
       const totalChunks = Math.ceil(totalDays / chunkDays);
       
-      console.log(`[SyncChartBars] Calculated ${totalChunks} chunks for ${totalDays} days`);
+      
 
       let totalBars = 0;
       let barsSynced = 0;
@@ -137,7 +131,7 @@ export class SyncChartBarsForSymbolUseCase {
         const chunkTo = chunkEnd.getTime();
 
         try {
-          console.log(`[SyncChartBars] Fetching bars for ${symbol} from ${new Date(chunkFrom).toISOString()} to ${new Date(chunkTo).toISOString()}`);
+          
           
           // Fetch bars from cTrader API (M1 only)
           const apiBars = await this.api.getBars(
@@ -149,14 +143,14 @@ export class SyncChartBarsForSymbolUseCase {
             accountNumber
           );
 
-          console.log(`[SyncChartBars] Received ${apiBars.length} bars for ${symbol} chunk ${chunk + 1}/${totalChunks}`);
+          
 
           if (apiBars.length === 0) {
             chunksProcessed++;
             continue;
           }
 
-          console.log(`[SyncChartBars] Converting ${apiBars.length} bars to domain format...`);
+          
           // Convert to domain bars and add broker field
           const chartBars: ChartBar[] = apiBars.map((bar) => {
             const domainBar = CTraderMapper.toChartBar(bar);
@@ -166,10 +160,10 @@ export class SyncChartBarsForSymbolUseCase {
               syncedAt: new Date(), // Mark as synced
             };
           });
-          console.log(`[SyncChartBars] Converted ${chartBars.length} bars`);
+          
 
           // Update first/last bar dates
-          console.log(`[SyncChartBars] Sorting bars and updating date ranges...`);
+          
           const sortedBars = chartBars.sort((a, b) => a.timestamp - b.timestamp);
           if (sortedBars.length > 0) {
             const chunkFirstDate = new Date(sortedBars[0].timestamp);
@@ -182,25 +176,25 @@ export class SyncChartBarsForSymbolUseCase {
               lastBarDate = chunkLastDate;
             }
           }
-          console.log(`[SyncChartBars] Date ranges updated`);
+          
 
           // Store in Dexie (always)
-          console.log(`[SyncChartBars] Storing ${chartBars.length} bars in Dexie...`);
+          
           await this.dexieChartBarRepo.upsertMany(chartBars);
-          console.log(`[SyncChartBars] Bars stored in Dexie`);
+          
 
           // Sync to Supabase if online
           if (isOnline()) {
             try {
-              console.log(`[SyncChartBars] Syncing ${chartBars.length} bars to Supabase...`);
+              
               await this.supabaseChartBarRepo.upsertMany(chartBars);
-              console.log(`[SyncChartBars] Bars synced to Supabase`);
+              
             } catch (error) {
               console.warn(`[SyncChartBars] Failed to sync to Supabase (continuing with local):`, error);
               // Continue even if Supabase sync fails
             }
           } else {
-            console.log(`[SyncChartBars] Offline, skipping Supabase sync`);
+            
           }
 
           totalBars += chartBars.length;
@@ -210,10 +204,10 @@ export class SyncChartBarsForSymbolUseCase {
           // Update progress
           const progressPercent = Math.round((chunksProcessed / totalChunks) * 100);
           
-          console.log(`[SyncChartBars] Updating progress: ${progressPercent}% (${chunksProcessed}/${totalChunks} chunks)`);
+          
           // Get current progress record
           const currentProgress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
-          console.log(`[SyncChartBars] Got current progress record:`, currentProgress ? { id: currentProgress.id, status: currentProgress.status } : null);
+          
           const updatedProgress: SymbolSyncProgress = {
             broker,
             symbol,
@@ -227,19 +221,19 @@ export class SyncChartBarsForSymbolUseCase {
             ...currentProgress,
           };
           
-          console.log(`[SyncChartBars] Calling updateProgress...`);
+          
           await this.progressRepo.updateProgress(broker, symbol, {
             totalBars,
             firstBarDate,
             lastBarDate,
             progressPercent,
           });
-          console.log(`[SyncChartBars] updateProgress completed`);
+          
 
           // Emit progress event for store updates
-          console.log(`[SyncChartBars] Emitting progress event...`);
+          
           progressEventEmitter.emit(updatedProgress);
-          console.log(`[SyncChartBars] Progress event emitted`);
+          
 
           // Notify progress callback
           onProgress?.({

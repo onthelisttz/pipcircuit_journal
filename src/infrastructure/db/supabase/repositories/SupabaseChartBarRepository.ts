@@ -96,7 +96,7 @@ export class SupabaseChartBarRepository implements IChartBarRepository {
       batches.push(bars.slice(i, i + BATCH_SIZE));
     }
     
-    console.log(`[SupabaseChartRepo] Processing ${bars.length} bars in ${batches.length} batches of ${BATCH_SIZE}`);
+    
     
     const supabase = getSupabaseClient();
     
@@ -104,7 +104,7 @@ export class SupabaseChartBarRepository implements IChartBarRepository {
       const batch = batches[i];
       const supabaseBars = batch.map((bar) => toSupabaseBar(bar, this.userId));
       
-      console.log(`[SupabaseChartRepo] Syncing batch ${i + 1}/${batches.length} (${batch.length} bars)`);
+      
       
       // Use upsert with onConflict to handle duplicates
       const { error } = await supabase
@@ -119,10 +119,10 @@ export class SupabaseChartBarRepository implements IChartBarRepository {
         throw new Error(`Failed to upsert chart bars (batch ${i + 1}/${batches.length}): ${error.message}`);
       }
       
-      console.log(`[SupabaseChartRepo] Batch ${i + 1}/${batches.length} synced successfully`);
+      
     }
     
-    console.log(`[SupabaseChartRepo] All ${bars.length} bars synced successfully`);
+    
   }
 
   /**

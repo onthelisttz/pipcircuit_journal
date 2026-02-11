@@ -13,6 +13,7 @@ import {
     ChevronRight,
 } from "lucide-react";
 import { useState } from "react";
+import { AppLogo } from "./AppLogo";
 
 /**
  * Navigation items for the sidebar
@@ -71,34 +72,20 @@ export function Sidebar({ className }: { className?: string }) {
       `}
         >
             {/* Logo/Brand */}
-            <div className="flex items-center h-16 px-4 border-b border-sidebar-border">
+            <div
+                className={`flex h-16 items-center border-b border-sidebar-border ${
+                    collapsed ? "px-2" : "px-3"
+                }`}
+            >
                 <Link
                     href="/dashboard"
-                    className="flex items-center justify-center flex-1 text-sidebar-foreground hover:text-sidebar-primary"
+                    className={`flex min-w-0 flex-1 items-center text-sidebar-foreground hover:text-sidebar-primary ${
+                        "justify-center"
+                    }`}
                     aria-label="Go to dashboard"
                 >
-                    {!collapsed && (
-                        <span className="text-lg font-semibold">
-                            pipCircuit
-                        </span>
-                    )}
-                    {collapsed && (
-                        <span className="text-lg font-bold text-sidebar-primary mx-auto">
-                            PC
-                        </span>
-                    )}
+                    <AppLogo collapsed={collapsed} />
                 </Link>
-                <button
-                    onClick={() => setCollapsed(!collapsed)}
-                    className="ml-auto hidden md:inline-flex items-center justify-center rounded-lg p-2 text-sidebar-foreground hover:bg-sidebar-accent/50"
-                    aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                >
-                    {collapsed ? (
-                        <ChevronRight className="w-4 h-4" />
-                    ) : (
-                        <ChevronLeft className="w-4 h-4" />
-                    )}
-                </button>
             </div>
 
             {/* Navigation */}
@@ -135,11 +122,11 @@ export function Sidebar({ className }: { className?: string }) {
             </nav>
 
             {/* Collapse Toggle */}
-            <div className="p-2 border-t border-sidebar-border md:hidden">
+            <div className="p-2 border-t border-sidebar-border">
                 <button
                     onClick={() => setCollapsed(!collapsed)}
                     className="
-            w-full flex items-center justify-center p-2 rounded-lg
+            mx-auto flex h-8 w-8 items-center justify-center rounded-lg
             text-sidebar-foreground hover:bg-sidebar-accent/50
             transition-colors duration-150
           "

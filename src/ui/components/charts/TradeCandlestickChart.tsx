@@ -44,6 +44,8 @@ export interface TradeCandlestickChartProps {
     drawingTool?: DrawingToolType | null;
     /** Show automatic risk/reward zones from trade data */
     showRiskReward?: boolean;
+    /** Show risk/reward text labels (e.g. +$7.00 / -$9.00) */
+    showRiskRewardLabels?: boolean;
     /** Auto-fit/scroll when data updates */
     autoScrollOnData?: boolean;
 }
@@ -68,6 +70,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     isLoading = false,
     drawingTool = null,
     showRiskReward = true,
+    showRiskRewardLabels = true,
     autoScrollOnData = true,
 }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -78,11 +81,39 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const exitLineRef = useRef<IPriceLine | null>(null);
     const [isChartReady, setIsChartReady] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
-    const prevVisibleRangeRef = useRef<{ from: number; to: number } | null>(null);
-    const prevFirstTsRef = useRef<number | null>(null);
+    const onVisibleRangeChangeRef = useRef<typeof onVisibleRangeChange>(onVisibleRangeChange);
+    const prevBarsRef = useRef<ChartBar[]>([]);
+    const suppressVisibleRangeUntilRef = useRef(0);
 
     const riskRewardPluginRef = useRef<RiskRewardPlugin | null>(null);
     const lineToolsRef = useRef<ReturnType<typeof createLineToolsPlugin> | null>(null);
+
+    useEffect(() => {
+        onVisibleRangeChangeRef.current = onVisibleRangeChange;
+    }, [onVisibleRangeChange]);
+
+    const findNearestIndexByTimestamp = useCallback((bars: ChartBar[], timestamp: number): number => {
+        if (bars.length === 0) return 0;
+
+        let low = 0;
+        let high = bars.length - 1;
+        while (low <= high) {
+            const mid = Math.floor((low + high) / 2);
+            const midTs = bars[mid].timestamp;
+            if (midTs === timestamp) return mid;
+            if (midTs < timestamp) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        const leftIndex = Math.max(0, high);
+        const rightIndex = Math.min(bars.length - 1, low);
+        return Math.abs(bars[leftIndex].timestamp - timestamp) <= Math.abs(bars[rightIndex].timestamp - timestamp)
+            ? leftIndex
+            : rightIndex;
+    }, []);
 
     // Convert ChartBar data to Lightweight Charts format (sorted, deduplicated by time)
     const formatData = useCallback((bars: ChartBar[]): CandlestickData<Time>[] => {
@@ -238,18 +269,21 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         window.addEventListener("resize", handleResize);
 
-        if (onVisibleRangeChange) {
-            chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-                if (range && range.from !== undefined && range.to !== undefined) {
-                    onVisibleRangeChange(range.from, range.to);
-                }
-            });
-        }
+        const handleVisibleRange = (range: { from: number; to: number } | null) => {
+            if (Date.now() < suppressVisibleRangeUntilRef.current) return;
+            const callback = onVisibleRangeChangeRef.current;
+            if (!callback) return;
+            if (range && range.from !== undefined && range.to !== undefined) {
+                callback(range.from, range.to);
+            }
+        };
+        chart.timeScale().subscribeVisibleLogicalRangeChange(handleVisibleRange);
 
         return () => {
             lineToolsRef.current?.removeAllLineTools();
             lineToolsRef.current = null;
             window.removeEventListener("resize", handleResize);
+            chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRange);
             entryLineRef.current = null;
             stopLossLineRef.current = null;
             exitLineRef.current = null;
@@ -259,7 +293,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             seriesRef.current = null;
             setIsChartReady(false);
         };
-    }, [height, onVisibleRangeChange]);
+    }, [height]);
 
     useEffect(() => {
         if (!lineToolsRef.current || !drawingTool) return;
@@ -411,47 +445,54 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         if (!seriesRef.current || !isChartReady || data.length === 0) return;
 
         const timeScale = chartRef.current?.timeScale();
-        if (!autoScrollOnData && timeScale) {
-            const visibleRange = timeScale.getVisibleLogicalRange();
-            prevVisibleRangeRef.current = visibleRange ? { ...visibleRange } : null;
-        }
+        const previousBars = prevBarsRef.current;
+        const currentRange = !autoScrollOnData && timeScale ? timeScale.getVisibleLogicalRange() : null;
 
         const formattedData = formatData(data);
         seriesRef.current.setData(formattedData);
 
         if (!autoScrollOnData) {
-            if (timeScale && prevVisibleRangeRef.current && data.length > 0) {
-                const prevFirst = prevFirstTsRef.current;
-                const newFirst = data[0]?.timestamp ?? null;
-                let prependCount = 0;
-
-                if (prevFirst != null && newFirst != null && newFirst < prevFirst) {
-                    const idx = data.findIndex((bar) => bar.timestamp === prevFirst);
-                    if (idx > 0) prependCount = idx;
+            if (timeScale && currentRange && previousBars.length > 0) {
+                const newIndexByTimestamp = new Map<number, number>();
+                for (let i = 0; i < data.length; i += 1) {
+                    newIndexByTimestamp.set(data[i].timestamp, i);
                 }
 
-                const range = prevVisibleRangeRef.current;
-                const nextRange = {
-                    from: range.from + prependCount,
-                    to: range.to + prependCount,
-                };
-                requestAnimationFrame(() => {
-                    timeScale.setVisibleLogicalRange(nextRange);
-                });
+                const centerLogical = (currentRange.from + currentRange.to) / 2;
+                const anchorOldIndex = Math.max(0, Math.min(previousBars.length - 1, Math.round(centerLogical)));
+                const anchorTimestamp = previousBars[anchorOldIndex]?.timestamp;
+                if (anchorTimestamp != null) {
+                    const anchorNewIndex =
+                        newIndexByTimestamp.get(anchorTimestamp) ?? findNearestIndexByTimestamp(data, anchorTimestamp);
+                    const delta = anchorNewIndex - anchorOldIndex;
+                    if (delta !== 0 && Math.abs(delta) < data.length) {
+                        suppressVisibleRangeUntilRef.current = Date.now() + 120;
+                        requestAnimationFrame(() => {
+                            timeScale.setVisibleLogicalRange({
+                                from: currentRange.from + delta,
+                                to: currentRange.to + delta,
+                            });
+                        });
+                    }
+                }
             }
-            prevFirstTsRef.current = data[0]?.timestamp ?? null;
+            prevBarsRef.current = data;
             return;
         }
 
         // Auto-scroll to trade location after data loads
         if (trade) {
             // Small delay to ensure chart has rendered
-            setTimeout(() => scrollToTrade(), 50);
+            setTimeout(() => {
+                suppressVisibleRangeUntilRef.current = Date.now() + 120;
+                scrollToTrade();
+            }, 50);
         } else {
+            suppressVisibleRangeUntilRef.current = Date.now() + 120;
             chartRef.current?.timeScale().fitContent();
         }
-        prevFirstTsRef.current = data[0]?.timestamp ?? null;
-    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData]);
+        prevBarsRef.current = data;
+    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, findNearestIndexByTimestamp]);
 
     // Manage R:R Visualization (Plugin + Price Lines) with Adaptive Scaling
     useEffect(() => {
@@ -521,7 +562,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 if (stopLoss != null) stopLoss = stopLoss * multiplier;
                 // Do NOT scale maePrice - it comes from bars, already in chart scale
 
-                console.log(`[TradeChart] Scaling Mismatch Detected. Ratio: ${ratio.toFixed(2)}, Applied Multiplier: ${multiplier}`);
+                
             }
         }
 
@@ -591,7 +632,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         // Show risk label for:
         // - trades with explicit SL (both wins and losses), or
         // - MAE-based risk only when allowed by useMae (winning or open trades)
-        if (showRiskZone && rawEntry != null && rawRiskPrice != null) {
+        if (showRiskRewardLabels && showRiskZone && rawEntry != null && rawRiskPrice != null) {
             const riskDollar = estimateGrossProfit(rawEntry, rawRiskPrice, lots, direction, symbol);
             if (Number.isFinite(riskDollar) && Math.abs(riskDollar) < 1_000_000) {
                 const sign = riskDollar >= 0 ? "+" : "";
@@ -600,7 +641,9 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         }
 
         let rewardLabel: string | undefined;
-        if (actualProfit != null && Number.isFinite(actualProfit) && Math.abs(actualProfit) < 1_000_000) {
+        if (!showRiskRewardLabels) {
+            rewardLabel = undefined;
+        } else if (actualProfit != null && Number.isFinite(actualProfit) && Math.abs(actualProfit) < 1_000_000) {
             const sign = actualProfit >= 0 ? "+" : "";
             rewardLabel = `${sign}$${actualProfit.toFixed(2)}`;
         } else if (rawEntry != null && rawReward != null) {
@@ -613,7 +656,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         const netProfit = trade.netProfit ?? trade.grossProfit;
         const profitLabel =
-            netProfit != null && Number.isFinite(netProfit)
+            showRiskRewardLabels && netProfit != null && Number.isFinite(netProfit)
                 ? `${netProfit >= 0 ? "+" : ""}$${netProfit.toFixed(2)}`
                 : undefined;
 
@@ -665,7 +708,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             series.detachPrimitive(riskRewardPluginRef.current);
             riskRewardPluginRef.current = null;
         }
-    }, [data, isChartReady, trade, showRiskReward]);
+    }, [data, isChartReady, trade, showRiskReward, showRiskRewardLabels]);
 
     return (
         <div

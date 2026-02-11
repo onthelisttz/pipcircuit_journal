@@ -49,14 +49,14 @@ export function useRealtimeSync() {
         onChartBarDelete: async (barId: number) => {
           // Note: Dexie doesn't have deleteById, would need to query first
           // For now, we'll rely on upsert to handle updates
-          console.log("[Realtime] Chart bar deleted:", barId);
+          
         },
         onProgressUpdate: async (progress: SymbolSyncProgress) => {
           // Update progress in Dexie
           await progressRepoRef.current.upsert(progress);
         },
         onConnectionChange: (connected: boolean) => {
-          console.log("[Realtime] Connection status:", connected ? "connected" : "disconnected");
+          
         },
       })
       .catch((error) => {

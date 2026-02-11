@@ -13,13 +13,7 @@ export class CTraderHistoryClient {
     to: number,
     accountNumber?: string
   ): Promise<CTraderBarRecord[]> {
-    console.log(`[CTraderHistoryClient] Making API request for ${symbol}`, {
-      timeframe,
-      from: new Date(from).toISOString(),
-      to: new Date(to).toISOString(),
-      accountNumber,
-      hasAccessToken: !!accessToken,
-    });
+    
 
     try {
       const response = await fetch("/api/ctrader/bars", {
@@ -35,7 +29,7 @@ export class CTraderHistoryClient {
         }),
       });
 
-      console.log(`[CTraderHistoryClient] Response status: ${response.status} for ${symbol}`);
+      
 
       const data = (await response.json()) as { bars?: CTraderBarRecord[]; error?: string };
       
@@ -45,7 +39,7 @@ export class CTraderHistoryClient {
         throw new Error(msg);
       }
 
-      console.log(`[CTraderHistoryClient] Received ${data.bars?.length ?? 0} bars for ${symbol}`);
+      
       return data.bars ?? [];
     } catch (error) {
       console.error(`[CTraderHistoryClient] Fetch error for ${symbol}:`, error);

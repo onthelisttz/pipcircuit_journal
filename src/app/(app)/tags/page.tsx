@@ -1,4 +1,9 @@
+import type { Metadata } from "next";
 import { TagsTable } from "@ui/features/tags";
+
+export const metadata: Metadata = {
+  title: "Tags",
+};
 
 export default function TagsPage() {
   return (

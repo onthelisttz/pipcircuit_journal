@@ -89,7 +89,7 @@ function TradeCard({
     <button
       type="button"
       onClick={onClick}
-      className="block w-full text-left rounded-lg border p-3 hover:bg-accent/50 transition-colors"
+      className="block w-full rounded-xl border border-border bg-card p-3 text-left hover:bg-accent/50 transition-colors"
     >
       {content}
     </button>

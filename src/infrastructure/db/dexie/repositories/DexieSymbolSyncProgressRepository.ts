@@ -8,12 +8,12 @@ export class DexieSymbolSyncProgressRepository implements ISymbolSyncProgressRep
     symbol: string
   ): Promise<SymbolSyncProgress | null> {
     try {
-      console.log(`[DexieProgressRepo] getByBrokerAndSymbol called for ${broker}:${symbol}`);
+      
       const result = await db.symbol_sync_progress
         .where("[broker+symbol]")
         .equals([broker, symbol])
         .first();
-      console.log(`[DexieProgressRepo] getByBrokerAndSymbol result:`, result ? { id: result.id, status: result.status } : null);
+      
       return result ?? null;
     } catch (err) {
       console.error(`[DexieProgressRepo] Error in getByBrokerAndSymbol for ${broker}:${symbol}:`, err);
@@ -27,9 +27,9 @@ export class DexieSymbolSyncProgressRepository implements ISymbolSyncProgressRep
 
   async getAll(): Promise<SymbolSyncProgress[]> {
     try {
-      console.log(`[DexieProgressRepo] getAll called`);
+      
       const all = await db.symbol_sync_progress.toArray();
-      console.log(`[DexieProgressRepo] getAll returned ${all.length} records`);
+      
       return all;
     } catch (err) {
       console.error(`[DexieProgressRepo] Error in getAll:`, err);
@@ -55,7 +55,7 @@ export class DexieSymbolSyncProgressRepository implements ISymbolSyncProgressRep
   }
 
   async upsertMany(progresses: SymbolSyncProgress[]): Promise<void> {
-    console.log(`[DexieProgressRepo] upsertMany called with ${progresses.length} records`);
+    
     try {
       // Use transaction for batch operations
       await db.transaction("rw", db.symbol_sync_progress, async (tx) => {
@@ -68,18 +68,12 @@ export class DexieSymbolSyncProgressRepository implements ISymbolSyncProgressRep
               .first();
             
             if (existing?.id) {
-              console.log(`[DexieProgressRepo] Updating existing record ${existing.id} for ${progress.broker}:${progress.symbol}`);
+              
               await tx.symbol_sync_progress.update(existing.id, progress);
             } else {
-              console.log(`[DexieProgressRepo] Adding new record for ${progress.broker}:${progress.symbol}`, {
-                broker: progress.broker,
-                symbol: progress.symbol,
-                status: progress.status,
-                firstBarDate: progress.firstBarDate,
-                lastBarDate: progress.lastBarDate,
-              });
+              
               const id = await tx.symbol_sync_progress.add(progress);
-              console.log(`[DexieProgressRepo] Added record with id: ${id} for ${progress.broker}:${progress.symbol}`);
+              
             }
           } catch (err) {
             console.error(`[DexieProgressRepo] Error upserting ${progress.broker}:${progress.symbol}:`, err);
@@ -87,7 +81,7 @@ export class DexieSymbolSyncProgressRepository implements ISymbolSyncProgressRep
           }
         }
       });
-      console.log(`[DexieProgressRepo] upsertMany completed successfully for ${progresses.length} records`);
+      
     } catch (err) {
       console.error(`[DexieProgressRepo] upsertMany failed:`, err);
       throw err;
@@ -100,7 +94,7 @@ export class DexieSymbolSyncProgressRepository implements ISymbolSyncProgressRep
     status: SymbolSyncStatus,
     error?: string | null
   ): Promise<void> {
-    console.log(`[DexieProgressRepo] updateStatus called for ${broker}:${symbol}`, { status, error });
+    
     try {
       // Use a transaction to ensure atomicity and avoid locks
       await db.transaction("rw", db.symbol_sync_progress, async () => {
@@ -109,10 +103,10 @@ export class DexieSymbolSyncProgressRepository implements ISymbolSyncProgressRep
           .equals([broker, symbol])
           .first();
         
-        console.log(`[DexieProgressRepo] Found existing record:`, existing ? { id: existing.id, currentStatus: existing.status } : null);
+        
         
         if (existing?.id) {
-          console.log(`[DexieProgressRepo] Updating record ${existing.id} with status ${status}`);
+          
           const updateData: Partial<SymbolSyncProgress> = {
             status,
             error: error ?? null,
@@ -123,7 +117,7 @@ export class DexieSymbolSyncProgressRepository implements ISymbolSyncProgressRep
           }
           
           await db.symbol_sync_progress.update(existing.id, updateData);
-          console.log(`[DexieProgressRepo] Update completed for ${broker}:${symbol}`);
+          
         } else {
           console.warn(`[DexieProgressRepo] No existing record found for ${broker}:${symbol}, cannot update status`);
         }
@@ -139,7 +133,7 @@ export class DexieSymbolSyncProgressRepository implements ISymbolSyncProgressRep
     symbol: string,
     updates: Partial<SymbolSyncProgress>
   ): Promise<void> {
-    console.log(`[DexieProgressRepo] updateProgress called for ${broker}:${symbol}`, updates);
+    
     try {
       await db.transaction("rw", db.symbol_sync_progress, async () => {
         const existing = await db.symbol_sync_progress
@@ -147,15 +141,15 @@ export class DexieSymbolSyncProgressRepository implements ISymbolSyncProgressRep
           .equals([broker, symbol])
           .first();
         
-        console.log(`[DexieProgressRepo] Found existing record for updateProgress:`, existing ? { id: existing.id } : null);
+        
         
         if (existing?.id) {
-          console.log(`[DexieProgressRepo] Updating progress record ${existing.id}`);
+          
           await db.symbol_sync_progress.update(existing.id, updates);
-          console.log(`[DexieProgressRepo] Progress update completed`);
+          
         } else {
           // Create new record if it doesn't exist
-          console.log(`[DexieProgressRepo] Creating new progress record`);
+          
           await db.symbol_sync_progress.add({
             broker,
             symbol,
@@ -166,7 +160,7 @@ export class DexieSymbolSyncProgressRepository implements ISymbolSyncProgressRep
             lastSyncTime: null,
             ...updates,
           });
-          console.log(`[DexieProgressRepo] New progress record created`);
+          
         }
       });
     } catch (err) {

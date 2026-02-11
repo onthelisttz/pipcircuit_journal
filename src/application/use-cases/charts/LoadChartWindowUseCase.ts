@@ -1,6 +1,7 @@
 import type { IChartBarRepository } from "@application/ports/repositories";
 import type { ICTraderAPI } from "@application/ports/services";
 import type { ChartBar, ChartTimeframe, Trade } from "@domain/entities";
+import { CTraderMapper } from "@infrastructure/api/ctrader/CTraderMapper";
 import { isOnline } from "@infrastructure/sync/utils/connection";
 
 const MIN_BARS_FOR_CHART = 200;
@@ -158,12 +159,13 @@ export class LoadChartWindowUseCase {
                     to,
                     params.trade.accountId
                 );
+                const normalizedApiBars = apiBars.map((bar) => CTraderMapper.toChartBar(bar));
 
                 // Store in Dexie first (offline-first)
-                if (apiBars.length > 0) {
+                if (normalizedApiBars.length > 0) {
                     const barsWithBroker = params.broker
-                        ? apiBars.map((bar) => ({ ...bar, broker: params.broker }))
-                        : apiBars;
+                        ? normalizedApiBars.map((bar) => ({ ...bar, broker: params.broker }))
+                        : normalizedApiBars;
                     await this.chartBarRepository.upsertMany(barsWithBroker);
 
                     // Sync to Supabase if available and online
@@ -177,7 +179,7 @@ export class LoadChartWindowUseCase {
                 }
 
                 return {
-                    bars: apiBars.sort((a, b) => a.timestamp - b.timestamp),
+                    bars: normalizedApiBars.sort((a, b) => a.timestamp - b.timestamp),
                     fromCache: false,
                     windowStart: from,
                     windowEnd: to,

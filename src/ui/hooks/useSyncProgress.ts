@@ -45,16 +45,16 @@ export function useSyncProgress(options: UseSyncProgressOptions = {}) {
   // Load initial progress from repository (only once on mount)
   useEffect(() => {
     if (autoLoad && repository) {
-      console.log(`[useSyncProgress] Loading progress from repository...`);
+      
       let cancelled = false;
       
       repository
         .getAll()
         .then((progresses) => {
           if (cancelled) return;
-          console.log(`[useSyncProgress] Loaded ${progresses.length} progress records`);
+          
           loadProgress(progresses);
-          console.log(`[useSyncProgress] Progress loaded into store`);
+          
         })
         .catch((error) => {
           if (cancelled) return;
@@ -105,11 +105,11 @@ export function useSyncProgress(options: UseSyncProgressOptions = {}) {
   const refreshProgress = useCallback(async () => {
     if (repository) {
       try {
-        console.log(`[useSyncProgress] Refreshing progress from repository...`);
+        
         const progresses = await repository.getAll();
-        console.log(`[useSyncProgress] Refreshed ${progresses.length} progress records`);
+        
         loadProgress(progresses);
-        console.log(`[useSyncProgress] Progress refreshed in store`);
+        
       } catch (error) {
         console.error("[useSyncProgress] Failed to refresh sync progress:", error);
       }

@@ -56,13 +56,13 @@ export class InitializeSyncUseCase {
       }
 
       // 2. Create sync plans
-      console.log(`[InitializeSync] Creating sync plans for ${analysis.brokers.length} brokers`);
+      
       const planResult = await this.planUseCase.execute({
         analysis: analysis.brokers,
         daysBeforeFirstTrade: 14,
         includeCompleted: forceFull,
       });
-      console.log(`[InitializeSync] Created ${planResult.plans.length} sync plans`);
+      
 
       return {
         success: true,

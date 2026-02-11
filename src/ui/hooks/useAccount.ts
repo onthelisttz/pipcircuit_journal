@@ -31,7 +31,7 @@ export function useAccount() {
   const syncFromCTrader = useCallback(async () => {
     // Prevent concurrent syncs
     if (syncInProgress) {
-      console.log("[useAccount] Sync already in progress, skipping...");
+      
       return;
     }
 

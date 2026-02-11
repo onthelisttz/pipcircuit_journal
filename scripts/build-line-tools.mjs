@@ -17,10 +17,10 @@ for (const pkg of PKGS) {
   const pkgPath = join(root, pkg);
   const distPath = join(pkgPath, "dist");
   if (existsSync(distPath)) {
-    console.log(`[skip] ${pkg} already has dist`);
+    
     continue;
   }
-  console.log(`Building ${pkg}...`);
+  
   try {
     // Use root-installed tooling and avoid local installs that shadow built deps.
     execSync("bunx rollup -c", {
@@ -32,4 +32,4 @@ for (const pkg of PKGS) {
     process.exit(1);
   }
 }
-console.log("Line tools build complete.");
+

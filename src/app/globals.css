@@ -119,6 +119,17 @@
   * {
     @apply border-border outline-ring/50;
   }
+
+  button,
+  [type="button"],
+  [type="reset"],
+  [type="submit"] {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 0;
+    background: transparent;
+  }
+
   body {
     @apply bg-background text-foreground;
   }

@@ -73,17 +73,11 @@ export class HybridSyncChartBarsUseCase {
       shouldCancel,
     } = params;
 
-    console.log(`[HybridSync] Starting hybrid sync for ${broker}:${symbol}`, {
-      userId,
-      fromDate: fromDate.toISOString(),
-      toDate: toDate.toISOString(),
-      accountNumber,
-      forceFullSync,
-    });
+    
 
     try {
       // Step 1: Check Dexie first (local)
-      console.log(`[HybridSync] Step 1: Checking Dexie for existing bars...`);
+      
       const dexieBars = await this.dexieChartBarRepo.getByWindow(
         symbol,
         "M1",
@@ -93,7 +87,7 @@ export class HybridSyncChartBarsUseCase {
       );
 
       if (dexieBars.length > 0 && !forceFullSync) {
-        console.log(`[HybridSync] Found ${dexieBars.length} bars in Dexie, using local data`);
+        
         
         // Check if we need incremental update (check last sync timestamp)
         const progress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
@@ -102,7 +96,7 @@ export class HybridSyncChartBarsUseCase {
           : false;
 
         if (!needsIncrementalUpdate) {
-          console.log(`[HybridSync] Dexie has complete data, no sync needed`);
+          
           return {
             success: true,
             totalBars: dexieBars.length,
@@ -113,7 +107,7 @@ export class HybridSyncChartBarsUseCase {
         }
 
         // Need incremental update - fetch only new data from cTrader
-        console.log(`[HybridSync] Dexie has data but needs incremental update`);
+        
         const lastSyncTime = progress?.lastSyncTime ? new Date(progress.lastSyncTime) : fromDate;
         return await this.syncFromCTrader(
           {
@@ -126,7 +120,7 @@ export class HybridSyncChartBarsUseCase {
 
       // Step 2: Dexie is empty, check Supabase
       if (isOnline() && !forceFullSync) {
-        console.log(`[HybridSync] Step 2: Dexie empty, checking Supabase...`);
+        
         try {
           const supabaseBars = await this.supabaseChartBarRepo.getByWindow(
             symbol,
@@ -137,11 +131,11 @@ export class HybridSyncChartBarsUseCase {
           );
 
           if (supabaseBars.length > 0) {
-            console.log(`[HybridSync] Found ${supabaseBars.length} bars in Supabase, syncing to Dexie...`);
+            
             
             // Sync Supabase bars to Dexie
             await this.dexieChartBarRepo.upsertMany(supabaseBars);
-            console.log(`[HybridSync] Synced ${supabaseBars.length} bars from Supabase to Dexie`);
+            
 
             // Check if we need incremental update
             const progress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
@@ -150,7 +144,7 @@ export class HybridSyncChartBarsUseCase {
               : true;
 
             if (!needsIncrementalUpdate) {
-              console.log(`[HybridSync] Supabase has complete data, sync complete`);
+              
               return {
                 success: true,
                 totalBars: supabaseBars.length,
@@ -161,7 +155,7 @@ export class HybridSyncChartBarsUseCase {
             }
 
             // Need incremental update - fetch only new data from cTrader
-            console.log(`[HybridSync] Supabase has data but needs incremental update`);
+            
             const lastSyncTime = progress?.lastSyncTime ? new Date(progress.lastSyncTime) : fromDate;
             return await this.syncFromCTrader(
               {
@@ -177,7 +171,7 @@ export class HybridSyncChartBarsUseCase {
       }
 
       // Step 3: Both Dexie and Supabase are empty, fetch from cTrader
-      console.log(`[HybridSync] Step 3: Both Dexie and Supabase empty, fetching from cTrader API...`);
+      
       return await this.syncFromCTrader(params, "ctrader");
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -221,7 +215,7 @@ export class HybridSyncChartBarsUseCase {
       shouldCancel,
     } = params;
 
-    console.log(`[HybridSync] Syncing from cTrader API for ${symbol}`);
+    
 
     // Update status to syncing
     try {
@@ -254,14 +248,14 @@ export class HybridSyncChartBarsUseCase {
           : null;
 
       if (isIncrementalSync) {
-        console.log(`[HybridSync] Incremental sync - preserving firstBarDate, baseTotalBars=${baseTotalBars}`);
+        
       }
 
       // Calculate chunks
       const totalDays = Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24));
       const totalChunks = Math.max(1, Math.ceil(totalDays / chunkDays));
       
-      console.log(`[HybridSync] Calculated ${totalChunks} chunks for ${totalDays} days`);
+      
 
       let totalBars = baseTotalBars;
       let barsSynced = 0;
@@ -305,7 +299,7 @@ export class HybridSyncChartBarsUseCase {
         const chunkTo = chunkEnd.getTime();
 
         try {
-          console.log(`[HybridSync] Fetching bars for ${symbol} from ${new Date(chunkFrom).toISOString()} to ${new Date(chunkTo).toISOString()}`);
+          
           
           // Fetch bars from cTrader API (M1 only)
           const apiBars = await this.api.getBars(
@@ -317,7 +311,7 @@ export class HybridSyncChartBarsUseCase {
             accountNumber
           );
 
-          console.log(`[HybridSync] Received ${apiBars.length} bars for ${symbol} chunk ${chunk + 1}/${totalChunks}`);
+          
 
           if (apiBars.length === 0) {
             chunksProcessed++;
@@ -355,19 +349,19 @@ export class HybridSyncChartBarsUseCase {
 
           // Parallel storage: Store in Dexie immediately (fast, offline-first)
           // and sync to Supabase in parallel (cloud backup)
-          console.log(`[HybridSync] Storing ${chartBars.length} bars in parallel (Dexie + Supabase)...`);
+          
           
           const storagePromises = [
             // Dexie storage (always, fast, offline-first)
             this.dexieChartBarRepo.upsertMany(chartBars).then(() => {
-              console.log(`[HybridSync] Bars stored in Dexie`);
+              
             }),
             
             // Supabase sync (if online, can fail gracefully)
             isOnline()
               ? this.supabaseChartBarRepo.upsertMany(chartBars)
                   .then(() => {
-                    console.log(`[HybridSync] Bars synced to Supabase`);
+                    
                   })
                   .catch(async (error) => {
                     const errorMsg = error instanceof Error ? error.message : String(error);
@@ -387,7 +381,7 @@ export class HybridSyncChartBarsUseCase {
 
           // Wait for both to complete (Dexie will succeed, Supabase may fail)
           await Promise.allSettled(storagePromises);
-          console.log(`[HybridSync] Parallel storage completed`);
+          
 
           totalBars += chartBars.length;
           barsSynced += chartBars.length;
@@ -445,7 +439,7 @@ export class HybridSyncChartBarsUseCase {
       const actualTotalBars = this.dexieChartBarRepo.countBars
         ? await this.dexieChartBarRepo.countBars(broker, symbol, "M1")
         : totalBars;
-      console.log(`[HybridSync] Recalculated totalBars from Dexie: ${actualTotalBars} (was ${totalBars})`);
+      
 
       // For incremental sync, ensure we preserve the original firstBarDate
       const finalFirstBarDate = isIncrementalSync && preservedFirstBarDate
@@ -459,7 +453,7 @@ export class HybridSyncChartBarsUseCase {
       const finalFirstBarDateFromDexie = actualDateRange.firstBarDate || finalFirstBarDate;
       const finalLastBarDate = actualDateRange.lastBarDate || lastBarDate;
 
-      console.log(`[HybridSync] Final dates - firstBarDate: ${finalFirstBarDateFromDexie?.toISOString()}, lastBarDate: ${finalLastBarDate?.toISOString()}`);
+      
 
       await this.progressRepo.updateProgress(broker, symbol, {
         totalBars: actualTotalBars,

@@ -12,6 +12,7 @@ import {
     SlidersHorizontal,
     Pencil,
     Target,
+    Type,
 } from "lucide-react";
 import type { DrawingToolType } from "./TradeCandlestickChart";
 
@@ -32,6 +33,8 @@ export interface ChartControlsProps {
     onToggleMFE: () => void;
     showRiskReward?: boolean;
     onToggleRiskReward?: () => void;
+    showRiskRewardLabels?: boolean;
+    onToggleRiskRewardLabels?: () => void;
     isExpanded?: boolean;
     onToggleExpand?: () => void;
     disabled?: boolean;
@@ -49,6 +52,8 @@ export function ChartControls({
     onToggleMFE,
     showRiskReward = true,
     onToggleRiskReward,
+    showRiskRewardLabels = true,
+    onToggleRiskRewardLabels,
     isExpanded = false,
     onToggleExpand,
     disabled = false,
@@ -182,6 +187,21 @@ export function ChartControls({
                     R:R Zones
                 </button>
             )}
+            {onToggleRiskRewardLabels && (
+                <button
+                    type="button"
+                    onClick={() => {
+                        onToggleRiskRewardLabels();
+                        setMenuOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-800 ${
+                        showRiskRewardLabels ? "bg-teal-600/20 text-teal-400" : "text-gray-300"
+                    }`}
+                >
+                    <Type className="h-3.5 w-3.5 shrink-0" />
+                    R:R Labels
+                </button>
+            )}
             <div className="my-1 border-t border-gray-700" />
             <button
                 type="button"
@@ -227,11 +247,11 @@ export function ChartControls({
                 onClick={handleToggleMenu}
                 disabled={disabled}
                 className={`flex h-6 w-6 items-center justify-center rounded transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
-                    menuOpen || showProfitTimeline || showMAE || showMFE || showRiskReward
+                    menuOpen || showProfitTimeline || showMAE || showMFE || showRiskReward || showRiskRewardLabels
                         ? "bg-gray-700 text-gray-200"
                         : "bg-gray-800/50 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
                 }`}
-                title="Chart options (P&L, MAE, MFE, Reset)"
+                title="Chart options (P&L, MAE, MFE, R:R, labels, Reset)"
             >
                 <SlidersHorizontal className="h-3 w-3" />
             </button>

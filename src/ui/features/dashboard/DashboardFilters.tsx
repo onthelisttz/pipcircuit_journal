@@ -206,20 +206,25 @@ interface DateRangePopoverProps {
 function DateRangePopover({ from, to, onClose, onApply }: DateRangePopoverProps) {
   const [tempFrom, setTempFrom] = useState<Date>(from);
   const [tempTo, setTempTo] = useState<Date>(to);
+  const [isSelectingEnd, setIsSelectingEnd] = useState(false);
   const [monthLeft, setMonthLeft] = useState<Date>(startOfMonth(from));
   const monthRight = useMemo(() => startOfMonth(addMonths(monthLeft, 1)), [monthLeft]);
 
   const selectDay = (day: Date) => {
-    if (!tempFrom || (tempFrom && tempTo)) {
+    if (!isSelectingEnd) {
       setTempFrom(day);
       setTempTo(day);
+      setIsSelectingEnd(true);
       return;
     }
+
     if (day < tempFrom) {
       setTempFrom(day);
+      setTempTo(tempFrom);
     } else {
       setTempTo(day);
     }
+    setIsSelectingEnd(false);
   };
 
   const buildMonthDays = (month: Date) => {
@@ -261,6 +266,7 @@ function DateRangePopover({ from, to, onClose, onApply }: DateRangePopoverProps)
             const today = new Date();
             setTempFrom(today);
             setTempTo(today);
+            setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
         >
@@ -273,6 +279,7 @@ function DateRangePopover({ from, to, onClose, onApply }: DateRangePopoverProps)
             const to = endOfWeek(today);
             setTempFrom(from);
             setTempTo(to);
+            setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
         >
@@ -286,6 +293,7 @@ function DateRangePopover({ from, to, onClose, onApply }: DateRangePopoverProps)
             const to = endOfWeek(lastWeek);
             setTempFrom(from);
             setTempTo(to);
+            setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
         >
@@ -298,6 +306,7 @@ function DateRangePopover({ from, to, onClose, onApply }: DateRangePopoverProps)
             const end = endOfMonth(to);
             setTempFrom(from);
             setTempTo(end);
+            setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
         >
@@ -311,6 +320,7 @@ function DateRangePopover({ from, to, onClose, onApply }: DateRangePopoverProps)
             const end = endOfMonth(lastMonth);
             setTempFrom(from);
             setTempTo(end);
+            setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
         >
@@ -323,6 +333,7 @@ function DateRangePopover({ from, to, onClose, onApply }: DateRangePopoverProps)
             const end = endOfYear(to);
             setTempFrom(from);
             setTempTo(end);
+            setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
         >
@@ -336,6 +347,7 @@ function DateRangePopover({ from, to, onClose, onApply }: DateRangePopoverProps)
             const end = endOfYear(lastYear);
             setTempFrom(from);
             setTempTo(end);
+            setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
         >
@@ -347,6 +359,7 @@ function DateRangePopover({ from, to, onClose, onApply }: DateRangePopoverProps)
             const from = new Date(2010, 0, 1);
             setTempFrom(from);
             setTempTo(to);
+            setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
         >

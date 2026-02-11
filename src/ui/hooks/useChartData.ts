@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { Trade, ChartTimeframe, ChartBar } from "@domain/entities";
 import { DexieChartBarRepository } from "@infrastructure/db/dexie/repositories";
 import { SupabaseChartBarRepository } from "@infrastructure/db/supabase/repositories";
@@ -45,6 +45,29 @@ export interface UseChartDataResult {
 
 // Memory cap for chart bars
 const MAX_BARS = 5000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function normalizeBars(bars: ChartBar[]): ChartBar[] {
+    if (bars.length === 0) return [];
+
+    const sorted = [...bars].sort((a, b) => {
+        if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
+        return (a.id ?? 0) - (b.id ?? 0);
+    });
+
+    const byTimestamp = new Map<number, ChartBar>();
+    for (const bar of sorted) {
+        // Keep the latest encountered bar for duplicate timestamps.
+        byTimestamp.set(bar.timestamp, bar);
+    }
+
+    return Array.from(byTimestamp.values()).sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function capBars(bars: ChartBar[], mode: "earliest" | "recent"): ChartBar[] {
+    if (bars.length <= MAX_BARS) return bars;
+    return mode === "recent" ? bars.slice(-MAX_BARS) : bars.slice(0, MAX_BARS);
+}
 
 /**
  * useChartData - Hook for fetching and caching chart data
@@ -65,6 +88,14 @@ export function useChartData({
     const [fromCache, setFromCache] = useState(false);
     const [windowStart, setWindowStart] = useState(0);
     const [windowEnd, setWindowEnd] = useState(0);
+    const lazyFetchDirectionRef = useRef<"prev" | "next" | null>(null);
+    const activeSeriesKeyRef = useRef("");
+    const currentSeriesKey = `${broker ?? ""}|${trade.symbol}|${timeframe}`;
+
+    useEffect(() => {
+        activeSeriesKeyRef.current = currentSeriesKey;
+        lazyFetchDirectionRef.current = null;
+    }, [currentSeriesKey]);
 
     // Create use case with dependencies
     const { user } = useAuth();
@@ -93,16 +124,14 @@ export function useChartData({
                 broker,
             });
 
-            // Apply memory cap
-            const cappedBars =
-                result.bars.length > MAX_BARS
-                    ? result.bars.slice(-MAX_BARS) // Keep most recent bars
-                    : result.bars;
+            const normalizedBars = normalizeBars(result.bars);
+            // On initial load, keep the most recent segment.
+            const cappedBars = capBars(normalizedBars, "recent");
 
             setData(cappedBars);
             setFromCache(result.fromCache);
-            setWindowStart(result.windowStart);
-            setWindowEnd(result.windowEnd);
+            setWindowStart(cappedBars[0]?.timestamp ?? result.windowStart);
+            setWindowEnd(cappedBars[cappedBars.length - 1]?.timestamp ?? result.windowEnd);
         } catch (err) {
             setError(err instanceof Error ? err : new Error("Failed to load chart data"));
             setData([]);
@@ -118,87 +147,110 @@ export function useChartData({
 
     // Lazy loading: fetch previous chunk
     const fetchPrevious = useCallback(async () => {
-        if (windowStart === 0 || isLoading) return;
+        if (windowStart <= 0 || isLoading || lazyFetchDirectionRef.current) return;
 
-        const newWindowStart = windowStart - windowDays * 24 * 60 * 60 * 1000;
+        const newWindowStart = Math.max(0, windowStart - windowDays * DAY_MS);
+        if (newWindowStart === windowStart) return;
 
+        const requestKey = activeSeriesKeyRef.current;
+        lazyFetchDirectionRef.current = "prev";
         try {
             const chartBarRepository = new DexieChartBarRepository();
+            const queryTo = Math.max(newWindowStart, windowStart - 1);
             const previousBars = await chartBarRepository.getByWindow(
                 trade.symbol,
                 timeframe,
                 newWindowStart,
-                windowStart,
+                queryTo,
                 broker
             );
+            if (activeSeriesKeyRef.current !== requestKey) return;
 
-            if (previousBars.length > 0) {
-                let added = 0;
+            const normalizedPreviousBars = normalizeBars(previousBars);
+            if (normalizedPreviousBars.length > 0) {
                 setData((prev) => {
-                    const earliest = prev[0]?.timestamp ?? null;
-                    const filtered = earliest != null
-                        ? previousBars.filter((bar) => bar.timestamp < earliest)
-                        : previousBars;
-                    if (filtered.length === 0) return prev;
+                    const earliest = prev[0]?.timestamp ?? Number.POSITIVE_INFINITY;
+                    const olderBars = normalizedPreviousBars.filter((bar) => bar.timestamp < earliest);
+                    if (olderBars.length === 0) return prev;
 
-                    added = filtered.length;
-                    const combined = [...filtered, ...prev];
-                    let next = combined;
-                    if (combined.length > MAX_BARS) {
-                        // Keep earliest bars when paging left
-                        next = combined.slice(0, MAX_BARS);
-                        const newEnd = next[next.length - 1]?.timestamp;
-                        if (newEnd && newEnd !== windowEnd) {
-                            setWindowEnd(newEnd);
-                        }
+                    const merged = normalizeBars([...olderBars, ...prev]);
+                    if (merged.length <= MAX_BARS) {
+                        return merged;
                     }
-                    return next;
+
+                    // Keep earliest bars when paging left.
+                    const capped = capBars(merged, "earliest");
+                    const newEnd = capped[capped.length - 1]?.timestamp;
+                    if (newEnd != null) {
+                        setWindowEnd(newEnd);
+                    }
+                    return capped;
                 });
-                if (added > 0) {
-                    setWindowStart(newWindowStart);
-                }
             }
+
+            // Always advance window start so history paging can move through empty gaps.
+            setWindowStart(newWindowStart);
         } catch (err) {
             console.error("Failed to fetch previous data:", err);
+        } finally {
+            if (lazyFetchDirectionRef.current === "prev") {
+                lazyFetchDirectionRef.current = null;
+            }
         }
-    }, [windowStart, windowEnd, isLoading, trade.symbol, timeframe, windowDays, broker]);
+    }, [windowStart, isLoading, trade.symbol, timeframe, windowDays, broker]);
 
     // Lazy loading: fetch next chunk
     const fetchNext = useCallback(async () => {
-        if (windowEnd === 0 || isLoading) return;
+        if (windowEnd === 0 || isLoading || lazyFetchDirectionRef.current) return;
 
-        const newWindowEnd = windowEnd + windowDays * 24 * 60 * 60 * 1000;
+        const newWindowEnd = windowEnd + windowDays * DAY_MS;
 
+        const requestKey = activeSeriesKeyRef.current;
+        lazyFetchDirectionRef.current = "next";
         try {
             const chartBarRepository = new DexieChartBarRepository();
+            const queryFrom = windowEnd + 1;
             const nextBars = await chartBarRepository.getByWindow(
                 trade.symbol,
                 timeframe,
-                windowEnd,
+                queryFrom,
                 newWindowEnd,
                 broker
             );
+            if (activeSeriesKeyRef.current !== requestKey) return;
 
-            if (nextBars.length > 0) {
+            const normalizedNextBars = normalizeBars(nextBars);
+            if (normalizedNextBars.length > 0) {
                 setData((prev) => {
-                    const combined = [...prev, ...nextBars];
-                    let next = combined;
-                    if (combined.length > MAX_BARS) {
-                        // Keep most recent bars when paging right
-                        next = combined.slice(-MAX_BARS);
-                        const newStart = next[0]?.timestamp;
-                        if (newStart && newStart !== windowStart) {
-                            setWindowStart(newStart);
-                        }
+                    const latest = prev[prev.length - 1]?.timestamp ?? Number.NEGATIVE_INFINITY;
+                    const newerBars = normalizedNextBars.filter((bar) => bar.timestamp > latest);
+                    if (newerBars.length === 0) return prev;
+
+                    const merged = normalizeBars([...prev, ...newerBars]);
+                    if (merged.length <= MAX_BARS) {
+                        return merged;
                     }
-                    return next;
+
+                    // Keep most recent bars when paging right.
+                    const capped = capBars(merged, "recent");
+                    const newStart = capped[0]?.timestamp;
+                    if (newStart != null) {
+                        setWindowStart(newStart);
+                    }
+                    return capped;
                 });
-                setWindowEnd(newWindowEnd);
             }
+
+            // Always advance window end so forward paging can move through empty gaps.
+            setWindowEnd(newWindowEnd);
         } catch (err) {
             console.error("Failed to fetch next data:", err);
+        } finally {
+            if (lazyFetchDirectionRef.current === "next") {
+                lazyFetchDirectionRef.current = null;
+            }
         }
-    }, [windowEnd, windowStart, isLoading, trade.symbol, timeframe, windowDays, broker]);
+    }, [windowEnd, isLoading, trade.symbol, timeframe, windowDays, broker]);
 
     return {
         data,

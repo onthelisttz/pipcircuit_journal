@@ -36,7 +36,7 @@ export class AnalyzeTradesForBarSyncUseCase {
     const accountMap = new Map<string, Account>();
     const brokerMap = new Map<string, Set<string>>(); // broker -> Set<accountId>
 
-    console.log(`[AnalyzeTrades] Found ${accounts.length} accounts`);
+    
     
     for (const account of accounts) {
       if (account.accountNumber) {
@@ -49,7 +49,7 @@ export class AnalyzeTradesForBarSyncUseCase {
                       account.platform || 
                       "Unknown";
         
-        console.log(`[AnalyzeTrades] Account ${account.accountNumber}: broker="${broker}" (from: ${account.broker ? 'broker' : account.name ? 'name' : account.server ? 'server' : 'platform'})`);
+        
         
         if (!brokerMap.has(broker)) {
           brokerMap.set(broker, new Set());
@@ -62,10 +62,10 @@ export class AnalyzeTradesForBarSyncUseCase {
     const tradeQuery = accountIds ? { accountId: accountIds[0] } : undefined;
     const trades = await this.tradeRepository.list(tradeQuery);
 
-    console.log(`[AnalyzeTrades] Found ${trades.length} trades`);
+    
 
     if (trades.length === 0) {
-      console.log("[AnalyzeTrades] No trades found, returning empty result");
+      
       return {
         brokers: [],
         totalBrokers: 0,
@@ -115,7 +115,7 @@ export class AnalyzeTradesForBarSyncUseCase {
       }
     }
 
-    console.log(`[AnalyzeTrades] Found ${brokerData.size} brokers with trades`);
+    
 
     // Build result
     const brokers: BrokerSymbolAnalysis[] = [];
@@ -143,9 +143,9 @@ export class AnalyzeTradesForBarSyncUseCase {
       brokers.flatMap((b) => b.symbols)
     ).size;
 
-    console.log(`[AnalyzeTrades] Result: ${brokers.length} brokers, ${totalSymbols} unique symbols`);
+    
     for (const broker of brokers) {
-      console.log(`[AnalyzeTrades]   - ${broker.broker}: ${broker.symbols.length} symbols, ${broker.totalTrades} trades`);
+      
     }
 
     return {

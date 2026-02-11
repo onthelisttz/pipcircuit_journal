@@ -54,7 +54,7 @@ export class RealtimeSubscriptionManager {
     }
 
     if (this.isConnected && this.userId === userId) {
-      console.log("[Realtime] Already connected for user:", userId);
+      
       return;
     }
 
@@ -67,12 +67,12 @@ export class RealtimeSubscriptionManager {
       if (!this.skipSyncProgressRealtime) {
         await this.subscribeToSyncProgress(userId);
       } else {
-        console.log("[Realtime] Skipping symbol_sync_progress (previous binding error)");
+        
       }
 
       this.isConnected = true;
       this.callbacks.onConnectionChange?.(true);
-      console.log("[Realtime] Subscriptions started for user:", userId);
+      
     } catch (error) {
       console.error("[Realtime] Failed to start subscriptions:", error);
       this.scheduleReconnect();
@@ -99,7 +99,7 @@ export class RealtimeSubscriptionManager {
     this.subscriptions.clear();
     this.isConnected = false;
     this.callbacks.onConnectionChange?.(false);
-    console.log("[Realtime] Subscriptions stopped");
+    
   }
 
   /**
@@ -138,7 +138,7 @@ export class RealtimeSubscriptionManager {
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
-          console.log("[Realtime] Subscribed to chart_bars");
+          
         } else if (status === "CHANNEL_ERROR") {
           console.error("[Realtime] Chart bars subscription error");
           this.scheduleReconnect();
@@ -177,7 +177,7 @@ export class RealtimeSubscriptionManager {
       )
       .subscribe((status, err) => {
         if (status === "SUBSCRIBED") {
-          console.log("[Realtime] Subscribed to symbol_sync_progress");
+          
         } else if (status === "CHANNEL_ERROR" || status === "CLOSED") {
           const msg = err instanceof Error ? err.message : String(err ?? "");
           if (msg.includes("mismatch") && msg.includes("postgres changes")) {
@@ -198,7 +198,7 @@ export class RealtimeSubscriptionManager {
             );
           }
         } else {
-          console.log(`[Realtime] symbol_sync_progress subscription status: ${status}`);
+          
         }
       });
 
@@ -258,7 +258,7 @@ export class RealtimeSubscriptionManager {
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000); // Exponential backoff, max 30s
     this.reconnectAttempts++;
 
-    console.log(`[Realtime] Scheduling reconnect in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    
 
     this.reconnectTimeout = setTimeout(async () => {
       this.reconnectTimeout = undefined;

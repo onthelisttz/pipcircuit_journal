@@ -4,10 +4,18 @@ import { AuthProvider, ThemeProvider } from "@ui/providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "pipCircuit",
+  title: {
+    default: "pipCircuit",
+    template: "%s | pipCircuit",
+  },
   description:
     "Offline-first trading analytics and journaling app with multi-device sync",
   keywords: ["trading", "journal", "forex", "ctrader", "analytics"],
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
+    apple: "/icon.svg",
+  },
 };
 
 export default function RootLayout({

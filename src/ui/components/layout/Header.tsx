@@ -1,6 +1,6 @@
 "use client";
 
-import { Moon, Sun, ChevronDown, User, LogOut, Menu, MoreVertical } from "lucide-react";
+import { Moon, Sun, ChevronDown, User, LogOut, Menu, MoreVertical, Download } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
 import { SyncStatusBadge } from "./SyncStatusBadge";
@@ -18,9 +18,10 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
     const [accountMenuOpen, setAccountMenuOpen] = useState(false);
     const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
     const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+    const [syncingTrades, setSyncingTrades] = useState(false);
     const accountMenuRef = useRef<HTMLDivElement | null>(null);
     const actionsMenuRef = useRef<HTMLDivElement | null>(null);
-    const { activeAccount, accounts, setActive } = useAccount();
+    const { activeAccount, accounts, setActive, syncTradesForAccount } = useAccount();
     const formatAccountLabel = (account?: { name?: string | null; broker?: string | null; accountNumber: string; type?: string | null }) => {
         if (!account) return "No Account";
         const base =
@@ -68,6 +69,29 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
             <div className="flex items-center gap-3">
                 {/* Sync Status */}
                 <SyncStatusBadge />
+
+                <button
+                    onClick={async () => {
+                        if (!activeAccount || syncingTrades) return;
+                        setSyncingTrades(true);
+                        try {
+                            await syncTradesForAccount(
+                                activeAccount.accountNumber,
+                                activeAccount.ctraderAccountId
+                            );
+                        } catch {
+                            // Keep behavior silent in header action.
+                        } finally {
+                            setSyncingTrades(false);
+                        }
+                    }}
+                    disabled={!activeAccount || syncingTrades}
+                    className="p-2 rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150"
+                    aria-label="Download trades for active account"
+                    title="Download trades"
+                >
+                    <Download className={`w-4 h-4 ${syncingTrades ? "animate-spin" : ""}`} />
+                </button>
 
                 {/* Account Switcher */}
                 <div className="relative" ref={accountMenuRef}>

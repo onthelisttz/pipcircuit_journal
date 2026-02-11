@@ -42,16 +42,16 @@ export class DexieChartBarRepository implements IChartBarRepository {
       batches.push(bars.slice(i, i + BATCH_SIZE));
     }
     
-    console.log(`[DexieChartRepo] Processing ${bars.length} bars in ${batches.length} batches of ${BATCH_SIZE}`);
+    
     
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
-      console.log(`[DexieChartRepo] Storing batch ${i + 1}/${batches.length} (${batch.length} bars)`);
+      
       await db.chart_bars.bulkPut(batch);
-      console.log(`[DexieChartRepo] Batch ${i + 1}/${batches.length} stored`);
+      
     }
     
-    console.log(`[DexieChartRepo] All ${bars.length} bars stored successfully`);
+    
   }
 
   async deleteByWindow(
