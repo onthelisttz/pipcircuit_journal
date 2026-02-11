@@ -18,6 +18,7 @@ import {
   Expand,
   Minimize2,
   Activity,
+  X,
 } from "lucide-react";
 import type { Trade } from "@domain/entities";
 import { useTradePanel } from "@ui/providers";
@@ -25,10 +26,12 @@ import { TradePanelDetailTabs } from "./TradePanelDetailTabs";
 import { volumeToLots } from "@lib/pnl-estimate";
 
 interface TradePanelContentProps {
+  title: string;
   trades: Trade[];
   isLoading: boolean;
   isExpanded: boolean;
   onToggleExpanded: () => void;
+  onClosePanel: () => void;
 }
 
 function formatProfit(n: number | undefined): string {
@@ -38,10 +41,12 @@ function formatProfit(n: number | undefined): string {
 }
 
 export function TradePanelContent({
+  title,
   trades,
   isLoading,
   isExpanded,
   onToggleExpanded,
+  onClosePanel,
 }: TradePanelContentProps) {
   const { selectedTradeId, setSelectedTradeId } = useTradePanel();
   const [activeTab, setActiveTab] = useState<"details" | "journal" | "tags" | "chart" | "pnl">("details");
@@ -160,52 +165,94 @@ export function TradePanelContent({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div
+      className={`flex min-h-0 flex-1 flex-col overflow-hidden ${
+        isExpanded ? "gap-3 bg-muted/20 p-3 md:p-4" : ""
+      }`}
+    >
       {/* Summary */}
       <div
-        className={`shrink-0 border-b border-border ${
-          isChartFocused ? "px-3 py-2" : "px-4 py-3"
+        className={`shrink-0 ${
+          isExpanded
+            ? "rounded-xl border border-border/70 bg-card/90 px-4 py-3 shadow-sm"
+            : `border-b border-border ${isChartFocused ? "px-3 py-2" : "px-4 py-3"}`
         }`}
       >
-        <div className="flex items-center gap-2">
-          <div className={`flex flex-wrap ${isChartFocused ? "gap-3 text-xs" : "gap-4 text-sm"}`}>
-            <span className="text-muted-foreground">
-              {summary.total} trade{summary.total !== 1 ? "s" : ""}
-            </span>
-            <span
-              className={
-                summary.totalProfit >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-destructive"
-              }
+        <div className="flex items-start gap-3">
+          <div className="min-w-0">
+            <h2
+              id="trade-panel-title"
+              className={`truncate font-semibold text-foreground ${
+                isExpanded ? "text-base" : isChartFocused ? "text-sm" : "text-sm"
+              }`}
             >
-              {formatProfit(summary.totalProfit)}
-            </span>
-            <span className="text-muted-foreground">
-              {summary.winRate.toFixed(0)}% win rate
-            </span>
+              {title}
+            </h2>
+            <div className={`mt-1 flex flex-wrap ${isChartFocused ? "gap-3 text-xs" : "gap-4 text-sm"}`}>
+              <span className="text-muted-foreground">
+                {summary.total} trade{summary.total !== 1 ? "s" : ""}
+              </span>
+              <span
+                className={
+                  summary.totalProfit >= 0
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-destructive"
+                }
+              >
+                {formatProfit(summary.totalProfit)}
+              </span>
+              <span className="text-muted-foreground">
+                {summary.winRate.toFixed(0)}% win rate
+              </span>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={onToggleExpanded}
-            className={`ml-auto rounded text-muted-foreground hover:bg-accent hover:text-foreground ${
-              isChartFocused ? "p-1" : "p-1.5"
-            }`}
-            aria-label={isExpanded ? "Exit full page" : "Expand to full page"}
-          >
-            {isExpanded ? (
-              <Minimize2 className={isChartFocused ? "h-3.5 w-3.5" : "h-4 w-4"} aria-hidden="true" />
-            ) : (
-              <Expand className={isChartFocused ? "h-3.5 w-3.5" : "h-4 w-4"} aria-hidden="true" />
-            )}
-          </button>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={onToggleExpanded}
+              className={`rounded text-muted-foreground hover:bg-accent hover:text-foreground ${
+                isChartFocused ? "p-1" : "p-1.5"
+              }`}
+              aria-label={isExpanded ? "Exit full page" : "Expand to full page"}
+            >
+              {isExpanded ? (
+                <Minimize2 className={isChartFocused ? "h-3.5 w-3.5" : "h-4 w-4"} aria-hidden="true" />
+              ) : (
+                <Expand className={isChartFocused ? "h-3.5 w-3.5" : "h-4 w-4"} aria-hidden="true" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={onClosePanel}
+              className={`rounded text-muted-foreground hover:bg-accent hover:text-foreground ${
+                isChartFocused ? "p-1" : "p-1.5"
+              }`}
+              aria-label="Close panel"
+            >
+              <X className={isChartFocused ? "h-3.5 w-3.5" : "h-4 w-4"} aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Trade list - sortable table (collapsible) */}
-      <div className="shrink-0 border-b border-border">
-        <div className={`flex items-center justify-between ${isChartFocused ? "px-3 py-1.5" : "px-4 py-2"}`}>
-          <span className={`font-medium text-muted-foreground ${isChartFocused ? "text-[11px]" : "text-xs"}`}>
+      <div
+        className={`shrink-0 overflow-hidden ${
+          isExpanded
+            ? "rounded-xl border border-border/70 bg-card/90 shadow-sm"
+            : "border-b border-border"
+        }`}
+      >
+        <div
+          className={`flex items-center justify-between ${
+            isExpanded ? "px-3 py-2" : isChartFocused ? "px-3 py-1.5" : "px-4 py-2"
+          }`}
+        >
+          <span
+            className={`font-medium text-muted-foreground ${
+              isExpanded ? "text-xs" : isChartFocused ? "text-[11px]" : "text-xs"
+            }`}
+          >
             Trades
           </span>
           <button
@@ -226,9 +273,21 @@ export function TradePanelContent({
           </button>
         </div>
         {listCollapsed ? (
-          <div className={isChartFocused ? "px-3 pb-1.5" : "px-4 pb-2"}>
+          <div
+            className={
+              isExpanded
+                ? "px-3 pb-2"
+                : isChartFocused
+                  ? "px-3 pb-1.5"
+                  : "px-4 pb-2"
+            }
+          >
             {selectedIndex >= 0 && trades[selectedIndex] ? (
-              <div className={`flex items-center justify-between ${isChartFocused ? "text-[11px]" : "text-xs"}`}>
+              <div
+                className={`flex items-center justify-between ${
+                  isExpanded ? "text-xs" : isChartFocused ? "text-[11px]" : "text-xs"
+                }`}
+              >
                 <div className="flex flex-col gap-0.5">
                   <span className="font-medium text-foreground">
                     {trades[selectedIndex].symbol}
@@ -267,7 +326,15 @@ export function TradePanelContent({
             )}
           </div>
         ) : (
-          <div className={isChartFocused ? "max-h-28 overflow-y-auto" : "max-h-40 overflow-y-auto"}>
+          <div
+            className={
+              isExpanded
+                ? "max-h-36 overflow-y-auto"
+                : isChartFocused
+                  ? "max-h-28 overflow-y-auto"
+                  : "max-h-40 overflow-y-auto"
+            }
+          >
             {trades.length === 0 ? (
               <p className="px-4 py-4 text-center text-sm text-muted-foreground">
                 No trades
@@ -425,13 +492,17 @@ export function TradePanelContent({
       </div>
 
       {/* Selected trade detail */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div
+        className={`flex min-h-0 flex-1 flex-col overflow-hidden ${
+          isExpanded ? "rounded-xl border border-border/70 bg-card/90 shadow-sm" : ""
+        }`}
+      >
         {selectedTradeId ? (
           <>
             {/* Quick nav */}
             <div
               className={`flex shrink-0 items-center justify-between border-b border-border ${
-                isChartFocused ? "px-3 py-1.5" : "px-4 py-2"
+                isExpanded ? "px-3 py-2" : isChartFocused ? "px-3 py-1.5" : "px-4 py-2"
               }`}
             >
               <div className={isChartFocused ? "flex gap-0.5" : "flex gap-1"}>
@@ -489,8 +560,16 @@ export function TradePanelContent({
 
             {/* Tab content */}
             <div
-              className={`flex-1 overflow-y-auto ${
-                isChartFocused ? "px-2 pb-2 pt-0" : "px-4 pb-4 pt-4"
+              className={`flex-1 ${
+                isExpanded && isChartFocused ? "overflow-hidden" : "overflow-y-auto"
+              } ${
+                isExpanded
+                  ? isChartFocused
+                    ? "px-3 pb-2 pt-1"
+                    : "px-4 pb-4 pt-3"
+                  : isChartFocused
+                    ? "px-2 pb-2 pt-0"
+                    : "px-4 pb-4 pt-4"
               }`}
             >
               <TradePanelDetailTabs

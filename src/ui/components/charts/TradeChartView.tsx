@@ -96,7 +96,9 @@ export function TradeChartView({
     const [internalExpanded, setInternalExpanded] = useState(false);
     const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
     const [viewportHeight, setViewportHeight] = useState(900);
+    const [visualAreaHeight, setVisualAreaHeight] = useState(0);
     const chartContainerRef = useRef<HTMLDivElement>(null);
+    const visualAreaRef = useRef<HTMLDivElement>(null);
     const candlestickChartRef = useRef<TradeCandlestickChartRef | null>(null);
     const profitChartRef = useRef<{ fitContent: () => void } | null>(null);
     const showsCandlestick = viewMode !== "pnl";
@@ -141,10 +143,36 @@ export function TradeChartView({
         return () => window.removeEventListener("resize", updateHeight);
     }, [isExpanded, fillAvailableHeight]);
 
+    useEffect(() => {
+        const el = visualAreaRef.current;
+        if (!el) return;
+
+        const updateHeight = () => {
+            setVisualAreaHeight(el.clientHeight);
+        };
+
+        updateHeight();
+        const observer =
+            typeof ResizeObserver !== "undefined"
+                ? new ResizeObserver(() => updateHeight())
+                : null;
+        observer?.observe(el);
+        window.addEventListener("resize", updateHeight);
+
+        return () => {
+            observer?.disconnect();
+            window.removeEventListener("resize", updateHeight);
+        };
+    }, [isExpanded, fillAvailableHeight, viewMode, showProfitTimeline]);
+
     const resolvedChartHeight = useMemo(() => {
-        if (isExpanded) return Math.max(520, viewportHeight - 190);
+        if (showsCandlestick && !showProfitTimeline && visualAreaHeight > 0) {
+            return Math.max(320, visualAreaHeight - 2);
+        }
+        if (isExpanded) return Math.max(500, viewportHeight - 230);
         if (fillAvailableHeight && showsCandlestick && !showProfitTimeline) {
-            return Math.max(chartHeight, viewportHeight - 280);
+            const maxChartHeight = Math.max(420, viewportHeight - 420);
+            return Math.min(chartHeight, maxChartHeight);
         }
         return chartHeight;
     }, [
@@ -154,9 +182,13 @@ export function TradeChartView({
         showProfitTimeline,
         chartHeight,
         viewportHeight,
+        visualAreaHeight,
     ]);
 
     const resolvedTimelineHeight = useMemo(() => {
+        if (!showsCandlestick && visualAreaHeight > 0) {
+            return Math.max(280, visualAreaHeight - 2);
+        }
         if (isExpanded && !showsCandlestick) return Math.max(420, viewportHeight - 210);
         if (isExpanded && showsCandlestick) return Math.max(profitTimelineHeight, Math.floor((viewportHeight - 230) * 0.34));
         if (fillAvailableHeight && !showsCandlestick) return Math.max(profitTimelineHeight, viewportHeight - 320);
@@ -167,6 +199,7 @@ export function TradeChartView({
         fillAvailableHeight,
         profitTimelineHeight,
         viewportHeight,
+        visualAreaHeight,
     ]);
 
     const activeZoomOutMultiplier = isExpanded ? 8.0 : fillAvailableHeight ? 5.0 : 3.4;
@@ -258,7 +291,7 @@ export function TradeChartView({
     );
 
     const chartContent = (hideTimeframeInToolbar = false) => (
-        <>
+        <div className="flex min-h-0 flex-1 flex-col">
             <div
                 className={`sticky top-0 z-10 -mx-2 -mt-2 flex flex-nowrap items-center gap-2 overflow-x-auto border-b border-border/70 bg-card/95 px-2 py-1.5 backdrop-blur ${
                     hideTimeframeInToolbar ? "justify-end" : "justify-between"
@@ -311,34 +344,36 @@ export function TradeChartView({
                     </button>
                 </div>
             )}
-            {showsCandlestick && (
-                <TradeCandlestickChart
-                    ref={candlestickChartRef}
-                    data={data}
-                    trade={trade}
-                    height={resolvedChartHeight}
-                    zoomOutMultiplier={activeZoomOutMultiplier}
-                    showEntryMarker={true}
-                    showExitMarker={true}
-                    onVisibleRangeChange={handleVisibleRangeChange}
-                    isLoading={isLoading}
-                    drawingTool={drawingTool}
-                    showRiskReward={showRiskReward}
-                    showRiskRewardLabels={showRiskRewardLabels}
-                />
-            )}
-            {showProfitTimeline && (
-                <ProfitTimelineChart
-                    ref={profitChartRef}
-                    data={data}
-                    trade={trade}
-                    height={resolvedTimelineHeight}
-                    visible={showProfitTimeline}
-                    showMAE={showMAE}
-                    showMFE={showMFE}
-                />
-            )}
-        </>
+            <div ref={visualAreaRef} className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden pt-1">
+                {showsCandlestick && (
+                    <TradeCandlestickChart
+                        ref={candlestickChartRef}
+                        data={data}
+                        trade={trade}
+                        height={resolvedChartHeight}
+                        zoomOutMultiplier={activeZoomOutMultiplier}
+                        showEntryMarker={true}
+                        showExitMarker={true}
+                        onVisibleRangeChange={handleVisibleRangeChange}
+                        isLoading={isLoading}
+                        drawingTool={drawingTool}
+                        showRiskReward={showRiskReward}
+                        showRiskRewardLabels={showRiskRewardLabels}
+                    />
+                )}
+                {showProfitTimeline && (
+                    <ProfitTimelineChart
+                        ref={profitChartRef}
+                        data={data}
+                        trade={trade}
+                        height={resolvedTimelineHeight}
+                        visible={showProfitTimeline}
+                        showMAE={showMAE}
+                        showMFE={showMFE}
+                    />
+                )}
+            </div>
+        </div>
     );
 
     if (isExpanded) {
@@ -410,7 +445,7 @@ export function TradeChartView({
                             </button>
                         </div>
                     </div>
-                    <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-auto">
+                    <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
                         {chartContent(true)}
                     </div>
                 </div>
@@ -421,7 +456,7 @@ export function TradeChartView({
     return (
         <div
             ref={chartContainerRef}
-            className="flex min-h-0 flex-col gap-2 rounded-xl border border-border bg-card/80 p-2 pt-0"
+            className="flex h-full min-h-0 flex-col gap-2 overflow-hidden rounded-xl border border-border bg-card/80 p-2 pt-0"
         >
             {chartContent()}
         </div>

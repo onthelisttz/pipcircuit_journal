@@ -65,7 +65,7 @@ export function TradePanelDetailTabs({
 
     if (activeTab === "chart") {
       return (
-        <div className="-mx-2">
+        <div className="-mx-2 h-full">
           <TradeChartView
             trade={chartTrade}
             viewMode="chart"
@@ -81,14 +81,14 @@ export function TradePanelDetailTabs({
             initialTimeframe="M1"
             accessToken={token?.accessToken}
             broker={broker}
-            chartHeight={isPanelExpanded ? 640 : 420}
+            chartHeight={420}
           />
         </div>
       );
     }
 
     return (
-      <div className="-mx-2">
+      <div className="-mx-2 h-full">
         <TradeChartView
           trade={chartTrade}
           viewMode="pnl"

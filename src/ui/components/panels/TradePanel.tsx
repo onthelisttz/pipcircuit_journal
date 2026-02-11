@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { X } from "lucide-react";
 import { useTradePanel } from "@ui/providers";
 import { useAccount } from "@ui/hooks";
 import { useTradesByQuery } from "@ui/hooks/useTradesByQuery";
@@ -55,42 +54,38 @@ export function TradePanel() {
 
   if (!isOpen) return null;
 
+  const panelBody = (
+    <TradePanelContent
+      title={title}
+      trades={trades}
+      isLoading={isLoading}
+      isExpanded={isExpanded}
+      onToggleExpanded={() => setIsExpanded((v) => !v)}
+      onClosePanel={handleClose}
+    />
+  );
+
+  if (isExpanded) {
+    return (
+      <div className="fixed inset-0 z-50 bg-background/80 p-2 backdrop-blur-sm md:p-4">
+        <div
+          className="mx-auto flex h-full w-full max-w-[1800px] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
+          role="complementary"
+          aria-labelledby="trade-panel-title"
+        >
+          {panelBody}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className={`flex shrink-0 flex-col overflow-hidden bg-background ${
-        isExpanded
-          ? "fixed inset-0 z-50 h-screen w-screen"
-          : "h-screen w-full border-l border-border md:w-[min(50%,28rem)]"
-      }`}
+      className="flex h-screen w-full shrink-0 flex-col overflow-hidden border-l border-border bg-background md:w-[min(50%,28rem)]"
       role="complementary"
       aria-labelledby="trade-panel-title"
     >
-      <div
-        className={`flex shrink-0 items-center justify-between border-b border-border ${
-          isExpanded ? "px-4 py-2.5" : "px-3 py-2"
-        }`}
-      >
-        <h2
-          id="trade-panel-title"
-          className={`truncate font-semibold text-foreground ${isExpanded ? "text-base" : "text-sm"}`}
-        >
-          {title}
-        </h2>
-        <button
-          onClick={handleClose}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-          aria-label="Close panel"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      <TradePanelContent
-        trades={trades}
-        isLoading={isLoading}
-        isExpanded={isExpanded}
-        onToggleExpanded={() => setIsExpanded((v) => !v)}
-      />
+      {panelBody}
     </div>
   );
 }
