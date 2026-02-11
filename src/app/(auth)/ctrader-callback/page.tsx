@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { TokenStorage } from "@infrastructure/auth";
 
-export default function CTraderCallbackPage() {
-  const router = useRouter();
+function CTraderCallbackContent() {
   const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
   const [linked, setLinked] = useState(false);
+
   useEffect(() => {
     const errorParam = searchParams.get("error");
     if (errorParam) {
@@ -60,7 +60,7 @@ export default function CTraderCallbackPage() {
     };
 
     void run();
-  }, [router, searchParams]);
+  }, [searchParams]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
@@ -76,5 +76,19 @@ export default function CTraderCallbackPage() {
         </button>
       </div>
     </div>
+  );
+}
+
+export default function CTraderCallbackPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+          Linking cTrader account...
+        </div>
+      }
+    >
+      <CTraderCallbackContent />
+    </Suspense>
   );
 }
