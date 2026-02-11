@@ -3,17 +3,28 @@
 import { format, formatDistanceStrict } from "date-fns";
 import { Loader2 } from "lucide-react";
 import { useTrade, useAccount } from "@ui/hooks";
+import type { Trade } from "@domain/entities";
 import { TokenStorage } from "@infrastructure/auth";
 import { TradeChartView } from "@ui/components/charts";
 import { TradeJournalEditor } from "./TradeJournalEditor";
 import { TradeTagsTab } from "./TradeTagsTab";
 import { volumeToLots } from "@lib/pnl-estimate";
 
-type TabId = "details" | "journal" | "tags" | "chart";
+type TabId = "details" | "journal" | "tags" | "chart" | "pnl";
 
 interface TradePanelDetailTabsProps {
   tradeId: number;
   activeTab: TabId;
+  isPanelExpanded?: boolean;
+  onPrevTrade?: () => void;
+  onNextTrade?: () => void;
+  canPrevTrade?: boolean;
+  canNextTrade?: boolean;
+  currentTradePosition?: number;
+  totalTrades?: number;
+  isChartExpanded?: boolean;
+  onChartExpandedChange?: (expanded: boolean) => void;
+  fallbackTrade?: Trade;
 }
 
 function formatProfit(n: number | undefined): string {
@@ -25,23 +36,93 @@ function formatProfit(n: number | undefined): string {
 export function TradePanelDetailTabs({
   tradeId,
   activeTab,
+  isPanelExpanded = false,
+  onPrevTrade,
+  onNextTrade,
+  canPrevTrade = false,
+  canNextTrade = false,
+  currentTradePosition,
+  totalTrades,
+  isChartExpanded = false,
+  onChartExpandedChange,
+  fallbackTrade,
 }: TradePanelDetailTabsProps) {
   const { trade, isLoading, error } = useTrade(tradeId);
   const { accounts } = useAccount();
+  const token = TokenStorage.getGlobal();
 
-  if (isLoading) {
+  if (activeTab === "chart" || activeTab === "pnl") {
+    const chartTrade = trade ?? fallbackTrade;
+    if (!chartTrade) {
+      return (
+        <div className="flex h-48 items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      );
+    }
+
+    const broker = accounts.find((a) => a.accountNumber === chartTrade.accountId)?.broker;
+
+    if (activeTab === "chart") {
+      return (
+        <div className="-mx-2">
+          <TradeChartView
+            trade={chartTrade}
+            viewMode="chart"
+            fillAvailableHeight={isPanelExpanded}
+            onPrevTrade={onPrevTrade}
+            onNextTrade={onNextTrade}
+            canPrevTrade={canPrevTrade}
+            canNextTrade={canNextTrade}
+            currentTradePosition={currentTradePosition}
+            totalTrades={totalTrades}
+            expanded={isChartExpanded}
+            onExpandedChange={onChartExpandedChange}
+            initialTimeframe="M1"
+            accessToken={token?.accessToken}
+            broker={broker}
+            chartHeight={isPanelExpanded ? 640 : 420}
+          />
+        </div>
+      );
+    }
+
     return (
-      <div className="flex h-48 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div className="-mx-2">
+        <TradeChartView
+          trade={chartTrade}
+          viewMode="pnl"
+          fillAvailableHeight={isPanelExpanded}
+          onPrevTrade={onPrevTrade}
+          onNextTrade={onNextTrade}
+          canPrevTrade={canPrevTrade}
+          canNextTrade={canNextTrade}
+          currentTradePosition={currentTradePosition}
+          totalTrades={totalTrades}
+          expanded={isChartExpanded}
+          onExpandedChange={onChartExpandedChange}
+          initialTimeframe="M1"
+          accessToken={token?.accessToken}
+          broker={broker}
+          profitTimelineHeight={isPanelExpanded ? 520 : 340}
+        />
       </div>
     );
   }
 
-  if (error || !trade) {
+  if (error) {
     return (
       <p className="text-sm text-destructive">
-        {error?.message ?? "Trade not found"}
+        {error.message}
       </p>
+    );
+  }
+
+  if (isLoading || !trade) {
+    return (
+      <div className="flex h-48 items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
     );
   }
 
@@ -231,23 +312,6 @@ export function TradePanelDetailTabs({
 
   if (activeTab === "tags") {
     return <TradeTagsTab tradeId={tradeId} />;
-  }
-
-  if (activeTab === "chart") {
-    const token = TokenStorage.getGlobal();
-    const broker = accounts.find((a) => a.accountNumber === trade.accountId)?.broker;
-    return (
-      <div className="-mx-2">
-        <TradeChartView
-          trade={trade}
-          initialTimeframe="M1"
-          accessToken={token?.accessToken}
-          broker={broker}
-          chartHeight={280}
-          profitTimelineHeight={200}
-        />
-      </div>
-    );
   }
 
   return null;

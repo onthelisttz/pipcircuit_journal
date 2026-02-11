@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { useTradePanel } from "@ui/providers";
 import { useAccount } from "@ui/hooks";
@@ -18,17 +18,19 @@ import { TradePanelContent } from "./TradePanelContent";
 export function TradePanel() {
   const { isOpen, title, tradeIds, query, closePanel } = useTradePanel();
   const { activeAccount } = useAccount();
+  const [isExpanded, setIsExpanded] = useState(false);
+  const accountNumber = activeAccount?.accountNumber ?? null;
 
   const effectiveQuery = useMemo((): import("@application/ports/repositories").TradeQuery | null => {
-    if (!activeAccount?.accountNumber) return null;
+    if (!accountNumber) return null;
     if (tradeIds && tradeIds.length > 0) {
-      return { accountId: activeAccount.accountNumber, ids: tradeIds };
+      return { accountId: accountNumber, ids: tradeIds };
     }
     if (query) {
-      return { ...query, accountId: query.accountId ?? activeAccount.accountNumber };
+      return { ...query, accountId: query.accountId ?? accountNumber };
     }
     return null;
-  }, [activeAccount?.accountNumber, tradeIds, query]);
+  }, [accountNumber, tradeIds, query]);
 
   const { trades: rawTrades, isLoading } = useTradesByQuery(effectiveQuery);
 
@@ -38,39 +40,56 @@ export function TradePanel() {
     return rawTrades.filter((t) => t.closeTime);
   }, [rawTrades, tradeIds]);
 
+  const handleClose = useCallback(() => {
+    setIsExpanded(false);
+    closePanel();
+  }, [closePanel]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closePanel();
+      if (e.key === "Escape") handleClose();
     };
     if (isOpen) document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, closePanel]);
+  }, [isOpen, handleClose]);
 
   if (!isOpen) return null;
 
   return (
     <div
-      className="flex h-screen w-full shrink-0 flex-col overflow-hidden border-l border-border bg-background md:w-[min(50%,28rem)]"
+      className={`flex shrink-0 flex-col overflow-hidden bg-background ${
+        isExpanded
+          ? "fixed inset-0 z-50 h-screen w-screen"
+          : "h-screen w-full border-l border-border md:w-[min(50%,28rem)]"
+      }`}
       role="complementary"
       aria-labelledby="trade-panel-title"
     >
-      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
-        <h2 id="trade-panel-title" className="text-lg font-semibold text-foreground">
+      <div
+        className={`flex shrink-0 items-center justify-between border-b border-border ${
+          isExpanded ? "px-4 py-2.5" : "px-3 py-2"
+        }`}
+      >
+        <h2
+          id="trade-panel-title"
+          className={`truncate font-semibold text-foreground ${isExpanded ? "text-base" : "text-sm"}`}
+        >
           {title}
         </h2>
         <button
-          onClick={closePanel}
-          className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+          onClick={handleClose}
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
           aria-label="Close panel"
         >
-          <X className="h-5 w-5" />
+          <X className="h-4 w-4" />
         </button>
       </div>
 
       <TradePanelContent
         trades={trades}
         isLoading={isLoading}
-        onClose={closePanel}
+        isExpanded={isExpanded}
+        onToggleExpanded={() => setIsExpanded((v) => !v)}
       />
     </div>
   );

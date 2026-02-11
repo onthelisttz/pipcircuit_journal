@@ -48,11 +48,13 @@ export interface TradeCandlestickChartProps {
     showRiskRewardLabels?: boolean;
     /** Auto-fit/scroll when data updates */
     autoScrollOnData?: boolean;
+    /** Default zoom-out level used when centering trade */
+    zoomOutMultiplier?: number;
 }
 
 export interface TradeCandlestickChartRef {
     fitContent: () => void;
-    scrollToTrade: () => void;
+    scrollToTrade: (zoomOutMultiplier?: number) => void;
     removeAllDrawingTools: () => void;
 }
 
@@ -72,6 +74,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     showRiskReward = true,
     showRiskRewardLabels = true,
     autoScrollOnData = true,
+    zoomOutMultiplier = 3.2,
 }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -133,7 +136,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     }, []);
 
     // Scroll chart to center on trade timeframe
-    const scrollToTrade = useCallback(() => {
+    const scrollToTrade = useCallback((zoomOutMultiplier = 3.2) => {
         if (!chartRef.current || !trade || data.length === 0) return;
 
         const openTs = trade.openTime instanceof Date ? trade.openTime.getTime() : new Date(trade.openTime).getTime();
@@ -144,11 +147,15 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const openSec = openTs / 1000;
         const closeSec = closeTs / 1000;
         const tradeDuration = Math.max(closeSec - openSec, 60); // At least 1 minute
-        const padding = tradeDuration * 0.5; // 50% padding on each side
+        // Start zoomed out to provide enough market context around the trade.
+        const minWindow = 2 * 60 * 60 * (zoomOutMultiplier / 3.2); // scale from 2h baseline
+        const totalWindow = Math.max(tradeDuration * zoomOutMultiplier, minWindow);
+        const center = (openSec + closeSec) / 2;
+        const halfWindow = totalWindow / 2;
 
         chartRef.current.timeScale().setVisibleRange({
-            from: (openSec - padding) as Time,
-            to: (closeSec + padding) as Time,
+            from: (center - halfWindow) as Time,
+            to: (center + halfWindow) as Time,
         });
     }, [trade, data.length]);
 
@@ -157,7 +164,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         if (!containerRef.current) return;
 
         const chart = createChart(containerRef.current, {
-            width: containerRef.current.clientWidth,
+            width: Math.max(containerRef.current.clientWidth, 1),
             height,
             layout: {
                 background: { type: ColorType.Solid, color: "#000000" }, // Pure Black
@@ -261,13 +268,33 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         setIsChartReady(true);
 
-        const handleResize = () => {
+        const syncChartSize = () => {
             if (containerRef.current) {
-                chart.applyOptions({ width: containerRef.current.clientWidth });
+                const width = containerRef.current.clientWidth;
+                if (width > 0) {
+                    chart.applyOptions({ width, height });
+                }
             }
         };
 
+        // Ensure chart gets correct dimensions after layout transitions (e.g. panel expand).
+        syncChartSize();
+        const rafId = requestAnimationFrame(syncChartSize);
+        const timeoutId = window.setTimeout(syncChartSize, 100);
+
+        const handleResize = () => {
+            syncChartSize();
+        };
+
         window.addEventListener("resize", handleResize);
+
+        const resizeObserver =
+            typeof ResizeObserver !== "undefined"
+                ? new ResizeObserver(() => syncChartSize())
+                : null;
+        if (resizeObserver && containerRef.current) {
+            resizeObserver.observe(containerRef.current);
+        }
 
         const handleVisibleRange = (range: { from: number; to: number } | null) => {
             if (Date.now() < suppressVisibleRangeUntilRef.current) return;
@@ -283,6 +310,9 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             lineToolsRef.current?.removeAllLineTools();
             lineToolsRef.current = null;
             window.removeEventListener("resize", handleResize);
+            window.clearTimeout(timeoutId);
+            cancelAnimationFrame(rafId);
+            resizeObserver?.disconnect();
             chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRange);
             entryLineRef.current = null;
             stopLossLineRef.current = null;
@@ -485,14 +515,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             // Small delay to ensure chart has rendered
             setTimeout(() => {
                 suppressVisibleRangeUntilRef.current = Date.now() + 120;
-                scrollToTrade();
+                scrollToTrade(zoomOutMultiplier);
             }, 50);
         } else {
             suppressVisibleRangeUntilRef.current = Date.now() + 120;
             chartRef.current?.timeScale().fitContent();
         }
         prevBarsRef.current = data;
-    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, findNearestIndexByTimestamp]);
+    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, findNearestIndexByTimestamp, zoomOutMultiplier]);
 
     // Manage R:R Visualization (Plugin + Price Lines) with Adaptive Scaling
     useEffect(() => {

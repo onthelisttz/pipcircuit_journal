@@ -25,12 +25,12 @@ const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
 
 export interface ChartControlsProps {
     onResetView: () => void;
-    showProfitTimeline: boolean;
-    onToggleProfitTimeline: () => void;
-    showMAE: boolean;
-    onToggleMAE: () => void;
-    showMFE: boolean;
-    onToggleMFE: () => void;
+    showProfitTimeline?: boolean;
+    onToggleProfitTimeline?: () => void;
+    showMAE?: boolean;
+    onToggleMAE?: () => void;
+    showMFE?: boolean;
+    onToggleMFE?: () => void;
     showRiskReward?: boolean;
     onToggleRiskReward?: () => void;
     showRiskRewardLabels?: boolean;
@@ -44,11 +44,11 @@ export interface ChartControlsProps {
 
 export function ChartControls({
     onResetView,
-    showProfitTimeline,
+    showProfitTimeline = false,
     onToggleProfitTimeline,
-    showMAE,
+    showMAE = false,
     onToggleMAE,
-    showMFE,
+    showMFE = false,
     onToggleMFE,
     showRiskReward = true,
     onToggleRiskReward,
@@ -127,51 +127,64 @@ export function ChartControls({
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
+    const hasAnyActiveToggle =
+        (onToggleProfitTimeline && showProfitTimeline) ||
+        (onToggleMAE && showMAE) ||
+        (onToggleMFE && showMFE) ||
+        (onToggleRiskReward && showRiskReward) ||
+        (onToggleRiskRewardLabels && showRiskRewardLabels);
+
     const dropdown = menuOpen && (
         <div
             ref={menuRef}
-            className="fixed z-[9999] min-w-[140px] rounded-md border border-gray-700 bg-gray-900 py-1 shadow-xl"
+            className="fixed z-[9999] min-w-[156px] rounded-md border border-border bg-popover py-1 text-popover-foreground shadow-xl"
             style={{ left: menuPos.left, top: menuPos.top }}
         >
-            <button
-                type="button"
-                onClick={() => {
-                    onToggleProfitTimeline();
-                    setMenuOpen(false);
-                }}
-                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-800 ${
-                    showProfitTimeline ? "bg-purple-600/20 text-purple-400" : "text-gray-300"
-                }`}
-            >
-                <Activity className="h-3.5 w-3.5 shrink-0" />
-                P&L
-            </button>
-            <button
-                type="button"
-                onClick={() => {
-                    onToggleMAE();
-                    setMenuOpen(false);
-                }}
-                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-800 ${
-                    showMAE ? "bg-red-600/20 text-red-400" : "text-gray-300"
-                }`}
-            >
-                <TrendingDown className="h-3.5 w-3.5 shrink-0" />
-                MAE
-            </button>
-            <button
-                type="button"
-                onClick={() => {
-                    onToggleMFE();
-                    setMenuOpen(false);
-                }}
-                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-800 ${
-                    showMFE ? "bg-green-600/20 text-green-400" : "text-gray-300"
-                }`}
-            >
-                <TrendingUp className="h-3.5 w-3.5 shrink-0" />
-                MFE
-            </button>
+            {onToggleProfitTimeline && (
+                <button
+                    type="button"
+                    onClick={() => {
+                        onToggleProfitTimeline();
+                        setMenuOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-accent ${
+                        showProfitTimeline ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+                    }`}
+                >
+                    <Activity className="h-3.5 w-3.5 shrink-0" />
+                    P&L
+                </button>
+            )}
+            {onToggleMAE && (
+                <button
+                    type="button"
+                    onClick={() => {
+                        onToggleMAE();
+                        setMenuOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-accent ${
+                        showMAE ? "bg-destructive/15 text-destructive" : "text-muted-foreground"
+                    }`}
+                >
+                    <TrendingDown className="h-3.5 w-3.5 shrink-0" />
+                    MAE
+                </button>
+            )}
+            {onToggleMFE && (
+                <button
+                    type="button"
+                    onClick={() => {
+                        onToggleMFE();
+                        setMenuOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-accent ${
+                        showMFE ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
+                    }`}
+                >
+                    <TrendingUp className="h-3.5 w-3.5 shrink-0" />
+                    MFE
+                </button>
+            )}
             {onToggleRiskReward && (
                 <button
                     type="button"
@@ -179,8 +192,8 @@ export function ChartControls({
                         onToggleRiskReward();
                         setMenuOpen(false);
                     }}
-                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-800 ${
-                        showRiskReward ? "bg-blue-600/20 text-blue-400" : "text-gray-300"
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-accent ${
+                        showRiskReward ? "bg-sky-500/15 text-sky-600 dark:text-sky-400" : "text-muted-foreground"
                     }`}
                 >
                     <Target className="h-3.5 w-3.5 shrink-0" />
@@ -194,22 +207,22 @@ export function ChartControls({
                         onToggleRiskRewardLabels();
                         setMenuOpen(false);
                     }}
-                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-800 ${
-                        showRiskRewardLabels ? "bg-teal-600/20 text-teal-400" : "text-gray-300"
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-accent ${
+                        showRiskRewardLabels ? "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400" : "text-muted-foreground"
                     }`}
                 >
                     <Type className="h-3.5 w-3.5 shrink-0" />
                     R:R Labels
                 </button>
             )}
-            <div className="my-1 border-t border-gray-700" />
+            <div className="my-1 border-t border-border" />
             <button
                 type="button"
                 onClick={() => {
                     onResetView();
                     setMenuOpen(false);
                 }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-300 transition-colors hover:bg-gray-800"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent"
             >
                 <RotateCcw className="h-3.5 w-3.5 shrink-0" />
                 Reset
@@ -220,7 +233,7 @@ export function ChartControls({
     const drawDropdown = drawMenuOpen && onDrawingToolChange && (
         <div
             ref={drawMenuRef}
-            className="fixed z-[9999] min-w-[140px] rounded-md border border-gray-700 bg-gray-900 py-1 shadow-xl"
+            className="fixed z-[9999] min-w-[140px] rounded-md border border-border bg-popover py-1 shadow-xl"
             style={{ left: drawMenuPos.left, top: drawMenuPos.top }}
         >
             {DRAW_TOOLS.map(({ id, label }) => (
@@ -228,8 +241,8 @@ export function ChartControls({
                     key={id}
                     type="button"
                     onClick={() => handleSelectDrawTool(id)}
-                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-800 ${
-                        drawingTool === id ? "bg-blue-600/20 text-blue-400" : "text-gray-300"
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-accent ${
+                        drawingTool === id ? "bg-accent text-accent-foreground" : "text-muted-foreground"
                     }`}
                 >
                     {label}
@@ -247,11 +260,11 @@ export function ChartControls({
                 onClick={handleToggleMenu}
                 disabled={disabled}
                 className={`flex h-6 w-6 items-center justify-center rounded transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
-                    menuOpen || showProfitTimeline || showMAE || showMFE || showRiskReward || showRiskRewardLabels
-                        ? "bg-gray-700 text-gray-200"
-                        : "bg-gray-800/50 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                    menuOpen || hasAnyActiveToggle
+                        ? "bg-accent text-accent-foreground"
+                        : "bg-muted/50 text-muted-foreground hover:bg-accent hover:text-foreground"
                 }`}
-                title="Chart options (P&L, MAE, MFE, R:R, labels, Reset)"
+                title="Chart options"
             >
                 <SlidersHorizontal className="h-3 w-3" />
             </button>
@@ -267,8 +280,8 @@ export function ChartControls({
                         disabled={disabled}
                         className={`flex h-6 items-center gap-1 rounded px-2 transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
                             drawMenuOpen || drawingTool
-                                ? "bg-gray-700 text-gray-200"
-                                : "bg-gray-800/50 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                                ? "bg-accent text-accent-foreground"
+                                : "bg-muted/50 text-muted-foreground hover:bg-accent hover:text-foreground"
                         }`}
                         title="Drawing tools"
                     >
@@ -285,7 +298,7 @@ export function ChartControls({
                     type="button"
                     onClick={onToggleExpand}
                     disabled={disabled}
-                    className="flex h-6 w-6 items-center justify-center rounded bg-gray-800/50 text-gray-400 transition-all hover:bg-gray-700 hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex h-6 w-6 items-center justify-center rounded bg-muted/50 text-muted-foreground transition-all hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                     title={isExpanded ? "Collapse" : "Expand chart"}
                 >
                     {isExpanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}

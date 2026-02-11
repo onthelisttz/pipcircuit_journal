@@ -162,7 +162,7 @@ export const ProfitTimelineChart = forwardRef<ProfitTimelineChartRef, ProfitTime
         if (!containerRef.current || !visible) return;
 
         const chart = createChart(containerRef.current, {
-            width: containerRef.current.clientWidth,
+            width: Math.max(containerRef.current.clientWidth, 1),
             height,
             layout: {
                 background: { type: ColorType.Solid, color: "transparent" },
@@ -209,17 +209,39 @@ export const ProfitTimelineChart = forwardRef<ProfitTimelineChartRef, ProfitTime
         seriesRef.current = series;
         setIsChartReady(true);
 
-        // Handle resize
-        const handleResize = () => {
+        const syncChartSize = () => {
             if (containerRef.current) {
-                chart.applyOptions({ width: containerRef.current.clientWidth });
+                const width = containerRef.current.clientWidth;
+                if (width > 0) {
+                    chart.applyOptions({ width, height });
+                }
             }
+        };
+
+        // Ensure chart gets correct dimensions after layout transitions (e.g. panel expand).
+        syncChartSize();
+        const rafId = requestAnimationFrame(syncChartSize);
+        const timeoutId = window.setTimeout(syncChartSize, 100);
+
+        const handleResize = () => {
+            syncChartSize();
         };
 
         window.addEventListener("resize", handleResize);
 
+        const resizeObserver =
+            typeof ResizeObserver !== "undefined"
+                ? new ResizeObserver(() => syncChartSize())
+                : null;
+        if (resizeObserver && containerRef.current) {
+            resizeObserver.observe(containerRef.current);
+        }
+
         return () => {
             window.removeEventListener("resize", handleResize);
+            window.clearTimeout(timeoutId);
+            cancelAnimationFrame(rafId);
+            resizeObserver?.disconnect();
             chart.remove();
             chartRef.current = null;
             seriesRef.current = null;
