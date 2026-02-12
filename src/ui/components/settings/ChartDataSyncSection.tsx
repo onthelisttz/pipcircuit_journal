@@ -688,7 +688,7 @@ export function ChartDataSyncSection() {
   }, [refresh]);
 
   return (
-    <section className="rounded-xl border border-border bg-card p-6 space-y-6">
+    <section className="rounded-xl border border-border bg-card p-4 sm:p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-foreground">Chart Data Sync</h2>

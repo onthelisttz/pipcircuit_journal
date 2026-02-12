@@ -119,9 +119,35 @@ export function DataSyncSection() {
   }, []);
 
   const online = isOnline();
+  const statusCards = [
+    {
+      key: "pending",
+      label: "Pending",
+      value: queueStatus.pending,
+      tone: "border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+    },
+    {
+      key: "retrying",
+      label: "Retrying",
+      value: queueStatus.retrying,
+      tone: "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    },
+    {
+      key: "syncing",
+      label: "Syncing",
+      value: queueStatus.syncing,
+      tone: "border-indigo-500/35 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300",
+    },
+    {
+      key: "failed",
+      label: "Failed",
+      value: queueStatus.failed,
+      tone: "border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+    },
+  ] as const;
 
   return (
-    <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+    <section className="space-y-4 rounded-xl border border-border bg-card p-4 sm:p-6">
       <div className="space-y-3">
         <div>
           <h2 className="text-xl font-semibold text-foreground">Data Sync</h2>
@@ -173,28 +199,15 @@ export function DataSyncSection() {
           </button>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-          <div className="rounded-md border border-border bg-background px-3 py-2">
-            <p className="text-muted-foreground">Pending</p>
-            <p className="mt-1 text-sm font-semibold text-foreground">{queueStatus.pending}</p>
-          </div>
-          <div className="rounded-md border border-border bg-background px-3 py-2">
-            <p className="text-muted-foreground">Retrying</p>
-            <p className="mt-1 text-sm font-semibold text-foreground">{queueStatus.retrying}</p>
-          </div>
-          <div className="rounded-md border border-border bg-background px-3 py-2">
-            <p className="text-muted-foreground">Syncing</p>
-            <p className="mt-1 text-sm font-semibold text-foreground">{queueStatus.syncing}</p>
-          </div>
-          <div className="rounded-md border border-border bg-background px-3 py-2">
-            <p className="text-muted-foreground">Failed</p>
-            <p
-              className={`mt-1 text-sm font-semibold ${
-                queueStatus.failed > 0 ? "text-destructive" : "text-foreground"
-              }`}
+          {statusCards.map((card) => (
+            <div
+              key={card.key}
+              className={`rounded-md border px-3 py-2 transition-colors ${card.tone}`}
             >
-              {queueStatus.failed}
-            </p>
-          </div>
+              <p className="opacity-80">{card.label}</p>
+              <p className="mt-1 text-sm font-semibold">{card.value}</p>
+            </div>
+          ))}
         </div>
         {retryNotice && <p className="mt-3 text-xs text-muted-foreground">{retryNotice}</p>}
       </div>
@@ -296,4 +309,3 @@ export function DataSyncSection() {
     </section>
   );
 }
-

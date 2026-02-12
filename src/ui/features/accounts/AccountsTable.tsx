@@ -39,7 +39,7 @@ export function AccountsTable() {
 
   if (accounts.length === 0) {
     return (
-      <div className="rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground">
+      <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground sm:p-6">
         No accounts linked yet.
       </div>
     );

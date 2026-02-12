@@ -154,7 +154,7 @@ export function TagsTable() {
 
   if (error) {
     return (
-      <div className="rounded-xl border border-border bg-card p-6 text-sm text-destructive">
+      <div className="rounded-xl border border-border bg-card p-4 text-sm text-destructive sm:p-6">
         {error.message}
       </div>
     );
@@ -261,7 +261,7 @@ export function TagsTable() {
 
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         {tags.length === 0 ? (
-          <div className="p-6 text-sm text-muted-foreground">
+          <div className="p-4 text-sm text-muted-foreground sm:p-6">
             No tags yet. Add tags to categorize your trades.
           </div>
         ) : (

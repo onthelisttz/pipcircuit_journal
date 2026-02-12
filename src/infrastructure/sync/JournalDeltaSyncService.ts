@@ -238,7 +238,7 @@ export class JournalDeltaSyncService {
       onProgress?.("Pulling trade tag changes...");
       result.tables.trade_tags = await this.syncTradeTags();
 
-      onProgress?.("Delta pull complete.");
+      onProgress?.("pull complete.");
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

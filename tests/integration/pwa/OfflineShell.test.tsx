@@ -17,9 +17,14 @@ describe("Offline PWA shell", () => {
     const source = await fs.readFile(swPath, "utf8");
 
     expect(source).toContain('const OFFLINE_URL = "/offline"');
+    expect(source).toContain("const APP_SHELL_ROUTES = [");
+    expect(source).toContain('"/dashboard"');
+    expect(source).toContain('"/callback"');
+    expect(source).toContain('"/ctrader-callback"');
     expect(source).toContain('"/login"');
     expect(source).toContain("OFFLINE_URL,");
     expect(source).toContain("request.mode === \"navigate\"");
+    expect(source).toContain("const cachedShell = await matchAny(pageCache, APP_SHELL_ROUTES)");
     expect(source).toContain("const cachedOffline = await pageCache.match(OFFLINE_URL)");
   });
 });

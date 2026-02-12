@@ -19,7 +19,7 @@ export function SyncStatusCard() {
   };
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
+    <div className="rounded-xl border border-border bg-card p-4 sm:p-6">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-foreground">Chart Data Sync Status</h2>
         {overallProgress.syncingSymbols > 0 && (

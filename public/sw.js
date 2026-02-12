@@ -1,18 +1,37 @@
 const CACHE_PREFIX = "pipcircuit";
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v3";
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${CACHE_VERSION}`;
 const PAGE_CACHE = `${CACHE_PREFIX}-pages-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `${CACHE_PREFIX}-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = "/offline";
+const APP_SHELL_ROUTES = [
+  "/",
+  "/dashboard",
+  "/observations",
+  "/tags",
+  "/settings",
+  "/chart",
+  "/accounts",
+  "/login",
+  "/callback",
+  "/ctrader-callback",
+];
 
 const PRECACHE_URLS = [
-  "/",
-  "/login",
+  ...APP_SHELL_ROUTES,
   OFFLINE_URL,
   "/manifest.webmanifest",
   "/icon.svg",
   "/pj-icon.svg",
 ];
+
+async function matchAny(cache, urls) {
+  for (const url of urls) {
+    const match = await cache.match(url);
+    if (match) return match;
+  }
+  return null;
+}
 
 function isStaticAsset(pathname) {
   if (pathname.startsWith("/_next/static/")) return true;
@@ -66,10 +85,12 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       (async () => {
         const pageCache = await caches.open(PAGE_CACHE);
+        const runtimeCache = await caches.open(RUNTIME_CACHE);
         try {
           const networkResponse = await fetch(request);
           if (networkResponse && networkResponse.ok) {
             await pageCache.put(request, networkResponse.clone());
+            await runtimeCache.put(request, networkResponse.clone());
           }
           return networkResponse;
         } catch {
@@ -78,6 +99,18 @@ self.addEventListener("fetch", (event) => {
 
           const cachedPath = await pageCache.match(url.pathname);
           if (cachedPath) return cachedPath;
+
+          const runtimeExact = await runtimeCache.match(request);
+          if (runtimeExact) return runtimeExact;
+
+          const runtimePath = await runtimeCache.match(url.pathname);
+          if (runtimePath) return runtimePath;
+
+          const cachedShell = await matchAny(pageCache, APP_SHELL_ROUTES);
+          if (cachedShell) return cachedShell;
+
+          const runtimeShell = await matchAny(runtimeCache, APP_SHELL_ROUTES);
+          if (runtimeShell) return runtimeShell;
 
           const cachedOffline = await pageCache.match(OFFLINE_URL);
           if (cachedOffline) return cachedOffline;
@@ -137,4 +170,3 @@ self.addEventListener("fetch", (event) => {
     })()
   );
 });
-

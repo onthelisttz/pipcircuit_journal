@@ -44,7 +44,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             )}
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
               <Header onMenuToggle={() => setIsSidebarOpen((prev) => !prev)} />
-              <main className="min-h-0 flex-1 overflow-y-auto px-1 pb-4 pt-0 sm:px-2 sm:pb-5 md:px-6 md:pr-10 md:pb-6">
+              <main className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-0 sm:px-4 sm:pb-5 md:px-6 md:pr-10 md:pb-6">
                 {children}
               </main>
             </div>
