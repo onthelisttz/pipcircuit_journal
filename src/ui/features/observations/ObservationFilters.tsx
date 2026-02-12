@@ -35,7 +35,7 @@ export function ObservationFilters({ filters, onChange, categories }: Observatio
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  const rangeLabel = `${format(filters.from, "MMM d, yyyy")} – ${format(filters.to, "MMM d, yyyy")}`;
+  const rangeLabel = `${format(filters.from, "MMM d, yyyy")} - ${format(filters.to, "MMM d, yyyy")}`;
   const categoryLabel = filters.categoryId == null
     ? "All categories"
     : categories.find((c) => c.id === filters.categoryId)?.name ?? "All categories";
@@ -46,11 +46,11 @@ export function ObservationFilters({ filters, onChange, categories }: Observatio
         <button
           type="button"
           onClick={() => setDateOpen((p) => !p)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card text-sm hover:bg-accent"
+          className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent"
         >
-          <Calendar className="w-4 h-4" />
+          <Calendar className="h-4 w-4" />
           <span>{rangeLabel}</span>
-          <ChevronDown className="w-4 h-4" />
+          <ChevronDown className="h-4 w-4" />
         </button>
         {dateOpen && (
           <DateRangePopover
@@ -69,38 +69,38 @@ export function ObservationFilters({ filters, onChange, categories }: Observatio
         <button
           type="button"
           onClick={() => setCategoryOpen((p) => !p)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card text-sm hover:bg-accent"
+          className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent"
         >
           {categoryLabel}
-          <ChevronDown className="w-4 h-4" />
+          <ChevronDown className="h-4 w-4" />
         </button>
         {categoryOpen && (
-          <div className="absolute left-0 mt-1 w-48 rounded-lg border border-border bg-popover p-1 shadow-lg z-10">
+          <div className="absolute left-0 z-10 mt-1 w-48 rounded-lg border border-border bg-popover p-1 shadow-lg">
             <button
               type="button"
               onClick={() => {
                 onChange({ ...filters, categoryId: null });
                 setCategoryOpen(false);
               }}
-              className="w-full text-left px-3 py-2 rounded-md text-sm hover:bg-accent"
+              className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-accent"
             >
               All categories
             </button>
-            {categories.map((c) => (
+            {categories.map((category) => (
               <button
-                key={c.id}
+                key={category.id}
                 type="button"
                 onClick={() => {
-                  onChange({ ...filters, categoryId: c.id ?? null });
+                  onChange({ ...filters, categoryId: category.id ?? null });
                   setCategoryOpen(false);
                 }}
-                className="w-full text-left px-3 py-2 rounded-md text-sm hover:bg-accent flex items-center gap-2"
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent"
               >
                 <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: c.color }}
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: category.color }}
                 />
-                {c.name}
+                {category.name}
               </button>
             ))}
           </div>
@@ -109,3 +109,4 @@ export function ObservationFilters({ filters, onChange, categories }: Observatio
     </div>
   );
 }
+

@@ -10,6 +10,7 @@ import {
   startOfMonth,
   startOfWeek,
   startOfYear,
+  subDays,
   subMonths,
   subWeeks,
   subYears,
@@ -29,6 +30,7 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
   const [isSelectingEnd, setIsSelectingEnd] = useState(false);
   const [monthLeft, setMonthLeft] = useState<Date>(startOfMonth(from));
   const monthRight = useMemo(() => addMonths(monthLeft, 1), [monthLeft]);
+  const today = useMemo(() => new Date(), []);
 
   const selectDay = (day: Date) => {
     if (!isSelectingEnd) {
@@ -58,15 +60,13 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
   };
 
   const isInRange = (day: Date) =>
-    tempFrom &&
-    tempTo &&
     day.getTime() >= new Date(tempFrom).setHours(0, 0, 0, 0) &&
     day.getTime() <= new Date(tempTo).setHours(23, 59, 59, 999);
 
-  const headerLabel = `${format(tempFrom, "MMM d, yyyy")} – ${format(tempTo, "MMM d, yyyy")}`;
+  const headerLabel = `${format(tempFrom, "MMM d, yyyy")} - ${format(tempTo, "MMM d, yyyy")}`;
 
   return (
-    <div className="absolute right-0 mt-2 z-20 w-[540px] rounded-xl border border-border bg-popover p-4 shadow-2xl animate-in fade-in-0 zoom-in-95">
+    <div className="fixed inset-x-2 bottom-2 top-16 z-30 overflow-y-auto rounded-xl border border-border bg-popover p-3 shadow-2xl animate-in fade-in-0 zoom-in-95 sm:absolute sm:inset-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[540px] sm:max-w-[calc(100vw-2rem)] sm:max-h-[80vh] sm:p-4">
       <div className="mb-3 flex items-center justify-between">
         <span className="text-sm font-medium text-foreground">{headerLabel}</span>
         <button className="text-xs text-muted-foreground hover:text-foreground" onClick={onClose}>
@@ -77,9 +77,9 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
         <button
           onClick={() => {
-            const today = new Date();
-            setTempFrom(today);
-            setTempTo(today);
+            const now = new Date();
+            setTempFrom(now);
+            setTempTo(now);
             setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
@@ -88,11 +88,20 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
         </button>
         <button
           onClick={() => {
-            const today = new Date();
-            const from = startOfWeek(today);
-            const to = endOfWeek(today);
-            setTempFrom(from);
-            setTempTo(to);
+            const yesterday = subDays(new Date(), 1);
+            setTempFrom(yesterday);
+            setTempTo(yesterday);
+            setIsSelectingEnd(false);
+          }}
+          className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
+        >
+          Yesterday
+        </button>
+        <button
+          onClick={() => {
+            const now = new Date();
+            setTempFrom(startOfWeek(now));
+            setTempTo(endOfWeek(now));
             setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
@@ -101,12 +110,9 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
         </button>
         <button
           onClick={() => {
-            const today = new Date();
-            const lastWeek = subWeeks(today, 1);
-            const from = startOfWeek(lastWeek);
-            const to = endOfWeek(lastWeek);
-            setTempFrom(from);
-            setTempTo(to);
+            const now = subWeeks(new Date(), 1);
+            setTempFrom(startOfWeek(now));
+            setTempTo(endOfWeek(now));
             setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
@@ -115,11 +121,9 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
         </button>
         <button
           onClick={() => {
-            const to = new Date();
-            const from = startOfMonth(to);
-            const end = endOfMonth(to);
-            setTempFrom(from);
-            setTempTo(end);
+            const now = new Date();
+            setTempFrom(startOfMonth(now));
+            setTempTo(endOfMonth(now));
             setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
@@ -128,12 +132,9 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
         </button>
         <button
           onClick={() => {
-            const today = new Date();
-            const lastMonth = subMonths(today, 1);
-            const from = startOfMonth(lastMonth);
-            const end = endOfMonth(lastMonth);
-            setTempFrom(from);
-            setTempTo(end);
+            const now = subMonths(new Date(), 1);
+            setTempFrom(startOfMonth(now));
+            setTempTo(endOfMonth(now));
             setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
@@ -142,11 +143,9 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
         </button>
         <button
           onClick={() => {
-            const to = new Date();
-            const from = startOfYear(to);
-            const end = endOfYear(to);
-            setTempFrom(from);
-            setTempTo(end);
+            const now = new Date();
+            setTempFrom(startOfYear(now));
+            setTempTo(endOfYear(now));
             setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
@@ -155,12 +154,9 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
         </button>
         <button
           onClick={() => {
-            const today = new Date();
-            const lastYear = subYears(today, 1);
-            const from = startOfYear(lastYear);
-            const end = endOfYear(lastYear);
-            setTempFrom(from);
-            setTempTo(end);
+            const now = subYears(new Date(), 1);
+            setTempFrom(startOfYear(now));
+            setTempTo(endOfYear(now));
             setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
@@ -169,10 +165,8 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
         </button>
         <button
           onClick={() => {
-            const to = new Date();
-            const from = new Date(2010, 0, 1);
-            setTempFrom(from);
-            setTempTo(to);
+            setTempFrom(new Date(2010, 0, 1));
+            setTempTo(new Date());
             setIsSelectingEnd(false);
           }}
           className="rounded-full border border-border px-2.5 py-1 hover:bg-accent"
@@ -181,7 +175,7 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 text-xs">
+      <div className="grid grid-cols-1 gap-4 text-xs sm:grid-cols-2">
         {[monthLeft, monthRight].map((month, idx) => {
           const days = buildMonthDays(month);
           const monthLabel = format(month, "MMMM yyyy");
@@ -205,7 +199,7 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
                   &gt;
                 </button>
               </div>
-              <div className="grid grid-cols-7 gap-1 text-[10px] text-muted-foreground mb-1">
+              <div className="mb-1 grid grid-cols-7 gap-1 text-[10px] text-muted-foreground">
                 <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
               </div>
               <div className="grid grid-cols-7 gap-1">
@@ -213,16 +207,22 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
                   <span key={`blank-${i}`} />
                 ))}
                 {days.map((day) => {
-                  const selected = isSameDay(day, tempFrom) || (tempTo && isSameDay(day, tempTo));
+                  const selected = isSameDay(day, tempFrom) || isSameDay(day, tempTo);
                   const inRange = isInRange(day);
+                  const isToday = isSameDay(day, today);
+
                   return (
                     <button
                       key={day.toISOString()}
                       onClick={() => selectDay(day)}
                       className={[
-                        "h-7 w-7 rounded-full text-xs",
-                        inRange ? "bg-accent text-accent-foreground" : "",
-                        selected ? "bg-primary text-primary-foreground font-semibold" : "hover:bg-accent/60",
+                        "h-8 w-8 rounded-full text-xs transition-colors",
+                        selected
+                          ? "bg-primary font-semibold text-primary-foreground"
+                          : inRange
+                            ? "bg-accent text-accent-foreground"
+                            : "hover:bg-accent/60",
+                        isToday ? "ring-1 ring-primary/70 ring-offset-1 ring-offset-popover" : "",
                       ].filter(Boolean).join(" ")}
                     >
                       {day.getDate()}
@@ -235,7 +235,7 @@ export function DateRangePopover({ from, to, onClose, onApply }: DateRangePopove
         })}
       </div>
 
-      <div className="mt-4 flex justify-between items-center">
+      <div className="mt-4 flex items-center justify-between">
         <button
           onClick={onClose}
           className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"

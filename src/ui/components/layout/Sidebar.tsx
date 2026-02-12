@@ -58,23 +58,36 @@ const navItems = [
  * Main navigation sidebar for the application.
  * Collapsible with icon-only mode.
  */
-export function Sidebar({ className }: { className?: string }) {
+interface SidebarProps {
+    className?: string;
+    forceCollapsed?: boolean;
+    hideCollapseToggle?: boolean;
+    onNavigate?: () => void;
+}
+
+export function Sidebar({
+    className,
+    forceCollapsed,
+    hideCollapseToggle = false,
+    onNavigate,
+}: SidebarProps) {
     const pathname = usePathname();
     const [collapsed, setCollapsed] = useState(false);
+    const isCollapsed = forceCollapsed ?? collapsed;
 
     return (
         <aside
             className={`
         sticky top-0 flex flex-col h-screen bg-sidebar border-r border-sidebar-border
         shrink-0 transition-colors duration-150
-        ${collapsed ? "w-16" : "w-64"}
+        ${isCollapsed ? "w-16" : "w-64"}
         ${className ?? ""}
       `}
         >
             {/* Logo/Brand */}
             <div
                 className={`flex h-16 items-center border-b border-sidebar-border ${
-                    collapsed ? "px-2" : "px-3"
+                    isCollapsed ? "px-2" : "px-3"
                 }`}
             >
                 <Link
@@ -84,7 +97,7 @@ export function Sidebar({ className }: { className?: string }) {
                     }`}
                     aria-label="Go to dashboard"
                 >
-                    <AppLogo collapsed={collapsed} />
+                    <AppLogo collapsed={isCollapsed} />
                 </Link>
             </div>
 
@@ -99,6 +112,7 @@ export function Sidebar({ className }: { className?: string }) {
                             <li key={item.href}>
                                 <Link
                                     href={item.href}
+                                    onClick={onNavigate}
                                     className={`
                     flex items-center gap-3 px-3 py-2 rounded-lg
                     transition-colors duration-150
@@ -106,12 +120,12 @@ export function Sidebar({ className }: { className?: string }) {
                                             ? "bg-sidebar-accent text-sidebar-accent-foreground"
                                             : "text-sidebar-foreground hover:bg-sidebar-accent/50"
                                         }
-                    ${collapsed ? "justify-center" : ""}
+                    ${isCollapsed ? "justify-center" : ""}
                   `}
-                                    title={collapsed ? item.label : undefined}
+                                    title={isCollapsed ? item.label : undefined}
                                 >
                                     <Icon className="w-5 h-5 shrink-0" />
-                                    <span className={collapsed ? "hidden" : "inline"}>
+                                    <span className={isCollapsed ? "hidden" : "inline"}>
                                         {item.label}
                                     </span>
                                 </Link>
@@ -122,23 +136,25 @@ export function Sidebar({ className }: { className?: string }) {
             </nav>
 
             {/* Collapse Toggle */}
-            <div className="p-2 border-t border-sidebar-border">
-                <button
-                    onClick={() => setCollapsed(!collapsed)}
-                    className="
-            mx-auto flex h-8 w-8 items-center justify-center rounded-lg
-            text-sidebar-foreground hover:bg-sidebar-accent/50
-            transition-colors duration-150
-          "
-                    aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                >
-                    {collapsed ? (
-                        <ChevronRight className="w-5 h-5" />
-                    ) : (
-                        <ChevronLeft className="w-5 h-5" />
-                    )}
-                </button>
-            </div>
+            {!hideCollapseToggle && forceCollapsed === undefined && (
+                <div className="p-2 border-t border-sidebar-border">
+                    <button
+                        onClick={() => setCollapsed(!collapsed)}
+                        className="
+                mx-auto flex h-8 w-8 items-center justify-center rounded-lg
+                text-sidebar-foreground hover:bg-sidebar-accent/50
+                transition-colors duration-150
+              "
+                        aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                    >
+                        {isCollapsed ? (
+                            <ChevronRight className="w-5 h-5" />
+                        ) : (
+                            <ChevronLeft className="w-5 h-5" />
+                        )}
+                    </button>
+                </div>
+            )}
         </aside>
     );
 }

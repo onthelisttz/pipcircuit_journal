@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { type ReactNode } from "react";
 import { AuthProvider, ThemeProvider } from "@ui/providers";
+import { ServiceWorkerRegistration } from "@ui/components/pwa/ServiceWorkerRegistration";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,6 +17,7 @@ export const metadata: Metadata = {
     shortcut: "/icon.svg",
     apple: "/icon.svg",
   },
+  manifest: "/manifest.webmanifest",
 };
 
 export default function RootLayout({
@@ -27,6 +29,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased" suppressHydrationWarning>
         <ThemeProvider>
+          <ServiceWorkerRegistration />
           <AuthProvider>{children}</AuthProvider>
         </ThemeProvider>
       </body>

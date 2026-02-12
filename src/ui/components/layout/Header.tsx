@@ -53,7 +53,7 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
     }, []);
 
     return (
-        <header className="sticky top-0 z-20 flex items-center justify-between h-16 px-6 bg-background/95 border-b border-border backdrop-blur">
+        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-border bg-background/95 px-1 backdrop-blur sm:px-3 md:px-6">
             {/* Left side - Menu toggle only (page title handled by pages themselves) */}
             <div className="flex items-center gap-4">
                 <button

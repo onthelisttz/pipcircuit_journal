@@ -34,12 +34,19 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                   className="absolute inset-0 bg-black/60"
                   onClick={() => setIsSidebarOpen(false)}
                 />
-                <Sidebar className="relative z-50 h-full shadow-xl" />
+                <Sidebar
+                  className="relative z-50 h-full shadow-xl"
+                  forceCollapsed
+                  hideCollapseToggle
+                  onNavigate={() => setIsSidebarOpen(false)}
+                />
               </div>
             )}
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
               <Header onMenuToggle={() => setIsSidebarOpen((prev) => !prev)} />
-              <main className="min-h-0 flex-1 overflow-y-auto px-6 pr-8 md:pr-10 pb-6 pt-0">{children}</main>
+              <main className="min-h-0 flex-1 overflow-y-auto px-1 pb-4 pt-0 sm:px-2 sm:pb-5 md:px-6 md:pr-10 md:pb-6">
+                {children}
+              </main>
             </div>
             <TradePanel />
             <ObservationPanel />
