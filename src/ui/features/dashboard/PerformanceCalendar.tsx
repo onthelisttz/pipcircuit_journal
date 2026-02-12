@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import {
   format,
   startOfMonth,
@@ -11,7 +11,6 @@ import {
   endOfDay,
   addDays,
   addMonths,
-  subMonths,
   isSameMonth,
 } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -56,15 +55,16 @@ export function PerformanceCalendar({
   onWeekClick,
   onMonthClick,
 }: PerformanceCalendarProps) {
-  const [viewMonth, setViewMonth] = useState<Date>(() =>
-    initialMonth ? startOfMonth(initialMonth) : startOfMonth(new Date())
+  const initialMonthMs = initialMonth?.getTime();
+  const baseMonth = useMemo(
+    () => startOfMonth(initialMonth ?? new Date()),
+    [initialMonth, initialMonthMs]
   );
-  // When top date range changes (initialMonth), sync calendar to that month
-  useEffect(() => {
-    if (initialMonth) {
-      setViewMonth(startOfMonth(initialMonth));
-    }
-  }, [initialMonth?.getTime()]);
+  const [monthOffset, setMonthOffset] = useState(0);
+  const viewMonth = useMemo(
+    () => addMonths(baseMonth, monthOffset),
+    [baseMonth, monthOffset]
+  );
   const { daily, loading: calendarLoading } = useCalendarMonthReturns(
     accountId,
     viewMonth,
@@ -132,8 +132,8 @@ export function PerformanceCalendar({
     });
   }, [weeks, byDate]);
 
-  const goPrev = () => setViewMonth((m) => subMonths(m, 1));
-  const goNext = () => setViewMonth((m) => addMonths(m, 1));
+  const goPrev = () => setMonthOffset((m) => m - 1);
+  const goNext = () => setMonthOffset((m) => m + 1);
 
   return (
     <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">

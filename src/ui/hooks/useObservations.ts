@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useCallback } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 import { startOfDay, endOfDay } from "date-fns";
 import type { Observation } from "@domain/entities";
-import { createObservationRepository } from "@infrastructure/db/createDualRepositories";
+import { db } from "@infrastructure/db/dexie/database";
 import { useAuth } from "@ui/hooks/useAuth";
 
 function toTimeMs(v: Date | string | undefined | null): number {
@@ -20,30 +21,24 @@ export interface UseObservationsFilters {
 
 export function useObservations(filters?: UseObservationsFilters) {
   const { user } = useAuth();
-  const repo = useMemo(() => createObservationRepository(user?.id), [user?.id]);
-  const [observations, setObservations] = useState<Observation[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const liveObservations = useLiveQuery(
+    async () => {
+      if (filters?.categoryId == null) {
+        return db.observations.filter((obs) => !obs.deletedAt).toArray();
+      }
+      return db.observations
+        .where("categoryId")
+        .equals(filters.categoryId)
+        .filter((obs) => !obs.deletedAt)
+        .toArray();
+    },
+    [filters?.categoryId, user?.id]
+  );
+  const observations = (liveObservations ?? []) as Observation[];
+  const isLoading = liveObservations === undefined;
+  const error = null;
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const list = await repo.list(filters?.categoryId ?? undefined);
-      setObservations(list);
-    } catch (err) {
-      setError(err instanceof Error ? err : new Error("Failed to load observations"));
-      setObservations([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [filters?.categoryId, repo]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const filtered = useMemo(() => {
+  const filtered = (() => {
     if (!filters?.from && !filters?.to) return observations;
     const fromMs = filters.from ? startOfDay(filters.from).getTime() : 0;
     const toMs = filters.to ? endOfDay(filters.to).getTime() : Number.MAX_SAFE_INTEGER;
@@ -51,7 +46,9 @@ export function useObservations(filters?: UseObservationsFilters) {
       const created = toTimeMs(obs.createdAt);
       return created >= fromMs && created <= toMs;
     });
-  }, [observations, filters?.from, filters?.to]);
+  })();
 
-  return { observations: filtered, isLoading, error, refetch: load };
+  const refetch = useCallback(async () => {}, []);
+
+  return { observations: filtered, isLoading, error, refetch };
 }

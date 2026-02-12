@@ -1,4 +1,4 @@
-import type { ChartBar } from "@domain/entities";
+import type { ChartBar, ChartTimeframe } from "@domain/entities";
 import type { SyncJob } from "@domain/entities/SyncJob";
 import { db } from "@infrastructure/db/dexie/database";
 import { SyncAction, SyncStatus } from "@domain/enums";
@@ -138,7 +138,7 @@ export class SupabaseSyncQueue {
           const chartBars: ChartBar[] = payload.bars.map(bar => ({
             broker: bar.broker,
             symbol: bar.symbol,
-            timeframe: bar.timeframe as any,
+            timeframe: bar.timeframe as ChartTimeframe,
             timestamp: bar.timestamp,
             open: bar.open,
             high: bar.high,

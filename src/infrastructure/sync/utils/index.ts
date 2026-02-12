@@ -8,3 +8,4 @@ export {
   defaultRetryCondition,
 } from "./retry";
 export type { RetryOptions, RetryResult } from "./retry";
+export { createUuid, getOrCreateDeviceId } from "./identity";

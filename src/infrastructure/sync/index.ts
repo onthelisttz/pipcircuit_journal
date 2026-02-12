@@ -15,4 +15,9 @@ export type { SyncOrchestratorOptions } from "./SyncOrchestrator";
 export { RealtimeSubscriptionManager } from "./RealtimeSubscriptionManager";
 export type { RealtimeCallbacks } from "./RealtimeSubscriptionManager";
 export { progressEventEmitter } from "./ProgressEventEmitter";
+export { JournalDeltaSyncService } from "./JournalDeltaSyncService";
+export type {
+  JournalDeltaPullResult,
+  JournalReconnectResult,
+} from "./JournalDeltaSyncService";
 export * from "./utils";

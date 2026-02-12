@@ -1,34 +1,21 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useCallback } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 import type { ObservationCategory } from "@domain/entities";
-import { createObservationRepository } from "@infrastructure/db/createDualRepositories";
+import { db } from "@infrastructure/db/dexie/database";
 import { useAuth } from "@ui/hooks/useAuth";
 
 export function useObservationCategories() {
   const { user } = useAuth();
-  const repo = useMemo(() => createObservationRepository(user?.id), [user?.id]);
-  const [categories, setCategories] = useState<ObservationCategory[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const liveCategories = useLiveQuery(
+    () => db.observation_categories.filter((category) => !category.deletedAt).sortBy("name"),
+    [user?.id]
+  );
+  const categories = (liveCategories ?? []) as ObservationCategory[];
+  const isLoading = liveCategories === undefined;
+  const error = null;
+  const refetch = useCallback(async () => {}, []);
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const list = await repo.listCategories();
-      setCategories(list);
-    } catch (err) {
-      setError(err instanceof Error ? err : new Error("Failed to load categories"));
-      setCategories([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [repo]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  return { categories, isLoading, error, refetch: load };
+  return { categories, isLoading, error, refetch };
 }

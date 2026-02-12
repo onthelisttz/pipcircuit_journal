@@ -12,6 +12,12 @@ const protoLiveHost = process.env.CTRADER_PROTO_HOST_LIVE ?? "live.ctraderapi.co
 const protoDemoHost = process.env.CTRADER_PROTO_HOST_DEMO ?? "demo.ctraderapi.com";
 const protoPort = Number(process.env.CTRADER_PROTO_PORT ?? "5035");
 
+type CTraderConnectionLike = {
+  open: () => Promise<void>;
+  close: () => void;
+  sendCommand: (cmd: string, args: object) => Promise<Record<string, unknown>>;
+};
+
 async function fetchAccountsViaHttp(accessToken: string): Promise<Record<string, unknown>[]> {
   const response = await fetch(
     `https://api.spotware.com/connect/tradingaccounts?access_token=${encodeURIComponent(
@@ -69,7 +75,10 @@ async function fetchAccountsViaProtobuf(
   await ensureProtoFiles();
   const require = createRequire(import.meta.url);
   const { CTraderConnection } = require("@reiryoku/ctrader-layer") as {
-    CTraderConnection: new (args: { host: string; port: number }) => any;
+    CTraderConnection: new (args: {
+      host: string;
+      port: number;
+    }) => CTraderConnectionLike;
   };
   const connection = new CTraderConnection({ host, port: protoPort });
   try {

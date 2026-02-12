@@ -1,5 +1,12 @@
 import type { AppDexie } from "./database";
-import { DEXIE_SCHEMA_V1, DEXIE_SCHEMA_V2, DEXIE_SCHEMA_V3, DEXIE_SCHEMA_V4 } from "./schema";
+import {
+  DEXIE_SCHEMA_V1,
+  DEXIE_SCHEMA_V2,
+  DEXIE_SCHEMA_V3,
+  DEXIE_SCHEMA_V4,
+  DEXIE_SCHEMA_V5,
+  DEXIE_SCHEMA_V6,
+} from "./schema";
 
 export function registerMigrations(db: AppDexie): void {
   // Initial schema
@@ -9,6 +16,15 @@ export function registerMigrations(db: AppDexie): void {
   db.version(2)
     .stores(DEXIE_SCHEMA_V2)
     .upgrade(async (tx) => {
+      type MigrationChartBarRow = {
+        id?: number;
+        broker?: string;
+        syncedAt?: Date | null;
+      };
+      type MigrationAccountRow = {
+        id?: number;
+        broker?: string;
+      };
       
 
       // 1. Migrate chart_bars: Add broker field
@@ -18,19 +34,19 @@ export function registerMigrations(db: AppDexie): void {
       if (chartBars.length > 0) {
         
 
-        // Try to derive broker from accounts if possible (future use)
-        const accounts = await tx.table("accounts").toCollection().toArray();
-        const accountMap = new Map<string, string>();
-        for (const account of accounts) {
-          if (account.id && (account as any).broker) {
-            accountMap.set(String(account.id), (account as any).broker as string);
-          }
+      // Try to derive broker from accounts if possible (future use)
+      const accounts = await tx.table("accounts").toCollection().toArray();
+      const accountMap = new Map<string, string>();
+      for (const account of accounts as MigrationAccountRow[]) {
+        if (account.id && account.broker) {
+          accountMap.set(String(account.id), account.broker);
         }
+      }
 
-        const updates = chartBars.map((bar: any) => ({
-          ...bar,
-          broker: bar.broker || "Unknown", // Will be corrected during sync
-          syncedAt: bar.syncedAt || null,
+      const updates = (chartBars as MigrationChartBarRow[]).map((bar) => ({
+        ...bar,
+        broker: bar.broker || "Unknown", // Will be corrected during sync
+        syncedAt: bar.syncedAt || null,
         }));
 
         await tx.table("chart_bars").bulkPut(updates);
@@ -56,11 +72,99 @@ export function registerMigrations(db: AppDexie): void {
   db.version(3).stores(DEXIE_SCHEMA_V3);
 
   // v4: Add table index to sync_queue for Supabase sync queue queries
-  db.version(4)
-    .stores(DEXIE_SCHEMA_V4)
+  db.version(4).stores(DEXIE_SCHEMA_V4);
+
+  // v5: Add remoteId indexes for non-bar entities and queue dedupe indexes
+  db.version(5)
+    .stores(DEXIE_SCHEMA_V5)
     .upgrade(async (tx) => {
-      
-      // No data migration needed, just schema update
-      
+      type RemoteTrackableRow = {
+        id?: number;
+        remoteId?: number;
+        syncedAt?: Date | null;
+        version?: number | null;
+      };
+
+      // Backfill remoteId for entities that are already known to be synced.
+      // We only infer remoteId for rows carrying sync metadata to avoid
+      // accidentally linking local-only rows to wrong remote IDs.
+      const notes = await tx.table("trade_notes").toCollection().toArray();
+      for (const note of notes as RemoteTrackableRow[]) {
+        if (note.remoteId == null && note.id != null && (note.syncedAt || note.version != null)) {
+          await tx.table("trade_notes").update(note.id, { remoteId: note.id });
+        }
+      }
+
+      const observations = await tx.table("observations").toCollection().toArray();
+      for (const observation of observations as RemoteTrackableRow[]) {
+        if (
+          observation.remoteId == null &&
+          observation.id != null &&
+          (observation.syncedAt || observation.version != null)
+        ) {
+          await tx.table("observations").update(observation.id, { remoteId: observation.id });
+        }
+      }
+    });
+
+  // v6: Add clientId/tombstone metadata indexes + queue diagnostics indexes
+  db.version(6)
+    .stores(DEXIE_SCHEMA_V6)
+    .upgrade(async (tx) => {
+      type IdentityRow = {
+        id?: number;
+        clientId?: string;
+        version?: number | null;
+        updatedAt?: Date | string | null;
+        createdAt?: Date | string | null;
+      };
+
+      const createUuid = (): string => {
+        if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+          return crypto.randomUUID();
+        }
+        const segment = () =>
+          Math.floor((1 + Math.random()) * 0x10000)
+            .toString(16)
+            .slice(1);
+        return `${segment()}${segment()}-${segment()}-${segment()}-${segment()}-${segment()}${segment()}${segment()}`;
+      };
+
+      const ensureIdentity = async (tableName: string) => {
+        const rows = await tx.table(tableName).toCollection().toArray();
+        for (const row of rows as IdentityRow[]) {
+          if (row.id == null) continue;
+          const updates: Record<string, unknown> = {};
+
+          if (!row.clientId) {
+            updates.clientId = createUuid();
+          }
+          if (row.version == null) {
+            updates.version = 1;
+          }
+
+          if (Object.keys(updates).length > 0) {
+            await tx.table(tableName).update(row.id, updates);
+          }
+        }
+      };
+
+      await ensureIdentity("tags");
+      await ensureIdentity("trade_notes");
+      await ensureIdentity("observations");
+      await ensureIdentity("observation_categories");
+      await ensureIdentity("trade_tags");
+
+      // Keep pre-existing stuck jobs retryable after upgrade.
+      const queueRows = await tx.table("sync_queue").toCollection().toArray();
+      for (const row of queueRows as Array<{ id?: number; status?: string }>) {
+        if (row.id == null) continue;
+        if (row.status === "Syncing") {
+          await tx.table("sync_queue").update(row.id, {
+            status: "Pending",
+            nextRetryAt: null,
+          });
+        }
+      }
     });
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback, useEffect } from "react";
+import { useMemo, useState, useCallback } from "react";
 import type { Trade } from "@domain/entities";
 import { Direction } from "@domain/enums";
 import { format } from "date-fns";
@@ -216,16 +216,12 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
     };
   }, [trades]);
 
-  const paginatedTrades = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE;
-    return sortedTrades.slice(start, start + PAGE_SIZE);
-  }, [sortedTrades, page]);
-
   const totalPages = Math.max(1, Math.ceil(sortedTrades.length / PAGE_SIZE));
-
-  useEffect(() => {
-    if (page > totalPages) setPage(1);
-  }, [page, totalPages]);
+  const currentPage = Math.min(page, totalPages);
+  const paginatedTrades = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return sortedTrades.slice(start, start + PAGE_SIZE);
+  }, [sortedTrades, currentPage]);
 
   const allIds = useMemo(
     () => trades.map((t) => t.id).filter((id): id is number => id != null),
@@ -500,7 +496,7 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
         <span className="text-sm text-muted-foreground">
           {totalPages > 1 ? (
             <>
-              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, sortedTrades.length)} of {trades.length} trades
+              Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, sortedTrades.length)} of {trades.length} trades
             </>
           ) : (
             <>Total: {trades.length} trades</>
@@ -510,20 +506,20 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, Math.min(totalPages, p - 1)))}
+              disabled={currentPage <= 1}
               className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
               aria-label="Previous page"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <span className="text-sm font-medium px-2">
-              {page} / {totalPages}
+              {currentPage} / {totalPages}
             </span>
             <button
               type="button"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.max(1, Math.min(totalPages, p + 1)))}
+              disabled={currentPage >= totalPages}
               className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
               aria-label="Next page"
             >

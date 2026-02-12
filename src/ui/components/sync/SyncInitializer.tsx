@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@ui/hooks/useAuth";
@@ -14,7 +14,8 @@ import { useSyncProgress } from "@ui/hooks/useSyncProgress";
 import { isOnline, onConnectionChange } from "@infrastructure/sync/utils/connection";
 import { SupabaseSyncQueue } from "@infrastructure/sync/SupabaseSyncQueue";
 import { SupabaseChartBarRepository } from "@infrastructure/db/supabase/repositories";
-import { FullSyncService } from "@infrastructure/sync/FullSyncService";
+import { EntitySyncQueue } from "@infrastructure/sync/EntitySyncQueue";
+import { JournalDeltaSyncService } from "@infrastructure/sync/JournalDeltaSyncService";
 import { useFullSyncProgressStore } from "@ui/state/fullSyncProgressStore";
 import { HybridSyncChartBarsUseCase } from "@application/use-cases/sync";
 import { DexieChartBarRepository } from "@infrastructure/db/dexie/repositories";
@@ -53,7 +54,6 @@ export function SyncInitializer() {
       return;
     }
 
-    // Prevent multiple initializations
     if (isInitializing) {
       return;
     }
@@ -63,7 +63,6 @@ export function SyncInitializer() {
       initializedRef.current = true;
 
       try {
-        // Create use cases (progressRepo from component scope - Dual when user.id, updates both Dexie + Supabase)
         const tradeRepo = new DexieTradeRepository();
         const accountRepo = new DexieAccountRepository();
 
@@ -77,83 +76,58 @@ export function SyncInitializer() {
           planUseCase
         );
 
-        // Initialize sync (creates plans, doesn't execute them yet)
-        
         const result = await initUseCase.execute({
           userId: user.id,
           forceFull: false,
         });
-        
 
         if (result.success && result.plans.length > 0) {
-          
-
-          // Reload progress to show new plans
-          
-          // Add a small delay to ensure Dexie transaction is committed
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise((resolve) => setTimeout(resolve, 200));
           await refresh();
-          
-          
-          // Force a second refresh after a bit more delay to ensure UI updates
+
           setTimeout(async () => {
-            
             await refresh();
-            
           }, 500);
-        } else {
-          if (result.error) {
-            console.error("[SyncInitializer] Sync initialization failed:", result.error);
-          } else {
-            
-          }
+        } else if (result.error) {
+          console.error("[SyncInitializer] Sync initialization failed:", result.error);
         }
 
-        // Process any queued Supabase syncs in background
         if (isOnline() && user.id) {
           try {
             const supabaseRepo = new SupabaseChartBarRepository(user.id);
-            const queueResult = await SupabaseSyncQueue.processQueue(supabaseRepo);
-            if (queueResult.processed > 0 || queueResult.failed > 0) {
-              
-            }
+            await SupabaseSyncQueue.processQueue(supabaseRepo);
           } catch (error) {
             console.warn("[SyncInitializer] Failed to process Supabase sync queue:", error);
           }
 
-          // Full data sync: push local to cloud, then pull (new device gets data, returning device merges)
           try {
-            startSync("Starting push…");
-            const fullSync = new FullSyncService(user.id);
-            const syncResult = await fullSync.sync({
-              onProgress: (step) => updateStep(step),
-            });
-            if (syncResult.push.success && syncResult.pull.success) {
-              
-              // Refresh symbol sync progress so Chart Data Sync UI reflects restored bars
-              await refresh();
-              
-            } else {
-              console.warn("[SyncInitializer] Full data sync had issues:", {
-                push: syncResult.push.error,
-                pull: syncResult.pull.error,
-              });
+            startSync("Pulling latest cloud changes...");
+            const reconnectSync = new JournalDeltaSyncService(user.id);
+            const reconnectResult = await reconnectSync.runReconnectFlow((step) =>
+              updateStep(step)
+            );
+            if (!reconnectResult.success) {
+              console.warn(
+                "[SyncInitializer] Journal reconnect flow finished with issues:",
+                reconnectResult
+              );
             }
+
+            await refresh();
           } catch (error) {
-            console.warn("[SyncInitializer] Full data sync failed:", error);
+            console.warn("[SyncInitializer] Journal reconnect flow failed:", error);
           } finally {
             finishSync();
           }
         }
       } catch (error) {
         console.error("[SyncInitializer] Failed to initialize sync:", error);
-        initializedRef.current = false; // Allow retry
+        initializedRef.current = false;
       } finally {
         setIsInitializing(false);
       }
     };
 
-    // Small delay to ensure everything is loaded
     const timeout = setTimeout(() => {
       void initializeSync();
     }, 1000);
@@ -161,16 +135,15 @@ export function SyncInitializer() {
     return () => {
       clearTimeout(timeout);
     };
-  }, [user?.id, isInitializing, refresh, progressRepo]);
+  }, [user?.id, isInitializing, refresh, progressRepo, startSync, updateStep, finishSync]);
 
-  // Reset initialization flag when user logs out
   useEffect(() => {
     if (!user?.id) {
       initializedRef.current = false;
     }
   }, [user?.id]);
 
-  // Process Supabase sync queue periodically in background
+  // Process sync queues periodically in background
   useEffect(() => {
     if (!user?.id || !isOnline()) {
       return;
@@ -179,29 +152,25 @@ export function SyncInitializer() {
     const processQueue = async () => {
       try {
         const supabaseRepo = new SupabaseChartBarRepository(user.id);
-        const result = await SupabaseSyncQueue.processQueue(supabaseRepo);
-        if (result.processed > 0) {
-          
-        }
+        await SupabaseSyncQueue.processQueue(supabaseRepo);
+        await EntitySyncQueue.processQueue(user.id);
       } catch (error) {
-        console.warn("[SyncInitializer] Error processing Supabase sync queue:", error);
+        console.warn("[SyncInitializer] Error processing sync queue:", error);
       }
     };
 
-    // Process immediately
     void processQueue();
 
-    // Then process every 5 minutes
     const interval = setInterval(() => {
       void processQueue();
-    }, 5 * 60 * 1000); // 5 minutes
+    }, 5 * 60 * 1000);
 
     return () => {
       clearInterval(interval);
     };
   }, [user?.id]);
 
-  // Periodic push-only sync: push local changes to cloud when online, honoring user auto-push settings
+  // Periodic auto-sync: flush queued local changes while online, honoring user settings
   useEffect(() => {
     if (!user?.id || !isOnline()) {
       return;
@@ -214,7 +183,6 @@ export function SyncInitializer() {
       if (!user?.id || !isOnline() || cancelled) return;
 
       try {
-        // Read auto-push settings from repository
         const settingsRepo = createSettingsRepository(user.id);
         const [enabledRec, intervalRec] = await Promise.all([
           settingsRepo.get("sync.autoPushEnabled"),
@@ -233,26 +201,21 @@ export function SyncInitializer() {
           return;
         }
 
-        const fullSync = new FullSyncService(user.id);
-        const result = await fullSync.pushToSupabase();
+        const result = await EntitySyncQueue.processQueue(user.id);
         lastPushAt = Date.now();
 
-        if (result.success) {
-          
-        } else {
-          console.warn("[SyncInitializer] Periodic auto-push failed:", result.error);
+        if (result.failed > 0) {
+          console.warn("[SyncInitializer] Periodic auto-push failed:", result);
         }
       } catch (error) {
         console.warn("[SyncInitializer] Periodic auto-push error:", error);
       }
     };
 
-    // Check settings once a minute and decide whether it's time to push
     const interval = setInterval(() => {
       void tick();
-    }, 60 * 1000); // 1 minute
+    }, 60 * 1000);
 
-    // Kick off an immediate check on mount
     void tick();
 
     return () => {
@@ -273,45 +236,39 @@ export function SyncInitializer() {
       }
 
       try {
-        
         const allProgress = await progressRepo.getAll();
-        
-        // Find syncs that are stuck (syncing status but no recent activity)
+
         const stuckSyncs = allProgress.filter((p) => {
           if (p.status !== "syncing") return false;
-          
-          // Consider stuck if lastSyncTime is more than 5 minutes ago
+
           if (p.lastSyncTime) {
             const timeSinceLastSync = Date.now() - new Date(p.lastSyncTime).getTime();
-            return timeSinceLastSync > 5 * 60 * 1000; // 5 minutes
+            return timeSinceLastSync > 5 * 60 * 1000;
           }
-          
-          // Or if no lastSyncTime but has progress (might be stuck)
-          return p.progressPercent !== undefined && p.progressPercent > 0 && p.progressPercent < 100;
+
+          return (
+            p.progressPercent !== undefined &&
+            p.progressPercent > 0 &&
+            p.progressPercent < 100
+          );
         });
 
         if (stuckSyncs.length === 0) {
-          
           return;
         }
-
-        
 
         const token = TokenStorage.getGlobal();
         if (!token) {
-          console.warn(`[SyncInitializer] No access token, cannot resume syncs`);
+          console.warn("[SyncInitializer] No access token, cannot resume syncs");
           return;
         }
 
-        // Resume each stuck sync
         for (const progress of stuckSyncs) {
           try {
-            
-            
             const dexieChartRepo = new DexieChartBarRepository();
             const supabaseChartRepo = new SupabaseChartBarRepository(user.id);
             const api = new CTraderAPI();
-            
+
             const syncUseCase = new HybridSyncChartBarsUseCase(
               api,
               dexieChartRepo,
@@ -319,33 +276,38 @@ export function SyncInitializer() {
               progressRepo
             );
 
-            // Resume from last sync time or continue from current progress
-            const fromDate = progress.lastSyncTime 
+            const fromDate = progress.lastSyncTime
               ? new Date(progress.lastSyncTime)
-              : progress.firstBarDate 
+              : progress.firstBarDate
               ? new Date(progress.firstBarDate)
               : new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-            
-            const toDate = progress.lastBarDate 
+
+            const toDate = progress.lastBarDate
               ? new Date(progress.lastBarDate)
               : new Date();
 
-            // Resume sync (don't await - let it run in background)
-            syncUseCase.execute({
-              userId: user.id,
-              broker: progress.broker,
-              symbol: progress.symbol,
-              fromDate,
-              toDate,
-              accessToken: token.accessToken,
-            }).catch((error) => {
-              console.error(`[SyncInitializer] Failed to resume sync for ${progress.symbol}:`, error);
-            });
+            syncUseCase
+              .execute({
+                userId: user.id,
+                broker: progress.broker,
+                symbol: progress.symbol,
+                fromDate,
+                toDate,
+                accessToken: token.accessToken,
+              })
+              .catch((error) => {
+                console.error(
+                  `[SyncInitializer] Failed to resume sync for ${progress.symbol}:`,
+                  error
+                );
+              });
 
-            // Small delay between resumes to avoid overwhelming the API
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise((resolve) => setTimeout(resolve, 1000));
           } catch (error) {
-            console.error(`[SyncInitializer] Error resuming sync for ${progress.symbol}:`, error);
+            console.error(
+              `[SyncInitializer] Error resuming sync for ${progress.symbol}:`,
+              error
+            );
           }
         }
       } catch (error) {
@@ -353,28 +315,38 @@ export function SyncInitializer() {
       }
     };
 
-    // Subscribe to connection changes
+    const runReconnectFlow = async () => {
+      if (!user?.id || !isOnline()) return;
+      try {
+        startSync("Pulling latest cloud changes...");
+        const reconnectSync = new JournalDeltaSyncService(user.id);
+        const result = await reconnectSync.runReconnectFlow((step) => updateStep(step));
+        if (!result.success) {
+          console.warn("[SyncInitializer] Reconnect flow finished with issues:", result);
+        }
+      } catch (error) {
+        console.warn("[SyncInitializer] Reconnect flow failed:", error);
+      } finally {
+        finishSync();
+      }
+    };
+
     const unsubscribe = onConnectionChange((online) => {
       if (online && user?.id) {
-        // Network reconnected, check for stuck syncs
-        
         void resumeStuckSyncs();
-        // Push local data changes to cloud when back online
-        void new FullSyncService(user.id).pushToSupabase().then((r) => {
-          if (!r.success) console.warn("[SyncInitializer] Reconnect sync push failed:", r.error);
-        });
+        void runReconnectFlow();
       }
     });
 
-    // Also check on mount if online
     if (isOnline() && user?.id) {
       void resumeStuckSyncs();
+      void runReconnectFlow();
     }
 
     return () => {
       unsubscribe();
     };
-  }, [user?.id, progressRepo]);
+  }, [user?.id, progressRepo, startSync, updateStep, finishSync]);
 
-  return null; // This component doesn't render anything
+  return null;
 }

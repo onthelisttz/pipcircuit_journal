@@ -12,6 +12,12 @@ const protoLiveHost = process.env.CTRADER_PROTO_HOST_LIVE ?? "live.ctraderapi.co
 const protoDemoHost = process.env.CTRADER_PROTO_HOST_DEMO ?? "demo.ctraderapi.com";
 const protoPort = Number(process.env.CTRADER_PROTO_PORT ?? "5035");
 
+type CTraderConnectionLike = {
+  open: () => Promise<void>;
+  close: () => void;
+  sendCommand: (cmd: string, args: object) => Promise<Record<string, unknown>>;
+};
+
 type TradeRecord = {
   ticketId: string;
   orderId: string;
@@ -118,7 +124,7 @@ function getAccountHost(account: Record<string, unknown> | undefined): string {
 }
 
 async function getAssetMap(
-  connection: any,
+  connection: CTraderConnectionLike,
   accountId: number
 ): Promise<Map<number, string>> {
   const res = await connection.sendCommand("ProtoOAAssetListReq", {
@@ -138,7 +144,7 @@ async function getAssetMap(
 }
 
 async function getSymbolMap(
-  connection: any,
+  connection: CTraderConnectionLike,
   accountId: number
 ): Promise<Map<number, string>> {
   const [symbolsRes, assetMap] = await Promise.all([
@@ -216,7 +222,7 @@ function toNumber(v: unknown): number | undefined {
 }
 
 async function getSymbolNamesById(
-  connection: any,
+  connection: CTraderConnectionLike,
   accountId: number,
   symbolIds: number[]
 ): Promise<Map<number, string>> {
@@ -304,7 +310,10 @@ export async function POST(request: Request) {
     const host = getAccountHost(account);
     const require = createRequire(import.meta.url);
     const { CTraderConnection } = require("@reiryoku/ctrader-layer") as {
-      CTraderConnection: new (args: { host: string; port: number }) => any;
+      CTraderConnection: new (args: {
+        host: string;
+        port: number;
+      }) => CTraderConnectionLike;
     };
     const connection = new CTraderConnection({ host, port: protoPort });
 

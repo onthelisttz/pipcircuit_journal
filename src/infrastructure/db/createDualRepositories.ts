@@ -68,7 +68,10 @@ export function createTagRepository(userId: string | undefined): ITagRepository 
   const resolveTagId = async (dexieTagId: number): Promise<number | null> => {
     const tag = await dexieTag.getById(dexieTagId);
     if (!tag) return null;
-    const supabaseTagObj = await supabaseTag.getByNameAndCategory(tag.name, tag.category);
+    if (tag.remoteId != null) return tag.remoteId;
+    const supabaseTagObj = tag.clientId
+      ? await supabaseTag.getByClientId(tag.clientId)
+      : await supabaseTag.getByNameAndCategory(tag.name, tag.category);
     return supabaseTagObj?.id ?? null;
   };
   return new DualTagRepository(dexie, new SupabaseTagRepository(userId), resolveTradeId, resolveTagId);
@@ -83,7 +86,10 @@ export function createObservationRepository(userId: string | undefined): IObserv
     const categories = await dexieObs.listCategories();
     const cat = categories.find((c) => c.id === dexieCatId);
     if (!cat) return null;
-    const supabaseCat = await supabaseObs.getCategoryByName(cat.name);
+    if (cat.remoteId != null) return cat.remoteId;
+    const supabaseCat = cat.clientId
+      ? await supabaseObs.getCategoryByClientId(cat.clientId)
+      : await supabaseObs.getCategoryByName(cat.name);
     return supabaseCat?.id ?? null;
   };
   return new DualObservationRepository(dexie, new SupabaseObservationRepository(userId), resolveCategoryId);

@@ -241,8 +241,8 @@ export class HybridSyncChartBarsUseCase {
         existingProgress?.lastBarDate &&
         fromDate.getTime() >= existingLastBar - 86400000; // fromDate at or near lastBarDate = incremental
 
-      let baseTotalBars = isIncrementalSync && existingProgress ? existingProgress.totalBars : 0;
-      let preservedFirstBarDate: Date | null =
+      const baseTotalBars = isIncrementalSync && existingProgress ? existingProgress.totalBars : 0;
+      const preservedFirstBarDate: Date | null =
         isIncrementalSync && existingProgress?.firstBarDate
           ? new Date(existingProgress.firstBarDate)
           : null;

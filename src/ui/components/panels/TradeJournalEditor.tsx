@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { TextStyle, Color, FontSize } from "@tiptap/extension-text-style";
@@ -12,6 +12,30 @@ import { Loader2, Check, ImagePlus, Bold, Italic, List, ListOrdered, Quote, Pale
 interface TradeJournalEditorProps {
   tradeId: number;
   initialComment?: string | null;
+}
+
+interface ToolbarButtonProps {
+  onClick: () => void;
+  active?: boolean;
+  children: ReactNode;
+  title: string;
+}
+
+function ToolbarButton({ onClick, active, children, title }: ToolbarButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`rounded p-1.5 ${
+        active
+          ? "bg-muted text-foreground"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
 }
 
 export function TradeJournalEditor({ tradeId, initialComment }: TradeJournalEditorProps) {
@@ -170,27 +194,6 @@ export function TradeJournalEditor({ tradeId, initialComment }: TradeJournalEdit
       </p>
     );
   }
-
-  const ToolbarButton = ({
-    onClick,
-    active,
-    children,
-    title,
-  }: {
-    onClick: () => void;
-    active?: boolean;
-    children: React.ReactNode;
-    title: string;
-  }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      className={`rounded p-1.5 ${active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-    >
-      {children}
-    </button>
-  );
 
   return (
     <div className="space-y-2">

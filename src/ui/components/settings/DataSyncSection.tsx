@@ -1,17 +1,22 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Cloud, CloudOff } from "lucide-react";
+import { RefreshCw, Cloud, CloudOff, RotateCcw } from "lucide-react";
 import { useAuth } from "@ui/hooks/useAuth";
-import { FullSyncService } from "@infrastructure/sync/FullSyncService";
+import { useEntityQueueStatus } from "@ui/hooks";
+import { EntitySyncQueue } from "@infrastructure/sync/EntitySyncQueue";
+import { JournalDeltaSyncService } from "@infrastructure/sync/JournalDeltaSyncService";
 import { isOnline } from "@infrastructure/sync/utils/connection";
 import { useFullSyncProgressStore } from "@ui/state/fullSyncProgressStore";
 import { createSettingsRepository } from "@infrastructure/db/createDualRepositories";
 
 export function DataSyncSection() {
   const { user } = useAuth();
+  const { status: queueStatus } = useEntityQueueStatus();
   const [isSyncingLocal, setIsSyncingLocal] = useState(false);
   const [lastSync, setLastSync] = useState<{ success: boolean; error?: string } | null>(null);
+  const [retryNotice, setRetryNotice] = useState<string | null>(null);
+  const [isRetryingFailed, setIsRetryingFailed] = useState(false);
   const [autoPushEnabled, setAutoPushEnabled] = useState(false);
   const [autoPushMinutes, setAutoPushMinutes] = useState<number>(10);
   const { syncStep, isSyncing: isSyncingStore, startSync, updateStep, finishSync } =
@@ -20,7 +25,6 @@ export function DataSyncSection() {
   const isSyncing = isSyncingStore || isSyncingLocal;
   const displayStep = syncStep;
 
-  // Load auto-push settings on mount / user change
   useEffect(() => {
     if (!user?.id) {
       setAutoPushEnabled(false);
@@ -70,16 +74,22 @@ export function DataSyncSection() {
 
     setIsSyncingLocal(true);
     setLastSync(null);
-    startSync("Starting…");
+    setRetryNotice(null);
+    startSync("Pulling latest cloud changes...");
 
     try {
-      const fullSync = new FullSyncService(user.id);
-      const result = await fullSync.sync({
-        onProgress: (step) => updateStep(step),
-      });
-      const success = result.push.success && result.pull.success;
-      const error = result.push.error ?? result.pull.error;
-      setLastSync({ success, error });
+      const reconnectSync = new JournalDeltaSyncService(user.id);
+      const result = await reconnectSync.runReconnectFlow((step) => updateStep(step));
+
+      if (!result.success) {
+        setLastSync({
+          success: false,
+          error: result.error ?? "Sync finished with errors",
+        });
+        return;
+      }
+
+      setLastSync({ success: true });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setLastSync({ success: false, error: msg });
@@ -89,17 +99,35 @@ export function DataSyncSection() {
     }
   }, [user?.id, startSync, updateStep, finishSync]);
 
+  const handleRetryFailed = useCallback(async () => {
+    setIsRetryingFailed(true);
+    setRetryNotice(null);
+
+    try {
+      const retried = await EntitySyncQueue.retryFailed();
+      if (retried === 0) {
+        setRetryNotice("No failed jobs to retry.");
+      } else {
+        setRetryNotice(`Moved ${retried} failed job(s) back to pending.`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setRetryNotice(`Failed to retry jobs: ${message}`);
+    } finally {
+      setIsRetryingFailed(false);
+    }
+  }, []);
+
   const online = isOnline();
 
   return (
-    <section className="rounded-xl border border-border bg-card p-6 space-y-4">
+    <section className="space-y-4 rounded-xl border border-border bg-card p-6">
       <div className="space-y-3">
         <div>
           <h2 className="text-xl font-semibold text-foreground">Data Sync</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Sync trades, accounts, notes, tags, observations, settings, daily summaries, and chart
-            sync progress (completed/pending) to the cloud. Chart bar data is synced separately in
-            Chart Data Sync.
+            Sync notes, tags, observations, and linked trade tags across devices with offline
+            outbox replay and conflict-safe reconciliation.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -119,7 +147,7 @@ export function DataSyncSection() {
           <button
             onClick={() => void handleSyncNow()}
             disabled={!user?.id || !online || isSyncing}
-            className="flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             <RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
             {isSyncing ? "Syncing..." : "Sync now"}
@@ -127,14 +155,57 @@ export function DataSyncSection() {
         </div>
       </div>
 
-      {/* Auto-push settings */}
-        <div className="rounded-lg border border-border bg-muted/40 p-4">
-          <div className="flex items-center justify-between gap-4">
-            <div>
+      <div className="rounded-lg border border-border bg-muted/40 p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-foreground">Outbox status</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Pending jobs sync automatically when online. Failed jobs stay visible until retried.
+            </p>
+          </div>
+          <button
+            onClick={() => void handleRetryFailed()}
+            disabled={queueStatus.failed === 0 || isRetryingFailed}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RotateCcw className={`h-3.5 w-3.5 ${isRetryingFailed ? "animate-spin" : ""}`} />
+            Retry failed
+          </button>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+          <div className="rounded-md border border-border bg-background px-3 py-2">
+            <p className="text-muted-foreground">Pending</p>
+            <p className="mt-1 text-sm font-semibold text-foreground">{queueStatus.pending}</p>
+          </div>
+          <div className="rounded-md border border-border bg-background px-3 py-2">
+            <p className="text-muted-foreground">Retrying</p>
+            <p className="mt-1 text-sm font-semibold text-foreground">{queueStatus.retrying}</p>
+          </div>
+          <div className="rounded-md border border-border bg-background px-3 py-2">
+            <p className="text-muted-foreground">Syncing</p>
+            <p className="mt-1 text-sm font-semibold text-foreground">{queueStatus.syncing}</p>
+          </div>
+          <div className="rounded-md border border-border bg-background px-3 py-2">
+            <p className="text-muted-foreground">Failed</p>
+            <p
+              className={`mt-1 text-sm font-semibold ${
+                queueStatus.failed > 0 ? "text-destructive" : "text-foreground"
+              }`}
+            >
+              {queueStatus.failed}
+            </p>
+          </div>
+        </div>
+        {retryNotice && <p className="mt-3 text-xs text-muted-foreground">{retryNotice}</p>}
+      </div>
+
+      <div className="rounded-lg border border-border bg-muted/40 p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
             <p className="text-sm font-medium text-foreground">Auto-push while online</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              When enabled, local changes are pushed to the cloud automatically while you&apos;re
-              online. Full sync still runs on login or when you click &quot;Sync now&quot;.
+              When enabled, local changes are pushed to the cloud automatically while you are
+              online. Manual sync always runs pull-replay-pull.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -209,8 +280,8 @@ export function DataSyncSection() {
             <>
               <p>{lastSync.error ?? "Sync failed."}</p>
               <p className="mt-1 text-xs text-destructive/80">
-                Your local data is still safe. You can keep working offline and try syncing
-                again when your connection or Supabase is healthy.
+                Your local data is still safe. You can keep working offline and retry when the
+                connection or cloud service is healthy.
               </p>
             </>
           )}
@@ -225,3 +296,4 @@ export function DataSyncSection() {
     </section>
   );
 }
+

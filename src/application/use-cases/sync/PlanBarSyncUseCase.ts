@@ -25,6 +25,10 @@ export interface PlanBarSyncParams {
   includeCompleted?: boolean;
 }
 
+type ProgressRepositoryWithBatchUpsert = ISymbolSyncProgressRepository & {
+  upsertMany?: (records: SymbolSyncProgress[]) => Promise<void>;
+};
+
 /**
  * PlanBarSyncUseCase
  *
@@ -130,7 +134,7 @@ export class PlanBarSyncUseCase {
       if (progressRecordsToUpsert.length > 0) {
         
         try {
-          const repo = this.progressRepository as any;
+          const repo = this.progressRepository as ProgressRepositoryWithBatchUpsert;
           if (repo.upsertMany) {
             
             await repo.upsertMany(progressRecordsToUpsert);

@@ -22,3 +22,4 @@ export { useSyncProgress } from "./useSyncProgress";
 export { useSymbolProgress } from "./useSymbolProgress";
 export { useOverallProgress } from "./useOverallProgress";
 export { useRealtimeSync } from "./useRealtimeSync";
+export { useEntityQueueStatus } from "./useEntityQueueStatus";

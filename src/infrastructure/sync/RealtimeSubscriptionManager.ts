@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { ChartBar, SymbolSyncProgress } from "@domain/entities";
 import { getSupabaseClient } from "@infrastructure/db/supabase/client";
 import { progressEventEmitter } from "./ProgressEventEmitter";
@@ -9,7 +9,58 @@ export interface RealtimeCallbacks {
   onChartBarUpdate?: (bar: ChartBar) => void;
   onChartBarDelete?: (barId: number) => void;
   onProgressUpdate?: (progress: SymbolSyncProgress) => void;
+  onEntityRealtimeEvent?: (event: {
+    table:
+      | "tags"
+      | "trade_tags"
+      | "trade_notes"
+      | "observations"
+      | "observation_categories";
+    eventType: "INSERT" | "UPDATE" | "DELETE";
+    newRow: Record<string, unknown> | null;
+    oldRow: Record<string, unknown> | null;
+  }) => void;
   onConnectionChange?: (connected: boolean) => void;
+}
+
+type ChartBarRealtimeRow = {
+  id?: number;
+  broker?: string;
+  symbol?: string;
+  timeframe?: ChartBar["timeframe"];
+  timestamp?: number;
+  open?: number | string;
+  high?: number | string;
+  low?: number | string;
+  close?: number | string;
+  volume?: number | string;
+  synced_at?: string | null;
+};
+
+type SyncProgressRealtimeRow = {
+  id?: number;
+  broker?: string;
+  symbol?: string;
+  first_bar_date?: string | null;
+  last_bar_date?: string | null;
+  last_sync_time?: string | null;
+  total_bars?: number | null;
+  status?: SymbolSyncProgress["status"];
+  error?: string | null;
+  progress_percent?: number | null;
+};
+
+function asNumber(value: unknown, fallback: number = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function asString(value: unknown, fallback: string = ""): string {
+  return typeof value === "string" ? value : fallback;
 }
 
 /**
@@ -20,7 +71,7 @@ export interface RealtimeCallbacks {
  */
 export class RealtimeSubscriptionManager {
   private supabase: SupabaseClient;
-  private subscriptions: Map<string, any> = new Map();
+  private subscriptions: Map<string, RealtimeChannel> = new Map();
   private isConnected: boolean = false;
   private userId: string | null = null;
   private callbacks: RealtimeCallbacks = {};
@@ -69,6 +120,7 @@ export class RealtimeSubscriptionManager {
       } else {
         
       }
+      await this.subscribeToJournalEntities(userId);
 
       this.isConnected = true;
       this.callbacks.onConnectionChange?.(true);
@@ -118,7 +170,9 @@ export class RealtimeSubscriptionManager {
         },
         (payload) => {
           try {
-            const bar = this.mapChartBarFromSupabase(payload.new as any);
+            const bar = this.mapChartBarFromSupabase(
+              (payload.new ?? {}) as ChartBarRealtimeRow
+            );
             
             switch (payload.eventType) {
               case "INSERT":
@@ -164,7 +218,9 @@ export class RealtimeSubscriptionManager {
         },
         (payload) => {
           try {
-            const progress = this.mapProgressFromSupabase(payload.new as any);
+            const progress = this.mapProgressFromSupabase(
+              (payload.new ?? {}) as SyncProgressRealtimeRow
+            );
             
             // Emit progress event for store updates
             progressEventEmitter.emit(progress);
@@ -184,7 +240,7 @@ export class RealtimeSubscriptionManager {
             this.skipSyncProgressRealtime = true;
             try {
               channel.unsubscribe();
-            } catch (_) {}
+            } catch {}
             this.subscriptions.delete("symbol_sync_progress");
             console.warn(
               "[Realtime] symbol_sync_progress subscription disabled (Realtime may not be enabled for this table in Supabase). Full sync still works."
@@ -206,20 +262,123 @@ export class RealtimeSubscriptionManager {
   }
 
   /**
+   * Subscribe to journal table changes (notes/tags/observations)
+   */
+  private async subscribeToJournalEntities(userId: string): Promise<void> {
+    const channel = this.supabase
+      .channel(`journal_entities:${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "tags",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          this.callbacks.onEntityRealtimeEvent?.({
+            table: "tags",
+            eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
+            newRow: (payload.new as Record<string, unknown>) ?? null,
+            oldRow: (payload.old as Record<string, unknown>) ?? null,
+          });
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "trade_tags",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          this.callbacks.onEntityRealtimeEvent?.({
+            table: "trade_tags",
+            eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
+            newRow: (payload.new as Record<string, unknown>) ?? null,
+            oldRow: (payload.old as Record<string, unknown>) ?? null,
+          });
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "trade_notes",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          this.callbacks.onEntityRealtimeEvent?.({
+            table: "trade_notes",
+            eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
+            newRow: (payload.new as Record<string, unknown>) ?? null,
+            oldRow: (payload.old as Record<string, unknown>) ?? null,
+          });
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "observations",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          this.callbacks.onEntityRealtimeEvent?.({
+            table: "observations",
+            eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
+            newRow: (payload.new as Record<string, unknown>) ?? null,
+            oldRow: (payload.old as Record<string, unknown>) ?? null,
+          });
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "observation_categories",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          this.callbacks.onEntityRealtimeEvent?.({
+            table: "observation_categories",
+            eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
+            newRow: (payload.new as Record<string, unknown>) ?? null,
+            oldRow: (payload.old as Record<string, unknown>) ?? null,
+          });
+        }
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          
+        } else if (status === "CHANNEL_ERROR") {
+          console.error("[Realtime] Journal entities subscription error");
+          this.scheduleReconnect();
+        }
+      });
+
+    this.subscriptions.set("journal_entities", channel);
+  }
+
+  /**
    * Map Supabase chart bar to domain ChartBar
    */
-  private mapChartBarFromSupabase(row: any): ChartBar {
+  private mapChartBarFromSupabase(row: ChartBarRealtimeRow): ChartBar {
     return {
       id: row.id,
-      broker: row.broker,
-      symbol: row.symbol,
-      timeframe: row.timeframe,
-      timestamp: row.timestamp,
-      open: Number(row.open),
-      high: Number(row.high),
-      low: Number(row.low),
-      close: Number(row.close),
-      volume: Number(row.volume),
+      broker: asString(row.broker),
+      symbol: asString(row.symbol),
+      timeframe: (row.timeframe ?? "M1") as ChartBar["timeframe"],
+      timestamp: asNumber(row.timestamp),
+      open: asNumber(row.open),
+      high: asNumber(row.high),
+      low: asNumber(row.low),
+      close: asNumber(row.close),
+      volume: asNumber(row.volume),
       syncedAt: row.synced_at ? new Date(row.synced_at) : null,
     };
   }
@@ -227,16 +386,16 @@ export class RealtimeSubscriptionManager {
   /**
    * Map Supabase sync progress to domain SymbolSyncProgress
    */
-  private mapProgressFromSupabase(row: any): SymbolSyncProgress {
+  private mapProgressFromSupabase(row: SyncProgressRealtimeRow): SymbolSyncProgress {
     return {
       id: row.id,
-      broker: row.broker,
-      symbol: row.symbol,
+      broker: asString(row.broker),
+      symbol: asString(row.symbol),
       firstBarDate: row.first_bar_date ? new Date(row.first_bar_date) : null,
       lastBarDate: row.last_bar_date ? new Date(row.last_bar_date) : null,
       lastSyncTime: row.last_sync_time ? new Date(row.last_sync_time) : null,
       totalBars: row.total_bars || 0,
-      status: row.status,
+      status: row.status ?? "pending",
       error: row.error,
       progressPercent: row.progress_percent ?? undefined,
     };

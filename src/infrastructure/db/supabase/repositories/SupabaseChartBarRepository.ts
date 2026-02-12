@@ -198,7 +198,7 @@ export class SupabaseChartBarRepository implements IChartBarRepository {
     try {
       const supabase = getSupabaseClient();
 
-      let query = supabase
+      const query = supabase
         .from("chart_bars")
         .select("*", { count: "exact", head: true })
         .eq("user_id", this.userId)

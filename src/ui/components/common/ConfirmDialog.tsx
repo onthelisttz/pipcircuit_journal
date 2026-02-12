@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 export interface ConfirmDialogProps {
@@ -26,13 +25,7 @@ export function ConfirmDialog({
   variant = "default",
   isLoading = false,
 }: ConfirmDialogProps) {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!open || !mounted) return null;
+  if (!open || typeof window === "undefined") return null;
 
   const isDanger = variant === "danger";
 

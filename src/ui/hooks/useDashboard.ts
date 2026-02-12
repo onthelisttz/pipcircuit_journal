@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect */
 
 import { useMemo, useState, useCallback, useEffect } from "react";
 import { createTradeRepository } from "@infrastructure/db/createDualRepositories";
@@ -155,8 +156,6 @@ export function useCalendarMonthReturns(
 
   useEffect(() => {
     if (!accountId) {
-      setDaily([]);
-      setLoading(false);
       return;
     }
     setLoading(true);
@@ -169,7 +168,10 @@ export function useCalendarMonthReturns(
       .finally(() => setLoading(false));
   }, [accountId, query, tradeRepo]);
 
-  return { daily, loading };
+  return {
+    daily: accountId ? daily : [],
+    loading: accountId ? loading : false,
+  };
 }
 
 export function useDashboardSymbols(accountId: string | undefined): string[] {
@@ -179,7 +181,6 @@ export function useDashboardSymbols(accountId: string | undefined): string[] {
 
   useEffect(() => {
     if (!accountId) {
-      setSymbols([]);
       return;
     }
     tradeRepo
@@ -193,5 +194,5 @@ export function useDashboardSymbols(accountId: string | undefined): string[] {
       .catch(() => setSymbols([]));
   }, [accountId, tradeRepo]);
 
-  return symbols;
+  return accountId ? symbols : [];
 }

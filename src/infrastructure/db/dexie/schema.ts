@@ -72,3 +72,46 @@ export const DEXIE_SCHEMA_V4 = {
   settings: "key, value",
   daily_summaries: "++id, accountId, date, [accountId+date]",
 };
+
+// V5 adds remoteId indexes for non-bar entities and better queue dedupe indexes.
+export const DEXIE_SCHEMA_V5 = {
+  trades: "++id, accountId, symbol, direction, openTime, closeTime, [symbol+openTime]",
+  trade_notes: "++id, remoteId, tradeId, createdAt, updatedAt",
+  tags: "++id, remoteId, category, name, color",
+  trade_tags: "++id, remoteId, tradeId, tagId, [tradeId+tagId]",
+  observations: "++id, remoteId, categoryId, title, createdAt, updatedAt",
+  observation_categories: "++id, remoteId, name, color",
+  chart_bars:
+    "++id, [broker+symbol+timeframe+timestamp], [symbol+timeframe+timestamp], broker, symbol, timeframe, timestamp",
+  accounts: "++id, accountNumber, platform",
+  sync_queue:
+    "++id, status, timestamp, table, entityId, [table+status], [table+entityId+status]",
+  sync_meta: "key, userId, accountId, lastSyncTime, lastTradeId",
+  symbol_sync_progress: "++id, [broker+symbol], broker, symbol, status",
+  settings: "key, value",
+  daily_summaries: "++id, accountId, date, [accountId+date]",
+};
+
+// V6 adds stable client identity + tombstone metadata indexes for non-bar entities,
+// and queue indexes for dead-letter/retry inspection.
+export const DEXIE_SCHEMA_V6 = {
+  trades: "++id, accountId, symbol, direction, openTime, closeTime, [symbol+openTime]",
+  trade_notes:
+    "++id, remoteId, clientId, tradeId, createdAt, updatedAt, deletedAt, [tradeId+deletedAt]",
+  tags: "++id, remoteId, clientId, category, name, color, updatedAt, deletedAt",
+  trade_tags:
+    "++id, remoteId, clientId, tradeId, tagId, createdAt, updatedAt, deletedAt, [tradeId+tagId]",
+  observations:
+    "++id, remoteId, clientId, categoryId, title, createdAt, updatedAt, deletedAt",
+  observation_categories:
+    "++id, remoteId, clientId, name, color, updatedAt, deletedAt",
+  chart_bars:
+    "++id, [broker+symbol+timeframe+timestamp], [symbol+timeframe+timestamp], broker, symbol, timeframe, timestamp",
+  accounts: "++id, accountNumber, platform",
+  sync_queue:
+    "++id, status, timestamp, table, entityId, nextRetryAt, deadLetterAt, lastError, [table+status], [table+entityId+status]",
+  sync_meta: "key, userId, accountId, lastSyncTime, lastTradeId",
+  symbol_sync_progress: "++id, [broker+symbol], broker, symbol, status",
+  settings: "key, value",
+  daily_summaries: "++id, accountId, date, [accountId+date]",
+};

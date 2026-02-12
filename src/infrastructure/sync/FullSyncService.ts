@@ -9,13 +9,11 @@ import { getSupabaseClient } from "@infrastructure/db/supabase/client";
 import { db } from "@infrastructure/db/dexie/database";
 import type {
   Trade,
-  Account,
   TradeNote,
   Tag,
   TradeTag,
   Observation,
   ObservationCategory,
-  DailySummary,
   ChartBar,
 } from "@domain/entities";
 import { SupabaseTradeRepository } from "@infrastructure/db/supabase/repositories/SupabaseTradeRepository";
@@ -27,6 +25,20 @@ import { SupabaseSettingsRepository } from "@infrastructure/db/supabase/reposito
 import { SupabaseDailySummaryRepository } from "@infrastructure/db/supabase/repositories/SupabaseDailySummaryRepository";
 import { SupabaseSymbolSyncProgressRepository } from "@infrastructure/db/supabase/repositories/SupabaseSymbolSyncProgressRepository";
 import type { SettingRecord } from "@application/ports/repositories";
+
+type SupabaseChartBarRow = {
+  id: number;
+  broker: string;
+  symbol: string;
+  timeframe: ChartBar["timeframe"];
+  timestamp: number;
+  open: number | string;
+  high: number | string;
+  low: number | string;
+  close: number | string;
+  volume: number | string;
+  synced_at?: string | null;
+};
 
 export interface FullSyncResult {
   push: { success: boolean; error?: string };
@@ -306,9 +318,10 @@ export class FullSyncService {
         const dexieTagId = supabaseTagIdToDexieId.get(tt.tagId);
         if (dexieTradeId != null && dexieTagId != null) {
           tradeTagsForDexie.push({
+            remoteId: tt.id,
             tradeId: dexieTradeId,
             tagId: dexieTagId,
-            createdAt: new Date(),
+            createdAt: tt.createdAt ?? new Date(),
           });
         }
       }
@@ -460,7 +473,7 @@ export class FullSyncService {
               break;
             }
 
-            const bars: ChartBar[] = (data as any[]).map((row) => ({
+            const bars: ChartBar[] = (data as SupabaseChartBarRow[]).map((row) => ({
               id: row.id,
               broker: row.broker,
               symbol: row.symbol,

@@ -27,6 +27,7 @@ import { TokenStorage } from "@infrastructure/auth";
 
 const CHART_SELECTION_KEY = "chartSelection";
 const CHART_TIMEFRAME_KEY = "chartTimeframe";
+type ChartSelection = { broker: string; symbol: string };
 
 const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
   { id: "Path", label: "Path" },
@@ -37,6 +38,34 @@ const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
 
 const TIMEFRAMES: ChartTimeframe[] = ["M1", "M5", "M15", "H1"];
 const EDGE_FETCH_THRESHOLD = 10;
+
+function readStoredSelection(): ChartSelection | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CHART_SELECTION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { broker?: string; symbol?: string };
+    if (parsed.broker && parsed.symbol) {
+      return { broker: parsed.broker, symbol: parsed.symbol };
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function readStoredTimeframe(): ChartTimeframe {
+  if (typeof window === "undefined") return "M1";
+  try {
+    const raw = window.localStorage.getItem(CHART_TIMEFRAME_KEY);
+    if (raw === "M1" || raw === "M5" || raw === "M15" || raw === "H1") {
+      return raw;
+    }
+  } catch {
+    // ignore
+  }
+  return "M1";
+}
 
 const PLACEHOLDER_TRADE: Trade = {
   accountId: "",
@@ -90,7 +119,7 @@ export default function ChartPage() {
           new SupabaseSymbolSyncProgressRepository(user.id)
         )
       : dexie;
-  }, [user?.id]);
+  }, [user]);
 
   const { symbolProgress } = useSyncProgress({
     repository: progressRepo,
@@ -98,8 +127,26 @@ export default function ChartPage() {
     subscribe: true,
   });
 
-  const [selection, setSelection] = useState<{ broker: string; symbol: string } | null>(null);
-  const [timeframe, setTimeframe] = useState<ChartTimeframe>("M1");
+  const [storedSelection, setStoredSelection] = useState<ChartSelection | null>(() =>
+    readStoredSelection()
+  );
+  const selection = useMemo<ChartSelection | null>(() => {
+    if (symbolProgress.length === 0) return storedSelection;
+    if (
+      storedSelection &&
+      symbolProgress.some(
+        (p) =>
+          p.broker === storedSelection.broker && p.symbol === storedSelection.symbol
+      )
+    ) {
+      return storedSelection;
+    }
+    const first = symbolProgress[0];
+    return { broker: first.broker, symbol: first.symbol };
+  }, [storedSelection, symbolProgress]);
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>(() =>
+    readStoredTimeframe()
+  );
   const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
   const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
@@ -117,33 +164,6 @@ export default function ChartPage() {
   const timeframeMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(CHART_SELECTION_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as { broker?: string; symbol?: string };
-        if (parsed.broker && parsed.symbol) {
-          setSelection({ broker: parsed.broker, symbol: parsed.symbol });
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(CHART_TIMEFRAME_KEY);
-      if (raw === "M1" || raw === "M5" || raw === "M15" || raw === "H1") {
-        setTimeframe(raw);
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
     if (typeof window === "undefined" || !selection) return;
     window.localStorage.setItem(CHART_SELECTION_KEY, JSON.stringify(selection));
   }, [selection]);
@@ -152,22 +172,6 @@ export default function ChartPage() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(CHART_TIMEFRAME_KEY, timeframe);
   }, [timeframe]);
-
-  useEffect(() => {
-    if (symbolProgress.length === 0) return;
-    if (!selection) {
-      const first = symbolProgress[0];
-      setSelection({ broker: first.broker, symbol: first.symbol });
-      return;
-    }
-    const exists = symbolProgress.some(
-      (p) => p.broker === selection.broker && p.symbol === selection.symbol
-    );
-    if (!exists) {
-      const first = symbolProgress[0];
-      setSelection({ broker: first.broker, symbol: first.symbol });
-    }
-  }, [symbolProgress, selection]);
 
   useEffect(() => {
     if (!symbolMenuOpen) return;
@@ -284,7 +288,7 @@ export default function ChartPage() {
       createdAt: now,
       updatedAt: now,
     };
-  }, [accountForBroker?.accountNumber, selection, selectedProgress?.lastBarDate]);
+  }, [accountForBroker, selection, selectedProgress]);
 
   const accessToken = useMemo(() => {
     if (!accountForBroker) return undefined;
@@ -429,7 +433,7 @@ export default function ChartPage() {
                       key={`${broker.broker}-${symbol.symbol}`}
                       type="button"
                       onClick={() => {
-                        setSelection({
+                        setStoredSelection({
                           broker: broker.broker,
                           symbol: symbol.symbol,
                         });

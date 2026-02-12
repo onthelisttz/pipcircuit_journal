@@ -1,45 +1,40 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 import type { Tag } from "@domain/entities";
 import type { Mindset, TagCategory } from "@domain/enums";
 import { createTagRepository, createTradeRepository } from "@infrastructure/db/createDualRepositories";
+import { db } from "@infrastructure/db/dexie/database";
 import { useAuth } from "@ui/hooks/useAuth";
 
 export function useTradeTags(tradeId: number | undefined) {
   const { user } = useAuth();
   const tagRepo = useMemo(() => createTagRepository(user?.id), [user?.id]);
   const tradeRepo = useMemo(() => createTradeRepository(user?.id), [user?.id]);
-  const [allTags, setAllTags] = useState<Tag[]>([]);
-  const [tradeTags, setTradeTags] = useState<Tag[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const liveAllTags = useLiveQuery(
+    () => db.tags.filter((tag) => !tag.deletedAt).toArray(),
+    [user?.id]
+  );
+  const liveTradeTags = useLiveQuery(
+    async () => {
+      if (!tradeId) return [];
+      const links = await db.trade_tags
+        .where("tradeId")
+        .equals(tradeId)
+        .filter((entry) => !entry.deletedAt)
+        .toArray();
+      if (links.length === 0) return [];
+      const tags = await db.tags.bulkGet(links.map((entry) => entry.tagId));
+      return tags.filter((tag): tag is Tag => Boolean(tag && !tag.deletedAt));
+    },
+    [tradeId, user?.id]
+  );
+  const allTags = liveAllTags ?? [];
+  const tradeTags = liveTradeTags ?? [];
+  const isLoading =
+    Boolean(tradeId) && (liveAllTags === undefined || liveTradeTags === undefined);
   const [error, setError] = useState<Error | null>(null);
-
-  const load = useCallback(async () => {
-    if (!tradeId) return;
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const [tags, forTrade] = await Promise.all([
-        tagRepo.list(),
-        tagRepo.listForTrade(tradeId),
-      ]);
-      setAllTags(tags);
-      setTradeTags(forTrade);
-    } catch (err) {
-      setError(err instanceof Error ? err : new Error("Failed to load tags"));
-      setAllTags([]);
-      setTradeTags([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [tradeId, tagRepo]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const replaceTags = useCallback(
     async (tagIds: number[]) => {
@@ -47,8 +42,6 @@ export function useTradeTags(tradeId: number | undefined) {
 
       try {
         await tagRepo.replaceForTrade(tradeId, tagIds);
-        const forTrade = await tagRepo.listForTrade(tradeId);
-        setTradeTags(forTrade);
       } catch (err) {
         setError(err instanceof Error ? err : new Error("Failed to save tags"));
       }
@@ -104,6 +97,6 @@ export function useTradeTags(tradeId: number | undefined) {
     replaceTags,
     updateRating,
     updateMindset,
-    refetch: load,
+    refetch: async () => {},
   };
 }

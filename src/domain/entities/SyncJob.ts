@@ -11,4 +11,6 @@ export interface SyncJob {
   status: SyncStatus;
   lastError?: string | null;
   nextRetryAt?: Date | null;
+  deadLetterAt?: Date | null;
+  lastAttemptAt?: Date | null;
 }
