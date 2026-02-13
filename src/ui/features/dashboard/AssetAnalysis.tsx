@@ -139,6 +139,7 @@ export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
                 innerRadius={56}
                 outerRadius={72}
                 paddingAngle={2}
+                stroke="var(--border)"
               >
                 {countData.map((_, i) => (
                   <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
@@ -172,6 +173,7 @@ export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
                 innerRadius={56}
                 outerRadius={72}
                 paddingAngle={2}
+                stroke="var(--border)"
               >
                 {profitData.map((_, i) => (
                   <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
@@ -208,6 +210,7 @@ export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
                 innerRadius={56}
                 outerRadius={72}
                 paddingAngle={2}
+                stroke="var(--border)"
               >
                 {winRateData.map((_, i) => (
                   <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />

@@ -96,6 +96,7 @@ export function DashboardFilters({
           <DateRangePopover
             from={filters.from}
             to={filters.to}
+            quickPresetStorageKey="dashboard-date-quick-preset"
             onClose={() => setDateOpen(false)}
             onApply={(from, to) => {
               onChange({ ...filters, from, to });
@@ -187,4 +188,3 @@ export function DashboardFilters({
     </div>
   );
 }
-

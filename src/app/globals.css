@@ -143,3 +143,31 @@
   pointer-events: none;
   height: 0;
 }
+
+/* Recharts: avoid bright default browser outlines on chart interactions */
+.recharts-layer:focus,
+.recharts-sector:focus,
+.recharts-rectangle:focus,
+.recharts-dot:focus,
+.recharts-symbols:focus,
+.recharts-wrapper:focus,
+.recharts-surface:focus {
+  outline: none;
+}
+
+.recharts-wrapper:focus-visible,
+.recharts-surface:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}
+
+.recharts-wrapper,
+.recharts-surface {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.recharts-surface *:focus,
+.recharts-surface *:focus-visible {
+  outline: none !important;
+}

@@ -373,7 +373,7 @@ export class FullSyncService {
 
       // 11. Chart bars:
       // - If local DB has no bars for any symbol, restore full history from Supabase.
-      // - If local has some bars, top up only missing tails per symbol (incremental restore).
+      // - If local has some bars, restore missing head/tail windows per symbol.
       onProgress?.("Checking local chart bars…");
       const localBarCount = await db.chart_bars.count();
 
@@ -396,13 +396,14 @@ export class FullSyncService {
           if (!p.broker || !p.symbol) continue;
           if (!p.firstBarDate || !p.lastBarDate) continue;
 
-          // Determine which window we need to restore for this symbol.
-          let fromTs: number | null = null;
-          const toTs = p.lastBarDate.getTime();
+          // Determine which windows we need to restore for this symbol.
+          const cloudFromTs = p.firstBarDate.getTime();
+          const cloudToTs = p.lastBarDate.getTime();
+          const restoreWindows: Array<{ from: number; to: number }> = [];
 
           if (!hasAnyLocalBars) {
             // Fresh device / cleared DB: restore full range for every symbol
-            fromTs = p.firstBarDate.getTime();
+            restoreWindows.push({ from: cloudFromTs, to: cloudToTs });
           } else {
             // Incremental per-symbol restore: look at local range in Dexie
             const localRange = await dexieChartRepo.getDateRange(
@@ -413,19 +414,31 @@ export class FullSyncService {
 
             if (!localRange.firstBarDate || !localRange.lastBarDate) {
               // No local bars for this symbol yet: restore full range for this symbol only
-              fromTs = p.firstBarDate.getTime();
+              restoreWindows.push({ from: cloudFromTs, to: cloudToTs });
             } else {
+              const localFirstTs = localRange.firstBarDate.getTime();
               const localLastTs = localRange.lastBarDate.getTime();
-              if (localLastTs >= toTs) {
-                // Local data already up to date for this symbol; nothing to restore
-                continue;
+
+              // Missing historical head
+              if (localFirstTs > cloudFromTs) {
+                restoreWindows.push({
+                  from: cloudFromTs,
+                  to: Math.min(localFirstTs - 1, cloudToTs),
+                });
               }
-              // Top-up only the missing tail
-              fromTs = localLastTs + 1;
+
+              // Missing latest tail
+              if (localLastTs < cloudToTs) {
+                restoreWindows.push({
+                  from: Math.max(localLastTs + 1, cloudFromTs),
+                  to: cloudToTs,
+                });
+              }
             }
           }
 
-          if (fromTs == null || fromTs > toTs) {
+          const validWindows = restoreWindows.filter((w) => w.from <= w.to);
+          if (validWindows.length === 0) {
             continue;
           }
 
@@ -450,68 +463,79 @@ export class FullSyncService {
           let firstTsSeen: number | null = null;
           let lastTsSeen: number | null = null;
 
-          while (fromTs <= toTs) {
-            const { data, error } = await supabase
-              .from("chart_bars")
-              .select("*")
-              .eq("user_id", this.userId)
-              .eq("broker", p.broker)
-              .eq("symbol", p.symbol)
-              .eq("timeframe", "M1")
-              .gte("timestamp", fromTs)
-              .lte("timestamp", toTs)
-              .order("timestamp", { ascending: true })
-              .limit(PAGE_SIZE);
+          for (const window of validWindows) {
+            let cursorTs = window.from;
+            while (cursorTs <= window.to) {
+              const { data, error } = await supabase
+                .from("chart_bars")
+                .select("*")
+                .eq("user_id", this.userId)
+                .eq("broker", p.broker)
+                .eq("symbol", p.symbol)
+                .eq("timeframe", "M1")
+                .gte("timestamp", cursorTs)
+                .lte("timestamp", window.to)
+                .order("timestamp", { ascending: true })
+                .limit(PAGE_SIZE);
 
-            if (error) {
-              throw new Error(
-                `Failed to restore chart bars for ${p.broker}:${p.symbol}: ${error.message}`
+              if (error) {
+                throw new Error(
+                  `Failed to restore chart bars for ${p.broker}:${p.symbol}: ${error.message}`
+                );
+              }
+
+              if (!data || data.length === 0) {
+                break;
+              }
+
+              const bars: ChartBar[] = (data as SupabaseChartBarRow[]).map((row) => ({
+                id: row.id,
+                broker: row.broker,
+                symbol: row.symbol,
+                timeframe: row.timeframe,
+                timestamp: row.timestamp,
+                open: Number(row.open),
+                high: Number(row.high),
+                low: Number(row.low),
+                close: Number(row.close),
+                volume: Number(row.volume),
+                syncedAt: row.synced_at ? new Date(row.synced_at) : null,
+              }));
+
+              await db.chart_bars.bulkPut(bars);
+
+              totalBars += bars.length;
+              firstTsSeen = firstTsSeen ?? bars[0]?.timestamp ?? null;
+              lastTsSeen = bars[bars.length - 1]?.timestamp ?? lastTsSeen;
+
+              // Per-symbol progress text: downloaded vs total from cloud (if known)
+              const downloadedText = totalBars.toLocaleString();
+              const totalCloudText =
+                cloudTotalBars != null ? `/${cloudTotalBars.toLocaleString()}` : "";
+              onProgress?.(
+                `Restoring chart bars from cloud… ${restoredSymbols}/${totalSymbols} symbols completed (${p.symbol}: ${downloadedText}${totalCloudText} bars)`
               );
+
+              const lastTs = bars[bars.length - 1]?.timestamp;
+              if (!lastTs || lastTs >= window.to) {
+                break;
+              }
+              cursorTs = lastTs + 1;
             }
-
-            if (!data || data.length === 0) {
-              break;
-            }
-
-            const bars: ChartBar[] = (data as SupabaseChartBarRow[]).map((row) => ({
-              id: row.id,
-              broker: row.broker,
-              symbol: row.symbol,
-              timeframe: row.timeframe,
-              timestamp: row.timestamp,
-              open: Number(row.open),
-              high: Number(row.high),
-              low: Number(row.low),
-              close: Number(row.close),
-              volume: Number(row.volume),
-              syncedAt: row.synced_at ? new Date(row.synced_at) : null,
-            }));
-
-            await db.chart_bars.bulkPut(bars);
-
-            totalBars += bars.length;
-            firstTsSeen = firstTsSeen ?? bars[0]?.timestamp ?? null;
-            lastTsSeen = bars[bars.length - 1]?.timestamp ?? lastTsSeen;
-
-            // Per-symbol progress text: downloaded vs total from cloud (if known)
-            const downloadedText = totalBars.toLocaleString();
-            const totalCloudText =
-              cloudTotalBars != null ? `/${cloudTotalBars.toLocaleString()}` : "";
-            onProgress?.(
-              `Restoring chart bars from cloud… ${restoredSymbols}/${totalSymbols} symbols completed (${p.symbol}: ${downloadedText}${totalCloudText} bars)`
-            );
-
-            const lastTs = bars[bars.length - 1]?.timestamp;
-            if (!lastTs || lastTs >= toTs) {
-              break;
-            }
-            fromTs = lastTs + 1;
           }
 
           // If we restored any bars for this symbol, update its progress record
           if (totalBars > 0) {
-            const firstBarDate = firstTsSeen ? new Date(firstTsSeen) : p.firstBarDate;
-            const lastBarDate = lastTsSeen ? new Date(lastTsSeen) : p.lastBarDate;
+            const inferredFirstBarDate = firstTsSeen ? new Date(firstTsSeen) : null;
+            const inferredLastBarDate = lastTsSeen ? new Date(lastTsSeen) : null;
+            const firstBarDate =
+              p.firstBarDate && inferredFirstBarDate
+                ? new Date(Math.min(p.firstBarDate.getTime(), inferredFirstBarDate.getTime()))
+                : p.firstBarDate ?? inferredFirstBarDate;
+            const lastBarDate =
+              p.lastBarDate && inferredLastBarDate
+                ? new Date(Math.max(p.lastBarDate.getTime(), inferredLastBarDate.getTime()))
+                : p.lastBarDate ?? inferredLastBarDate;
             const localTotalBars = await dexieChartRepo.countBars(
               p.broker,
               p.symbol,
@@ -583,6 +607,39 @@ export class FullSyncService {
     }
   }
 
+  /**
+   * Restore chart bars from cloud for a single broker+symbol pair.
+   * Useful when local bars are partially missing and should be filled from Supabase
+   * without calling external broker APIs.
+   */
+  async restoreChartBarsForSymbol(
+    broker: string,
+    symbol: string,
+    onProgress?: FullSyncProgressCallback
+  ): Promise<{
+    success: boolean;
+    restoredSymbols: number;
+    totalSymbols: number;
+    error?: string;
+  }> {
+    try {
+      const progressRepo = new SupabaseSymbolSyncProgressRepository(this.userId);
+      const syncProgressList = (await progressRepo.getAll()).filter(
+        (p) => p.broker === broker && p.symbol === symbol
+      );
+      const { restoredSymbols, totalSymbols } = await this.restoreChartBarsFromCloudInternal(
+        syncProgressList,
+        progressRepo,
+        onProgress
+      );
+      return { success: true, restoredSymbols, totalSymbols };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[FullSync] Restore chart bars for symbol failed:", err);
+      return { success: false, restoredSymbols: 0, totalSymbols: 0, error: msg };
+    }
+  }
+
   private async restoreChartBarsFromCloudInternal(
     syncProgressList: Awaited<ReturnType<SupabaseSymbolSyncProgressRepository["getAll"]>>,
     progressRepo: SupabaseSymbolSyncProgressRepository,
@@ -612,25 +669,38 @@ export class FullSyncService {
       if (!p.broker || !p.symbol) continue;
       if (!p.firstBarDate || !p.lastBarDate) continue;
 
-      let fromTs: number | null = null;
-      const toTs = p.lastBarDate.getTime();
+      const cloudFromTs = p.firstBarDate.getTime();
+      const cloudToTs = p.lastBarDate.getTime();
+      const restoreWindows: Array<{ from: number; to: number }> = [];
 
       if (!hasAnyLocalBars) {
-        fromTs = p.firstBarDate.getTime();
+        restoreWindows.push({ from: cloudFromTs, to: cloudToTs });
       } else {
         const localRange = await dexieChartRepo.getDateRange(p.broker, p.symbol, "M1");
         if (!localRange.firstBarDate || !localRange.lastBarDate) {
-          fromTs = p.firstBarDate.getTime();
+          restoreWindows.push({ from: cloudFromTs, to: cloudToTs });
         } else {
+          const localFirstTs = localRange.firstBarDate.getTime();
           const localLastTs = localRange.lastBarDate.getTime();
-          if (localLastTs >= toTs) {
-            continue;
+
+          if (localFirstTs > cloudFromTs) {
+            restoreWindows.push({
+              from: cloudFromTs,
+              to: Math.min(localFirstTs - 1, cloudToTs),
+            });
           }
-          fromTs = localLastTs + 1;
+
+          if (localLastTs < cloudToTs) {
+            restoreWindows.push({
+              from: Math.max(localLastTs + 1, cloudFromTs),
+              to: cloudToTs,
+            });
+          }
         }
       }
 
-      if (fromTs == null || fromTs > toTs) continue;
+      const validWindows = restoreWindows.filter((w) => w.from <= w.to);
+      if (validWindows.length === 0) continue;
 
       let cloudTotalBars: number | null = null;
       try {
@@ -652,61 +722,72 @@ export class FullSyncService {
       let firstTsSeen: number | null = null;
       let lastTsSeen: number | null = null;
 
-      while (fromTs <= toTs) {
-        const { data, error } = await supabase
-          .from("chart_bars")
-          .select("*")
-          .eq("user_id", this.userId)
-          .eq("broker", p.broker)
-          .eq("symbol", p.symbol)
-          .eq("timeframe", "M1")
-          .gte("timestamp", fromTs)
-          .lte("timestamp", toTs)
-          .order("timestamp", { ascending: true })
-          .limit(PAGE_SIZE);
+      for (const window of validWindows) {
+        let cursorTs = window.from;
+        while (cursorTs <= window.to) {
+          const { data, error } = await supabase
+            .from("chart_bars")
+            .select("*")
+            .eq("user_id", this.userId)
+            .eq("broker", p.broker)
+            .eq("symbol", p.symbol)
+            .eq("timeframe", "M1")
+            .gte("timestamp", cursorTs)
+            .lte("timestamp", window.to)
+            .order("timestamp", { ascending: true })
+            .limit(PAGE_SIZE);
 
-        if (error) {
-          throw new Error(
-            `Failed to restore chart bars for ${p.broker}:${p.symbol}: ${error.message}`
+          if (error) {
+            throw new Error(
+              `Failed to restore chart bars for ${p.broker}:${p.symbol}: ${error.message}`
+            );
+          }
+
+          if (!data || data.length === 0) break;
+
+          const bars: ChartBar[] = (data as SupabaseChartBarRow[]).map((row) => ({
+            id: row.id,
+            broker: row.broker,
+            symbol: row.symbol,
+            timeframe: row.timeframe,
+            timestamp: row.timestamp,
+            open: Number(row.open),
+            high: Number(row.high),
+            low: Number(row.low),
+            close: Number(row.close),
+            volume: Number(row.volume),
+            syncedAt: row.synced_at ? new Date(row.synced_at) : null,
+          }));
+
+          await db.chart_bars.bulkPut(bars);
+
+          totalBars += bars.length;
+          firstTsSeen = firstTsSeen ?? bars[0]?.timestamp ?? null;
+          lastTsSeen = bars[bars.length - 1]?.timestamp ?? lastTsSeen;
+
+          const downloadedText = totalBars.toLocaleString();
+          const totalCloudText = cloudTotalBars != null ? `/${cloudTotalBars.toLocaleString()}` : "";
+          onProgress?.(
+            `Restoring chart bars from cloud… ${restoredSymbols}/${totalSymbols} symbols completed (${p.symbol}: ${downloadedText}${totalCloudText} bars)`
           );
+
+          const lastTs = bars[bars.length - 1]?.timestamp;
+          if (!lastTs || lastTs >= window.to) break;
+          cursorTs = lastTs + 1;
         }
-
-        if (!data || data.length === 0) break;
-
-        const bars: ChartBar[] = (data as SupabaseChartBarRow[]).map((row) => ({
-          id: row.id,
-          broker: row.broker,
-          symbol: row.symbol,
-          timeframe: row.timeframe,
-          timestamp: row.timestamp,
-          open: Number(row.open),
-          high: Number(row.high),
-          low: Number(row.low),
-          close: Number(row.close),
-          volume: Number(row.volume),
-          syncedAt: row.synced_at ? new Date(row.synced_at) : null,
-        }));
-
-        await db.chart_bars.bulkPut(bars);
-
-        totalBars += bars.length;
-        firstTsSeen = firstTsSeen ?? bars[0]?.timestamp ?? null;
-        lastTsSeen = bars[bars.length - 1]?.timestamp ?? lastTsSeen;
-
-        const downloadedText = totalBars.toLocaleString();
-        const totalCloudText = cloudTotalBars != null ? `/${cloudTotalBars.toLocaleString()}` : "";
-        onProgress?.(
-          `Restoring chart bars from cloud… ${restoredSymbols}/${totalSymbols} symbols completed (${p.symbol}: ${downloadedText}${totalCloudText} bars)`
-        );
-
-        const lastTs = bars[bars.length - 1]?.timestamp;
-        if (!lastTs || lastTs >= toTs) break;
-        fromTs = lastTs + 1;
       }
 
       if (totalBars > 0) {
-        const firstBarDate = p.firstBarDate ?? (firstTsSeen ? new Date(firstTsSeen) : null);
-        const lastBarDate = p.lastBarDate ?? (lastTsSeen ? new Date(lastTsSeen) : null);
+        const inferredFirstBarDate = firstTsSeen ? new Date(firstTsSeen) : null;
+        const inferredLastBarDate = lastTsSeen ? new Date(lastTsSeen) : null;
+        const firstBarDate =
+          p.firstBarDate && inferredFirstBarDate
+            ? new Date(Math.min(p.firstBarDate.getTime(), inferredFirstBarDate.getTime()))
+            : p.firstBarDate ?? inferredFirstBarDate;
+        const lastBarDate =
+          p.lastBarDate && inferredLastBarDate
+            ? new Date(Math.max(p.lastBarDate.getTime(), inferredLastBarDate.getTime()))
+            : p.lastBarDate ?? inferredLastBarDate;
         const localTotalBars = await dexieChartRepo.countBars(p.broker, p.symbol, "M1");
         const resolvedTotalBars = cloudTotalBars ?? localTotalBars;
         const now = new Date();

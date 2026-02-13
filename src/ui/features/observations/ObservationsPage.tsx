@@ -36,6 +36,21 @@ function isValidDate(value: Date): boolean {
   return Number.isFinite(value.getTime());
 }
 
+function shallowEqualRecord(
+  a: Record<number, string>,
+  b: Record<number, string>
+): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (a[Number(key)] !== b[Number(key)]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function ObservationsPage() {
   const [filters, setFilters] = useState<ObservationFiltersState>(() => {
     if (typeof window === "undefined") return defaultFilters;
@@ -102,14 +117,19 @@ export function ObservationsPage() {
   }, [filters]);
 
   useEffect(() => {
-    const map: Record<number, string> = {};
-    for (const c of categories) {
-      if (c.id != null) {
-        map[c.id] = c.name;
+    setEditingNames((prev) => {
+      const next: Record<number, string> = {};
+
+      for (const category of categories) {
+        if (category.id == null) continue;
+        next[category.id] = showManageCategories
+          ? (prev[category.id] ?? category.name)
+          : category.name;
       }
-    }
-    setEditingNames(map);
-  }, [categories]);
+
+      return shallowEqualRecord(prev, next) ? prev : next;
+    });
+  }, [categories, showManageCategories]);
 
   useEffect(() => {
     if (isLoadingCategories || filters.categoryId == null) return;

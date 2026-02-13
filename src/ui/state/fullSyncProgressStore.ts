@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 interface FullSyncProgressState {
-  /** Current step description (e.g. "Pushing accounts…") or null when idle */
+  /** Current step description (e.g. "Pushing accounts...") or null when idle */
   syncStep: string | null;
   /** True while a full sync is running (from SyncInitializer or Data Sync "Sync now") */
   isSyncing: boolean;
@@ -22,13 +22,30 @@ export const useFullSyncProgressStore = create<FullSyncProgressState>((set) => (
   isSyncing: false,
   lastStep: null,
 
-  setStep: (syncStep) => set({ syncStep, lastStep: syncStep }),
+  setStep: (syncStep) =>
+    set((state) =>
+      state.syncStep === syncStep && state.lastStep === syncStep
+        ? state
+        : { syncStep, lastStep: syncStep }
+    ),
   setSyncing: (isSyncing) => set({ isSyncing }),
 
-  startSync: (initialStep = "Starting…") =>
-    set({ isSyncing: true, syncStep: initialStep, lastStep: initialStep }),
+  startSync: (initialStep = "Starting...") =>
+    set((state) =>
+      state.isSyncing && state.syncStep === initialStep && state.lastStep === initialStep
+        ? state
+        : { isSyncing: true, syncStep: initialStep, lastStep: initialStep }
+    ),
 
-  updateStep: (syncStep) => set({ syncStep, lastStep: syncStep }),
+  updateStep: (syncStep) =>
+    set((state) =>
+      state.syncStep === syncStep && state.lastStep === syncStep
+        ? state
+        : { syncStep, lastStep: syncStep }
+    ),
 
-  finishSync: () => set({ isSyncing: false, syncStep: null }),
+  finishSync: () =>
+    set((state) =>
+      state.isSyncing || state.syncStep !== null ? { isSyncing: false, syncStep: null } : state
+    ),
 }));

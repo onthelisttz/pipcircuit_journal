@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { SyncStatusBadge } from "./SyncStatusBadge";
 import { useAccount, useAuth } from "@ui/hooks";
 import { ConfirmDialog } from "@ui/components/common";
+import { useOnlineStatus } from "@ui/hooks/useOnlineStatus";
 
 /**
  * Header Component
@@ -14,6 +15,7 @@ import { ConfirmDialog } from "@ui/components/common";
  */
 export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
     const { theme, setTheme } = useTheme();
+    const isOnline = useOnlineStatus();
     const [mounted, setMounted] = useState(false);
     const [accountMenuOpen, setAccountMenuOpen] = useState(false);
     const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
@@ -72,7 +74,7 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
 
                 <button
                     onClick={async () => {
-                        if (!activeAccount || syncingTrades) return;
+                        if (!activeAccount || syncingTrades || !isOnline) return;
                         setSyncingTrades(true);
                         try {
                             await syncTradesForAccount(
@@ -85,7 +87,7 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
                             setSyncingTrades(false);
                         }
                     }}
-                    disabled={!activeAccount || syncingTrades}
+                    disabled={!activeAccount || syncingTrades || !isOnline}
                     className="p-2 rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150"
                     aria-label="Download trades for active account"
                     title="Download trades"

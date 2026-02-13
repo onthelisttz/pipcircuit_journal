@@ -37,11 +37,11 @@ export function DrawdownChart({ data }: DrawdownChartProps) {
   }));
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <h3 className="text-sm font-medium text-foreground mb-4">Drawdown</h3>
-      <div className="h-48">
+    <div className="rounded-xl border border-border bg-card p-3 sm:p-4">
+      <h3 className="mb-2 text-sm font-medium text-foreground sm:mb-4">Drawdown</h3>
+      <div className="h-44 sm:h-48">
         <ResponsiveContainer width="100%" height="100%" minHeight={0}>
-          <AreaChart data={chartData}>
+          <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="drawdownGradient" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="var(--destructive)" stopOpacity={0.3} />
@@ -51,14 +51,16 @@ export function DrawdownChart({ data }: DrawdownChartProps) {
             <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
             <XAxis
               dataKey="displayDate"
-              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+              tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
               tickLine={false}
               axisLine={false}
+              tickMargin={6}
             />
             <YAxis
-              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+              tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
               tickLine={false}
               axisLine={false}
+              width={40}
               tickFormatter={(v) => `$${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`}
             />
             <Tooltip
@@ -70,6 +72,7 @@ export function DrawdownChart({ data }: DrawdownChartProps) {
               }}
               itemStyle={{ color: "var(--popover-foreground)" }}
               labelStyle={{ color: "var(--popover-foreground)" }}
+              cursor={false}
               formatter={(value?: number) => {
                 const num = typeof value === "number" ? value : 0;
                 return [`$${num.toFixed(2)}`, "Drawdown"];
@@ -81,6 +84,12 @@ export function DrawdownChart({ data }: DrawdownChartProps) {
               stroke="var(--destructive)"
               strokeWidth={2}
               fill="url(#drawdownGradient)"
+              activeDot={{
+                r: 4,
+                fill: "var(--destructive)",
+                stroke: "transparent",
+                strokeWidth: 0,
+              }}
             />
           </AreaChart>
         </ResponsiveContainer>

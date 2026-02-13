@@ -1,6 +1,7 @@
 import type { IChartBarRepository } from "@application/ports/repositories";
 import type { ChartBar, ChartTimeframe } from "@domain/entities";
 import { getSupabaseClient } from "../client";
+import { reportConnectionFailure, reportConnectionSuccess } from "@infrastructure/sync/utils/connection";
 
 interface SupabaseChartBar {
   id: number;
@@ -52,6 +53,17 @@ function toSupabaseBar(bar: ChartBar, userId: string): Omit<SupabaseChartBar, "i
 
 export class SupabaseChartBarRepository implements IChartBarRepository {
   constructor(private readonly userId: string) {}
+
+  private isLikelyNetworkError(message: string): boolean {
+    const normalized = message.toLowerCase();
+    return (
+      normalized.includes("failed to fetch") ||
+      normalized.includes("networkerror") ||
+      normalized.includes("network request failed") ||
+      normalized.includes("err_name_not_resolved") ||
+      normalized.includes("load failed")
+    );
+  }
 
   async getByWindow(
     symbol: string,
@@ -209,12 +221,31 @@ export class SupabaseChartBarRepository implements IChartBarRepository {
       const { count, error } = await query;
 
       if (error) {
-        throw new Error(`Failed to count chart bars: ${error.message}`);
+        const details =
+          error.message?.trim() ||
+          error.details?.trim() ||
+          error.hint?.trim() ||
+          error.code ||
+          "unknown Supabase error";
+        if (this.isLikelyNetworkError(details)) {
+          reportConnectionFailure(120000);
+        }
+        console.warn(
+          `[SupabaseChartRepo] Failed to count bars for ${broker}:${symbol}: ${details}`
+        );
+        return 0;
       }
 
+      reportConnectionSuccess();
       return count || 0;
     } catch (error) {
-      console.error(`[SupabaseChartRepo] Error counting bars for ${broker}:${symbol}:`, error);
+      const details = error instanceof Error ? error.message : String(error);
+      if (this.isLikelyNetworkError(details)) {
+        reportConnectionFailure(120000);
+      }
+      console.warn(
+        `[SupabaseChartRepo] Failed to count bars for ${broker}:${symbol}: ${details}`
+      );
       return 0;
     }
   }

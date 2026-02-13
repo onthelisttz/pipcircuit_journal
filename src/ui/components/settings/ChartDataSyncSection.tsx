@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { RefreshCw, Play, X } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useSyncProgress } from "@ui/hooks/useSyncProgress";
+import { useOnlineStatus } from "@ui/hooks/useOnlineStatus";
 import { ConfirmDialog } from "@ui/components/common";
 import { useAccount } from "@ui/hooks/useAccount";
 import { useAuth } from "@ui/hooks/useAuth";
@@ -19,8 +20,20 @@ import { BrokerSyncSection } from "./BrokerSyncSection";
 import type { SymbolSyncProgress } from "@domain/entities";
 import { isOnline } from "@infrastructure/sync/utils/connection";
 import { SupabaseSyncQueue } from "@infrastructure/sync/SupabaseSyncQueue";
+import { FullSyncService } from "@infrastructure/sync/FullSyncService";
+
+const LOCAL_MISSING_BARS_TOLERANCE = 20;
+const LOCAL_INCOMPLETE_ERROR_PREFIX = "Local bars incomplete (";
+
+function isLocalIncompletePending(progress: SymbolSyncProgress | null | undefined): boolean {
+  if (!progress || progress.status !== "pending" || !progress.error) {
+    return false;
+  }
+  return progress.error.startsWith(LOCAL_INCOMPLETE_ERROR_PREFIX);
+}
 
 export function ChartDataSyncSection() {
+  const online = useOnlineStatus();
   const [isLoading, setIsLoading] = useState(false);
   const [syncingBrokers, setSyncingBrokers] = useState<Set<string>>(new Set());
   const [syncingSymbols, setSyncingSymbols] = useState<Set<string>>(new Set());
@@ -42,7 +55,6 @@ export function ChartDataSyncSection() {
   
   const {
     symbolProgress,
-    overallProgress,
     getBrokerProgress,
     refresh,
   } = useSyncProgress({
@@ -52,6 +64,7 @@ export function ChartDataSyncSection() {
   });
 
   const { accounts } = useAccount();
+  const hasAutoReconciledRef = useRef(false);
 
   // Group symbols by broker
   const brokersMap = new Map<string, SymbolSyncProgress[]>();
@@ -69,6 +82,113 @@ export function ChartDataSyncSection() {
     }))
     .sort((a, b) => a.broker.localeCompare(b.broker));
 
+  const reconcileCompletedWithCloud = useCallback(async () => {
+    if (!user?.id || !isOnline()) return;
+
+    try {
+      const completed = await progressRepo.getByStatus("completed");
+      const pendingIncomplete = (await progressRepo.getByStatus("pending")).filter(
+        (p) => isLocalIncompletePending(p)
+      );
+
+      const candidatesMap = new Map<string, SymbolSyncProgress>();
+      for (const progress of [...completed, ...pendingIncomplete]) {
+        if (progress.totalBars <= 0) continue;
+        candidatesMap.set(`${progress.broker}:${progress.symbol}`, progress);
+      }
+      const candidates = Array.from(candidatesMap.values());
+      if (candidates.length === 0) return;
+
+      const dexieChartRepo = new DexieChartBarRepository();
+      const supabaseChartRepo = new SupabaseChartBarRepository(user.id);
+      const localProgressRepo = new DexieSymbolSyncProgressRepository();
+
+      let updated = 0;
+
+      for (const p of candidates) {
+        if (!isOnline()) {
+          break;
+        }
+
+        const [dexieCount, supabaseCount] = await Promise.all([
+          dexieChartRepo.countBars(p.broker, p.symbol, "M1"),
+          supabaseChartRepo.countBars(p.broker, p.symbol, "M1"),
+        ]);
+
+        if (!isOnline()) {
+          break;
+        }
+
+        const missingBars = Math.max(0, supabaseCount - dexieCount);
+
+        if (supabaseCount > 0 && missingBars > LOCAL_MISSING_BARS_TOLERANCE) {
+          const progressPercent = Math.max(
+            0,
+            Math.min(99, Math.floor((dexieCount / supabaseCount) * 100))
+          );
+          const mismatchMessage = `Local bars incomplete (${dexieCount.toLocaleString()}/${supabaseCount.toLocaleString()}). Sync to restore missing bars.`;
+
+          await localProgressRepo.updateStatus(
+            p.broker,
+            p.symbol,
+            "pending",
+            mismatchMessage
+          );
+          await localProgressRepo.updateProgress(p.broker, p.symbol, {
+            totalBars: supabaseCount,
+            progressPercent,
+          });
+          updated += 1;
+          continue;
+        }
+
+        if (
+          p.status !== "completed" ||
+          p.error ||
+          p.progressPercent !== 100 ||
+          (supabaseCount > 0 && p.totalBars !== supabaseCount)
+        ) {
+          await localProgressRepo.updateStatus(p.broker, p.symbol, "completed", null);
+          await localProgressRepo.updateProgress(p.broker, p.symbol, {
+            totalBars: supabaseCount > 0 ? supabaseCount : p.totalBars,
+            error: null,
+            progressPercent: 100,
+          });
+          updated += 1;
+        }
+      }
+
+      if (updated > 0) {
+        await refresh();
+      }
+    } catch (err) {
+      console.warn("[ChartDataSync] Failed to reconcile local chart sync status:", err);
+    }
+  }, [progressRepo, refresh, user?.id]);
+
+  useEffect(() => {
+    hasAutoReconciledRef.current = false;
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || symbolProgress.length === 0 || hasAutoReconciledRef.current || !online) {
+      return;
+    }
+    hasAutoReconciledRef.current = true;
+    void reconcileCompletedWithCloud();
+  }, [user?.id, symbolProgress.length, online, reconcileCompletedWithCloud]);
+
+  const restoreMissingBarsFromCloud = useCallback(async (broker: string, symbol: string) => {
+    if (!user?.id) {
+      throw new Error("Please log in to restore chart bars");
+    }
+    const fullSyncService = new FullSyncService(user.id);
+    const restoreResult = await fullSyncService.restoreChartBarsForSymbol(broker, symbol);
+    if (!restoreResult.success) {
+      throw new Error(restoreResult.error ?? "Failed to restore chart bars from cloud");
+    }
+  }, [user?.id]);
+
   const handleSyncBroker = useCallback(async (broker: string) => {
     if (!user?.id) {
       setError("Please log in to sync");
@@ -80,37 +200,40 @@ export function ChartDataSyncSection() {
       return;
     }
 
-    const token = TokenStorage.getGlobal();
-    if (!token) {
-      setError("No access token available. Please reconnect your cTrader account.");
-      return;
-    }
-
     setSyncingBrokers((prev) => new Set(prev).add(broker));
     setError(null);
 
     try {
       // Get all symbols for this broker
       const brokerSymbols = getBrokerProgress(broker);
-      
-      // Get first account for this broker (for accountNumber)
-      const brokerAccount = accounts.find((acc) => acc.broker === broker);
-      const accountNumber = brokerAccount?.accountNumber;
-
-      // Create repositories and use case
-      
-      const dexieChartRepo = new DexieChartBarRepository();
-      const supabaseChartRepo = new SupabaseChartBarRepository(user.id);
-      const api = new CTraderAPI();
-      
-      
-      const syncUseCase = new HybridSyncChartBarsUseCase(
-        api,
-        dexieChartRepo,
-        supabaseChartRepo,
-        progressRepo
+      const symbolsNeedingCTraderSync = brokerSymbols.filter(
+        (progress) => !isLocalIncompletePending(progress)
       );
-      
+
+      let token: ReturnType<typeof TokenStorage.getGlobal> | null = null;
+      let accountNumber: string | undefined;
+      let syncUseCase: HybridSyncChartBarsUseCase | null = null;
+
+      if (symbolsNeedingCTraderSync.length > 0) {
+        token = TokenStorage.getGlobal();
+        if (!token) {
+          setError("No access token available. Please reconnect your cTrader account.");
+          return;
+        }
+
+        const brokerAccount = accounts.find((acc) => acc.broker === broker);
+        accountNumber = brokerAccount?.accountNumber;
+
+        const dexieChartRepo = new DexieChartBarRepository();
+        const supabaseChartRepo = new SupabaseChartBarRepository(user.id);
+        const api = new CTraderAPI();
+        syncUseCase = new HybridSyncChartBarsUseCase(
+          api,
+          dexieChartRepo,
+          supabaseChartRepo,
+          progressRepo
+        );
+      }
 
       // Sync each symbol (including completed - incremental sync from lastBarDate to now)
       for (const symbolProgress of brokerSymbols) {
@@ -124,6 +247,15 @@ export function ChartDataSyncSection() {
         cancelRequestedRef.current = false;
 
         try {
+          if (isLocalIncompletePending(symbolProgress)) {
+            await restoreMissingBarsFromCloud(broker, symbolProgress.symbol);
+            continue;
+          }
+
+          if (!syncUseCase || !token) {
+            throw new Error("No access token available. Please reconnect your cTrader account.");
+          }
+
           const now = new Date();
           let fromDate: Date;
           let toDate: Date;
@@ -148,29 +280,30 @@ export function ChartDataSyncSection() {
           
           
           try {
-          // Calculate timeout based on date range (allow 1 minute per month of data)
-          const monthsDiff = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
-          const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
-          
-          
-          const result = await Promise.race([
-            syncUseCase.execute({
-              userId: user.id,
-              broker,
-              symbol: symbolProgress.symbol,
-              fromDate,
-              toDate,
-              accessToken: token.accessToken,
-              accountNumber,
-              shouldCancel: () => cancelRequestedRef.current,
-            }),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error(`Sync timeout after ${Math.round(timeoutMs/1000)} seconds`)), timeoutMs)
-            )
-          ]) as Awaited<ReturnType<typeof syncUseCase.execute>>;
+            // Calculate timeout based on date range (allow 1 minute per month of data)
+            const monthsDiff = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+            const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
 
-            
-            if (!result.success && result.error?.includes("cancelled")) {
+            await Promise.race([
+              syncUseCase.execute({
+                userId: user.id,
+                broker,
+                symbol: symbolProgress.symbol,
+                fromDate,
+                toDate,
+                accessToken: token.accessToken,
+                accountNumber,
+                shouldCancel: () => cancelRequestedRef.current,
+              }),
+              new Promise((_, reject) =>
+                setTimeout(
+                  () => reject(new Error(`Sync timeout after ${Math.round(timeoutMs / 1000)} seconds`)),
+                  timeoutMs
+                )
+              ),
+            ]) as Awaited<ReturnType<typeof syncUseCase.execute>>;
+
+            if (cancelRequestedRef.current) {
               break;
             }
           } catch (syncError) {
@@ -191,6 +324,7 @@ export function ChartDataSyncSection() {
       }
 
       await refresh();
+      await reconcileCompletedWithCloud();
 
       // Process any Supabase sync retries (bars that failed to sync during the run)
       if (isOnline() && user?.id) {
@@ -221,7 +355,7 @@ export function ChartDataSyncSection() {
         return next;
       });
     }
-  }, [user?.id, accounts, getBrokerProgress, refresh]);
+  }, [user?.id, accounts, getBrokerProgress, progressRepo, reconcileCompletedWithCloud, refresh, restoreMissingBarsFromCloud]);
 
   const handleCancelBrokerSync = useCallback((broker: string) => {
     if (syncingBrokers.has(broker)) {
@@ -249,12 +383,6 @@ export function ChartDataSyncSection() {
       return;
     }
 
-    const token = TokenStorage.getGlobal();
-    if (!token) {
-      setError("No access token available. Please reconnect your cTrader account.");
-      return;
-    }
-
     const symbolKey = `${broker}:${symbol}`;
     setSyncingSymbols((prev) => new Set(prev).add(symbolKey));
     setError(null);
@@ -263,27 +391,33 @@ export function ChartDataSyncSection() {
     try {
       // Get progress for this symbol
       const symbolProgress = await progressRepo.getByBrokerAndSymbol(broker, symbol);
-      
-      
+      if (isLocalIncompletePending(symbolProgress)) {
+        await restoreMissingBarsFromCloud(broker, symbol);
+        await refresh();
+        await reconcileCompletedWithCloud();
+        return;
+      }
+
+      const token = TokenStorage.getGlobal();
+      if (!token) {
+        setError("No access token available. Please reconnect your cTrader account.");
+        return;
+      }
+
       // Get account for this broker
       const brokerAccount = accounts.find((acc) => acc.broker === broker);
       const accountNumber = brokerAccount?.accountNumber;
-      
 
       // Create repositories and use case
-      
       const dexieChartRepo = new DexieChartBarRepository();
       const supabaseChartRepo = new SupabaseChartBarRepository(user.id);
       const api = new CTraderAPI();
-      
-      
       const syncUseCase = new HybridSyncChartBarsUseCase(
         api,
         dexieChartRepo,
         supabaseChartRepo,
         progressRepo
       );
-      
 
       const now = new Date();
       let fromDate: Date;
@@ -313,7 +447,7 @@ export function ChartDataSyncSection() {
       const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
       
       
-      const result = await Promise.race([
+      await Promise.race([
         syncUseCase.execute({
           userId: user.id,
           broker,
@@ -357,7 +491,7 @@ export function ChartDataSyncSection() {
         return next;
       });
     }
-  }, [user?.id, accounts, progressRepo, refresh]);
+  }, [user?.id, accounts, progressRepo, reconcileCompletedWithCloud, refresh, restoreMissingBarsFromCloud]);
 
   const handleRetryFailed = useCallback(async (broker: string) => {
     if (!user?.id) {
@@ -486,7 +620,7 @@ export function ChartDataSyncSection() {
       const supabaseChartRepo = new SupabaseChartBarRepository(user.id);
 
       // Delete from Dexie (local)
-      const deletedLocal = await dexieChartRepo.deleteAllForSymbol(
+      await dexieChartRepo.deleteAllForSymbol(
         target.broker,
         target.symbol,
         "M1"
@@ -635,7 +769,7 @@ export function ChartDataSyncSection() {
       const monthsDiff = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
       const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
       
-      const result = await Promise.race([
+      await Promise.race([
         syncUseCase.execute({
           userId: user.id,
           broker,
@@ -682,10 +816,11 @@ export function ChartDataSyncSection() {
     setIsLoading(true);
     try {
       await refresh();
+      await reconcileCompletedWithCloud();
     } finally {
       setIsLoading(false);
     }
-  }, [refresh]);
+  }, [reconcileCompletedWithCloud, refresh]);
 
   return (
     <section className="rounded-xl border border-border bg-card p-4 sm:p-6 space-y-6">

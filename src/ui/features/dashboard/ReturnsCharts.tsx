@@ -140,82 +140,119 @@ export function ReturnsCharts({ annual, monthly }: ReturnsChartsProps) {
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
-      <div className="rounded-xl border border-border bg-card p-4">
-        <h3 className="text-sm font-medium text-foreground mb-4">Annual Returns</h3>
-        <div className="h-56">
+      <div className="rounded-xl border border-border bg-card p-3 sm:p-4">
+        <h3 className="mb-2 text-sm font-medium text-foreground sm:mb-4">Annual Returns</h3>
+        <div className="h-52 sm:h-56">
           {annualData.length === 0 ? (
             <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
               No data
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%" minHeight={0}>
-              <BarChart data={annualData} margin={{ top: 12, right: 12, left: 12, bottom: 12 }} stackOffset="sign" barGap={4}>
+              <BarChart data={annualData} margin={{ top: 4, right: 4, left: 0, bottom: 4 }} stackOffset="sign" barGap={4}>
                 {BAR_CHART_DEFS}
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.6} vertical={false} />
                 <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeWidth={1} strokeOpacity={0.6} />
                 <XAxis
                   dataKey="shortLabel"
-                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                  tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                   tickLine={false}
                   axisLine={false}
+                  tickMargin={6}
                 />
                 <YAxis
-                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                  tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                   tickLine={false}
                   axisLine={false}
+                  width={40}
                   tickFormatter={(v) => `$${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`}
                 />
-                <Tooltip content={<ReturnsTooltipContent />} cursor={{ fill: "var(--muted)", opacity: 0.2 }} />
-                <Bar dataKey="winning" stackId="stack" fill="url(#barWinGradient)" radius={[6, 6, 0, 0]} maxBarSize={36} />
-                <Bar dataKey="losing" stackId="stack" fill="url(#barLossGradient)" radius={[6, 6, 0, 0]} maxBarSize={36} />
+                <Tooltip
+                  content={<ReturnsTooltipContent />}
+                  cursor={{ fill: "var(--muted)", opacity: 0.2, stroke: "transparent" }}
+                />
+                <Bar
+                  dataKey="winning"
+                  stackId="stack"
+                  fill="url(#barWinGradient)"
+                  radius={[6, 6, 0, 0]}
+                  maxBarSize={36}
+                  activeBar={{ stroke: "transparent", strokeWidth: 0 }}
+                />
+                <Bar
+                  dataKey="losing"
+                  stackId="stack"
+                  fill="url(#barLossGradient)"
+                  radius={[6, 6, 0, 0]}
+                  maxBarSize={36}
+                  activeBar={{ stroke: "transparent", strokeWidth: 0 }}
+                />
               </BarChart>
             </ResponsiveContainer>
           )}
         </div>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-4">
-        <h3 className="text-sm font-medium text-foreground mb-4">Trade distribution by month</h3>
-        <div className="h-56">
+      <div className="rounded-xl border border-border bg-card p-3 sm:p-4">
+        <h3 className="mb-2 text-sm font-medium text-foreground sm:mb-4">Trade distribution by month</h3>
+        <div className="h-52 sm:h-56">
           {monthlyData.length === 0 ? (
             <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
               No data
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%" minHeight={0}>
-              <BarChart data={monthlyData} margin={{ top: 12, right: 12, left: 12, bottom: 12 }} stackOffset="sign" barGap={4}>
+              <BarChart data={monthlyData} margin={{ top: 4, right: 4, left: 0, bottom: 4 }} stackOffset="sign" barGap={4}>
                 {BAR_CHART_DEFS}
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.6} vertical={false} />
                 <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeWidth={1} strokeOpacity={0.6} />
                 <XAxis
                   dataKey="shortLabel"
-                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                  tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                   tickLine={false}
                   axisLine={false}
                   angle={-45}
                   textAnchor="end"
-                  height={60}
+                  height={56}
                 />
                 <YAxis
-                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                  tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                   tickLine={false}
                   axisLine={false}
+                  width={40}
                   tickFormatter={(v) => `$${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`}
                 />
-                <Tooltip content={<ReturnsTooltipContent />} cursor={{ fill: "var(--muted)", opacity: 0.2 }} />
-                <Bar dataKey="winning" stackId="stack" fill="url(#barWinGradient)" radius={[6, 6, 0, 0]} maxBarSize={36} />
-                <Bar dataKey="losing" stackId="stack" fill="url(#barLossGradient)" radius={[6, 6, 0, 0]} maxBarSize={36} />
+                <Tooltip
+                  content={<ReturnsTooltipContent />}
+                  cursor={{ fill: "var(--muted)", opacity: 0.2, stroke: "transparent" }}
+                />
+                <Bar
+                  dataKey="winning"
+                  stackId="stack"
+                  fill="url(#barWinGradient)"
+                  radius={[6, 6, 0, 0]}
+                  maxBarSize={36}
+                  activeBar={{ stroke: "transparent", strokeWidth: 0 }}
+                />
+                <Bar
+                  dataKey="losing"
+                  stackId="stack"
+                  fill="url(#barLossGradient)"
+                  radius={[6, 6, 0, 0]}
+                  maxBarSize={36}
+                  activeBar={{ stroke: "transparent", strokeWidth: 0 }}
+                />
               </BarChart>
             </ResponsiveContainer>
           )}
         </div>
         {availableYears.length > 0 && (
-          <div className="flex justify-center gap-2 mt-3">
+          <div className="mt-3 flex justify-center gap-2">
             {availableYears.map((year) => (
               <button
                 key={year}
                 onClick={() => setSelectedYear(year)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors sm:px-3 sm:py-1.5 sm:text-sm ${
                   selectedYear === year
                     ? "bg-primary text-primary-foreground"
                     : "bg-muted text-muted-foreground hover:bg-muted/80"

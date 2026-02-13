@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@ui/hooks/useAuth";
 import { InitializeSyncUseCase } from "@application/use-cases/sync";
 import { AnalyzeTradesForBarSyncUseCase } from "@application/use-cases/sync";
@@ -36,7 +36,21 @@ export function SyncInitializer() {
   const { user } = useAuth();
   const [isInitializing, setIsInitializing] = useState(false);
   const initializedRef = useRef(false);
-  const { startSync, updateStep, finishSync } = useFullSyncProgressStore();
+  const reconnectFlowRunningRef = useRef(false);
+  const lastReportedStepRef = useRef<string | null>(null);
+  const startSync = useFullSyncProgressStore((state) => state.startSync);
+  const updateStep = useFullSyncProgressStore((state) => state.updateStep);
+  const finishSync = useFullSyncProgressStore((state) => state.finishSync);
+  const reportStep = useCallback(
+    (step: string) => {
+      if (lastReportedStepRef.current === step) {
+        return;
+      }
+      lastReportedStepRef.current = step;
+      updateStep(step);
+    },
+    [updateStep]
+  );
   const progressRepo = useMemo(() => {
     const dexie = new DexieSymbolSyncProgressRepository();
     return user?.id
@@ -98,7 +112,7 @@ export function SyncInitializer() {
           startSync("Bootstrapping local data from cloud...");
           try {
             const fullSync = new FullSyncService(user.id);
-            const pullResult = await fullSync.pullFromSupabase((step) => updateStep(step));
+            const pullResult = await fullSync.pullFromSupabase((step) => reportStep(step));
             if (!pullResult.success) {
               console.warn("[SyncInitializer] Initial cloud bootstrap pull failed:", pullResult);
             }
@@ -152,7 +166,7 @@ export function SyncInitializer() {
             startSync("Pulling latest cloud changes...");
             const reconnectSync = new JournalDeltaSyncService(user.id);
             const reconnectResult = await reconnectSync.runReconnectFlow((step) =>
-              updateStep(step)
+              reportStep(step)
             );
             if (!reconnectResult.success) {
               console.warn(
@@ -162,7 +176,7 @@ export function SyncInitializer() {
             }
             const fullSync = new FullSyncService(user.id);
             const resumeResult = await fullSync.resumeChartBarsFromCloud((step) =>
-              updateStep(step)
+              reportStep(step)
             );
             if (!resumeResult.success) {
               console.warn(
@@ -194,7 +208,7 @@ export function SyncInitializer() {
     return () => {
       clearTimeout(timeout);
     };
-  }, [user?.id, isInitializing, refresh, progressRepo, startSync, updateStep, finishSync]);
+  }, [user?.id, isInitializing, refresh, progressRepo, startSync, reportStep, finishSync]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -376,16 +390,18 @@ export function SyncInitializer() {
 
     const runReconnectFlow = async () => {
       if (!user?.id || !isOnline()) return;
+      if (reconnectFlowRunningRef.current) return;
+      reconnectFlowRunningRef.current = true;
       try {
         startSync("Pulling latest cloud changes...");
         const reconnectSync = new JournalDeltaSyncService(user.id);
-        const result = await reconnectSync.runReconnectFlow((step) => updateStep(step));
+        const result = await reconnectSync.runReconnectFlow((step) => reportStep(step));
         if (!result.success) {
           console.warn("[SyncInitializer] Reconnect flow finished with issues:", result);
         }
         const fullSync = new FullSyncService(user.id);
         const resumeResult = await fullSync.resumeChartBarsFromCloud((step) =>
-          updateStep(step)
+          reportStep(step)
         );
         if (!resumeResult.success) {
           console.warn("[SyncInitializer] Chart restore resume finished with issues:", resumeResult);
@@ -394,6 +410,7 @@ export function SyncInitializer() {
       } catch (error) {
         console.warn("[SyncInitializer] Reconnect flow failed:", error);
       } finally {
+        reconnectFlowRunningRef.current = false;
         finishSync();
       }
     };
@@ -413,7 +430,7 @@ export function SyncInitializer() {
     return () => {
       unsubscribe();
     };
-  }, [user?.id, progressRepo, startSync, updateStep, finishSync]);
+  }, [user?.id, progressRepo, startSync, reportStep, finishSync]);
 
   return null;
 }

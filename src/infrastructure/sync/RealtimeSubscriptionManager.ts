@@ -2,7 +2,12 @@ import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { ChartBar, SymbolSyncProgress } from "@domain/entities";
 import { getSupabaseClient } from "@infrastructure/db/supabase/client";
 import { progressEventEmitter } from "./ProgressEventEmitter";
-import { isOnline, onConnectionChange } from "./utils/connection";
+import {
+  isOnline,
+  onConnectionChange,
+  reportConnectionFailure,
+  reportConnectionSuccess,
+} from "./utils/connection";
 
 export interface RealtimeCallbacks {
   onChartBarInsert?: (bar: ChartBar) => void;
@@ -140,15 +145,21 @@ export class RealtimeSubscriptionManager {
       this.reconnectTimeout = undefined;
     }
 
-    for (const [key, subscription] of this.subscriptions.entries()) {
+    const channels = Array.from(this.subscriptions.entries());
+    this.subscriptions.clear();
+
+    for (const [key, subscription] of channels) {
       try {
         subscription.unsubscribe();
       } catch (error) {
         console.error(`[Realtime] Error unsubscribing from ${key}:`, error);
       }
+
+      this.removeChannelFromClient(key, subscription);
     }
 
-    this.subscriptions.clear();
+    this.removeAllChannelsFromClient();
+    this.disconnectRealtimeTransport();
     this.isConnected = false;
     this.callbacks.onConnectionChange?.(false);
     
@@ -190,12 +201,11 @@ export class RealtimeSubscriptionManager {
           }
         }
       )
-      .subscribe((status) => {
+      .subscribe((status, err) => {
         if (status === "SUBSCRIBED") {
-          
+          reportConnectionSuccess();
         } else if (status === "CHANNEL_ERROR") {
-          console.error("[Realtime] Chart bars subscription error");
-          this.scheduleReconnect();
+          this.handleChannelIssue("Chart bars", status, err);
         }
       });
 
@@ -233,7 +243,7 @@ export class RealtimeSubscriptionManager {
       )
       .subscribe((status, err) => {
         if (status === "SUBSCRIBED") {
-          
+          reportConnectionSuccess();
         } else if (status === "CHANNEL_ERROR" || status === "CLOSED") {
           const msg = err instanceof Error ? err.message : String(err ?? "");
           if (msg.includes("mismatch") && msg.includes("postgres changes")) {
@@ -245,8 +255,10 @@ export class RealtimeSubscriptionManager {
             console.warn(
               "[Realtime] symbol_sync_progress subscription disabled (Realtime may not be enabled for this table in Supabase). Full sync still works."
             );
+          } else if (status === "CHANNEL_ERROR") {
+            this.handleChannelIssue("Sync progress", status, err);
           } else if (err) {
-            console.error("[Realtime] Sync progress subscription error", err);
+            console.warn("[Realtime] Sync progress subscription warning", err);
           } else {
             // Benign case: status changed but no error object provided
             console.warn(
@@ -352,12 +364,11 @@ export class RealtimeSubscriptionManager {
           });
         }
       )
-      .subscribe((status) => {
+      .subscribe((status, err) => {
         if (status === "SUBSCRIBED") {
-          
+          reportConnectionSuccess();
         } else if (status === "CHANNEL_ERROR") {
-          console.error("[Realtime] Journal entities subscription error");
-          this.scheduleReconnect();
+          this.handleChannelIssue("Journal entities", status, err);
         }
       });
 
@@ -399,6 +410,81 @@ export class RealtimeSubscriptionManager {
       error: row.error,
       progressPercent: row.progress_percent ?? undefined,
     };
+  }
+
+  private handleChannelIssue(
+    label: string,
+    status: string,
+    err?: Error
+  ): void {
+    const details =
+      err?.message?.trim() ||
+      (err ? JSON.stringify(err) : "") ||
+      "No additional details";
+    console.warn(`[Realtime] ${label} subscription ${status}: ${details}`);
+    reportConnectionFailure(120000);
+    // Ensure all channels are reset before reconnecting to avoid duplicate listeners.
+    this.stop();
+    if (!isOnline()) {
+      return;
+    }
+    this.scheduleReconnect();
+  }
+
+  private removeChannelFromClient(key: string, channel: RealtimeChannel): void {
+    try {
+      const removeChannel = (
+        this.supabase as unknown as {
+          removeChannel?: (value: RealtimeChannel) => Promise<unknown> | unknown;
+        }
+      ).removeChannel;
+      if (typeof removeChannel !== "function") {
+        return;
+      }
+      const result = removeChannel.call(this.supabase, channel);
+      if (result && typeof (result as Promise<unknown>).catch === "function") {
+        void (result as Promise<unknown>).catch((error) => {
+          console.warn(`[Realtime] Failed to remove channel ${key}:`, error);
+        });
+      }
+    } catch (error) {
+      console.warn(`[Realtime] Failed to remove channel ${key}:`, error);
+    }
+  }
+
+  private removeAllChannelsFromClient(): void {
+    try {
+      const removeAllChannels = (
+        this.supabase as unknown as {
+          removeAllChannels?: () => Promise<unknown> | unknown;
+        }
+      ).removeAllChannels;
+      if (typeof removeAllChannels !== "function") {
+        return;
+      }
+      const result = removeAllChannels.call(this.supabase);
+      if (result && typeof (result as Promise<unknown>).catch === "function") {
+        void (result as Promise<unknown>).catch((error) => {
+          console.warn("[Realtime] Failed to remove all channels:", error);
+        });
+      }
+    } catch (error) {
+      console.warn("[Realtime] Failed to remove all channels:", error);
+    }
+  }
+
+  private disconnectRealtimeTransport(): void {
+    try {
+      (
+        this.supabase as unknown as {
+          realtime?: {
+            disconnect?: () => void;
+          };
+        }
+      ).realtime?.disconnect?.();
+    } catch (error) {
+      console.warn("[Realtime] Failed to disconnect realtime transport:", error);
+    }
   }
 
   /**

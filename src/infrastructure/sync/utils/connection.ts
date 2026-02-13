@@ -10,7 +10,9 @@ export interface ConnectionState {
 }
 
 class ConnectionManager {
-  private isOnline: boolean = typeof navigator !== "undefined" ? navigator.onLine : true;
+  private browserOnline: boolean = typeof navigator !== "undefined" ? navigator.onLine : true;
+  private degradedUntil = 0;
+  private recoveryTimer?: ReturnType<typeof setTimeout>;
   private listeners: Set<(isOnline: boolean) => void> = new Set();
 
   constructor() {
@@ -20,18 +22,48 @@ class ConnectionManager {
     }
   }
 
+  private computeOnline(now: number = Date.now()): boolean {
+    return this.browserOnline && now >= this.degradedUntil;
+  }
+
   private handleOnline = () => {
-    this.isOnline = true;
+    this.browserOnline = true;
+    this.degradedUntil = 0;
+    this.clearRecoveryTimer();
     this.notifyListeners();
   };
 
   private handleOffline = () => {
-    this.isOnline = false;
+    this.browserOnline = false;
+    this.degradedUntil = 0;
+    this.clearRecoveryTimer();
     this.notifyListeners();
   };
 
   private notifyListeners = () => {
-    this.listeners.forEach((listener) => listener(this.isOnline));
+    const online = this.computeOnline();
+    this.listeners.forEach((listener) => listener(online));
+  };
+
+  private clearRecoveryTimer() {
+    if (this.recoveryTimer) {
+      clearTimeout(this.recoveryTimer);
+      this.recoveryTimer = undefined;
+    }
+  }
+
+  private scheduleRecovery(ms: number) {
+    this.clearRecoveryTimer();
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = undefined;
+      if (!this.browserOnline) {
+        return;
+      }
+      if (Date.now() >= this.degradedUntil) {
+        this.degradedUntil = 0;
+        this.notifyListeners();
+      }
+    }, ms);
   };
 
   /**
@@ -39,9 +71,16 @@ class ConnectionManager {
    */
   checkOnline(): boolean {
     if (typeof navigator !== "undefined") {
-      this.isOnline = navigator.onLine;
+      const navOnline = navigator.onLine;
+      if (this.browserOnline !== navOnline) {
+        this.browserOnline = navOnline;
+      }
+      if (!navOnline) {
+        this.degradedUntil = 0;
+        this.clearRecoveryTimer();
+      }
     }
-    return this.isOnline;
+    return this.computeOnline();
   }
 
   /**
@@ -65,6 +104,40 @@ class ConnectionManager {
   }
 
   /**
+   * Report transient cloud/network failure even if navigator still says "online".
+   * This temporarily puts app in offline mode to avoid request storms.
+   */
+  reportFailure(cooldownMs: number = 120000): void {
+    if (!this.browserOnline) {
+      return;
+    }
+    const prevOnline = this.computeOnline();
+    const nextDegradedUntil = Date.now() + Math.max(1000, cooldownMs);
+    this.degradedUntil = Math.max(this.degradedUntil, nextDegradedUntil);
+    this.scheduleRecovery(this.degradedUntil - Date.now());
+    const nextOnline = this.computeOnline();
+    if (prevOnline !== nextOnline) {
+      this.notifyListeners();
+    }
+  }
+
+  /**
+   * Report successful cloud communication and clear temporary degraded state.
+   */
+  reportSuccess(): void {
+    if (!this.browserOnline) {
+      return;
+    }
+    const prevOnline = this.computeOnline();
+    this.degradedUntil = 0;
+    this.clearRecoveryTimer();
+    const nextOnline = this.computeOnline();
+    if (prevOnline !== nextOnline) {
+      this.notifyListeners();
+    }
+  }
+
+  /**
    * Cleanup event listeners
    */
   destroy(): void {
@@ -72,6 +145,7 @@ class ConnectionManager {
       window.removeEventListener("online", this.handleOnline);
       window.removeEventListener("offline", this.handleOffline);
     }
+    this.clearRecoveryTimer();
     this.listeners.clear();
   }
 }
@@ -98,4 +172,18 @@ export function getConnectionState(): ConnectionState {
  */
 export function onConnectionChange(listener: (isOnline: boolean) => void): () => void {
   return connectionManager.subscribe(listener);
+}
+
+/**
+ * Mark connection as temporarily degraded after network/cloud failures.
+ */
+export function reportConnectionFailure(cooldownMs?: number): void {
+  connectionManager.reportFailure(cooldownMs);
+}
+
+/**
+ * Mark connection healthy after successful cloud communication.
+ */
+export function reportConnectionSuccess(): void {
+  connectionManager.reportSuccess();
 }

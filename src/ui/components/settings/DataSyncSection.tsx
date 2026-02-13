@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { RefreshCw, Cloud, CloudOff, RotateCcw } from "lucide-react";
 import { useAuth } from "@ui/hooks/useAuth";
+import { useOnlineStatus } from "@ui/hooks/useOnlineStatus";
 import { useEntityQueueStatus } from "@ui/hooks";
 import { EntitySyncQueue } from "@infrastructure/sync/EntitySyncQueue";
 import { JournalDeltaSyncService } from "@infrastructure/sync/JournalDeltaSyncService";
@@ -15,6 +16,7 @@ import { reconcileSeededJournalDuplicates } from "@infrastructure/sync/reconcile
 
 export function DataSyncSection() {
   const { user } = useAuth();
+  const online = useOnlineStatus();
   const { status: queueStatus } = useEntityQueueStatus();
   const [isSyncingLocal, setIsSyncingLocal] = useState(false);
   const [lastSync, setLastSync] = useState<{ success: boolean; error?: string } | null>(null);
@@ -26,7 +28,17 @@ export function DataSyncSection() {
     useFullSyncProgressStore();
 
   const isSyncing = isSyncingStore || isSyncingLocal;
-  const progressMessage = isSyncing ? (syncStep ?? "Sync in progress...") : lastStep;
+  const hasCloudStepText =
+    (syncStep?.toLowerCase().includes("pull") ?? false) ||
+    (syncStep?.toLowerCase().includes("sync") ?? false) ||
+    (lastStep?.toLowerCase().includes("pull") ?? false) ||
+    (lastStep?.toLowerCase().includes("sync") ?? false);
+  const progressMessage =
+    !online && (isSyncing || hasCloudStepText)
+      ? "Offline. Cloud sync is paused."
+      : isSyncing
+      ? (syncStep ?? "Sync in progress...")
+      : lastStep;
 
   useEffect(() => {
     if (!user?.id) {
@@ -63,6 +75,13 @@ export function DataSyncSection() {
       cancelled = true;
     };
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!online && isSyncing) {
+      finishSync();
+      setIsSyncingLocal(false);
+    }
+  }, [finishSync, isSyncing, online]);
 
   const handleSyncNow = useCallback(async () => {
     if (!user?.id) {
@@ -170,7 +189,6 @@ export function DataSyncSection() {
     }
   }, []);
 
-  const online = isOnline();
   const statusCards = [
     {
       key: "pending",
@@ -254,7 +272,7 @@ export function DataSyncSection() {
       )}
 
       <div className="rounded-lg border border-border bg-muted/40 p-4">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-medium text-foreground">Outbox status</p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -264,7 +282,7 @@ export function DataSyncSection() {
           <button
             onClick={() => void handleRetryFailed()}
             disabled={queueStatus.failed === 0 || isRetryingFailed}
-            className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 self-start rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 sm:self-auto"
           >
             <RotateCcw className={`h-3.5 w-3.5 ${isRetryingFailed ? "animate-spin" : ""}`} />
             Retry failed

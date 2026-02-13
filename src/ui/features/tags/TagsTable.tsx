@@ -47,10 +47,15 @@ export function TagsTable() {
   const [deleting, setDeleting] = useState<number | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [categoryFilter, setCategoryFilter] = useState<TagCategory | "All">("All");
   const [confirmDelete, setConfirmDelete] = useState<{ id: number } | null>(null);
 
-  const sortedTags = useMemo(() => {
-    const copy = [...tags];
+  const filteredSortedTags = useMemo(() => {
+    const filtered =
+      categoryFilter === "All"
+        ? [...tags]
+        : tags.filter((tag) => tag.category === categoryFilter);
+    const copy = [...filtered];
     copy.sort((a, b) => {
       let cmp = 0;
       if (sortBy === "name") {
@@ -61,7 +66,7 @@ export function TagsTable() {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return copy;
-  }, [tags, sortBy, sortDir]);
+  }, [tags, sortBy, sortDir, categoryFilter]);
 
   const toggleSort = (col: SortBy) => {
     if (sortBy === col) {
@@ -163,8 +168,28 @@ export function TagsTable() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-foreground">Tags</h2>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+          <h2 className="text-lg font-semibold text-foreground">Tags</h2>
+          <div className="flex items-center gap-2">
+            <label htmlFor="tag-category-filter" className="text-xs text-muted-foreground">
+              Category
+            </label>
+            <select
+              id="tag-category-filter"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value as TagCategory | "All")}
+              className="rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-foreground"
+            >
+              <option value="All">All categories</option>
+              {CATEGORY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
         <button
           onClick={openAdd}
           className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
@@ -265,6 +290,10 @@ export function TagsTable() {
           <div className="p-4 text-sm text-muted-foreground sm:p-6">
             No tags yet. Add tags to categorize your trades.
           </div>
+        ) : filteredSortedTags.length === 0 ? (
+          <div className="p-4 text-sm text-muted-foreground sm:p-6">
+            No tags found for the selected category.
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-[400px] w-full text-left text-sm">
@@ -277,7 +306,7 @@ export function TagsTable() {
                 </tr>
               </thead>
               <tbody>
-                {sortedTags.map((tag) => (
+                {filteredSortedTags.map((tag) => (
                   <tr key={tag.id} className="border-b border-border last:border-0">
                     <td className="px-4 py-3 font-medium">{tag.name}</td>
                     <td className="px-4 py-3">{tag.category}</td>

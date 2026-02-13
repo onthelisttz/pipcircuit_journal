@@ -167,13 +167,13 @@ export function PerformanceCalendar({
             </button>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-end sm:gap-3">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:justify-end sm:gap-3 sm:overflow-visible sm:pb-0">
             {calendarLoading ? (
-              <span className="rounded-full bg-muted/80 px-2.5 py-1 text-[10px] font-medium text-muted-foreground sm:px-3 sm:py-1.5 sm:text-xs">
+              <span className="shrink-0 rounded-full bg-muted/80 px-3 py-1 text-[11px] font-medium text-muted-foreground sm:px-3 sm:py-1.5 sm:text-xs">
                 Loading...
               </span>
             ) : monthSummary.trades === 0 ? (
-              <span className="rounded-full bg-muted/80 px-2.5 py-1 text-[10px] font-medium text-muted-foreground sm:px-3 sm:py-1.5 sm:text-xs">
+              <span className="shrink-0 rounded-full bg-muted/80 px-3 py-1 text-[11px] font-medium text-muted-foreground sm:px-3 sm:py-1.5 sm:text-xs">
                 No trades this month
               </span>
             ) : (
@@ -187,22 +187,22 @@ export function PerformanceCalendar({
                         endOfDay(endOfMonth(viewMonth))
                       )
                     }
-                    className="cursor-pointer rounded-full bg-muted/80 px-2.5 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-muted sm:px-3 sm:py-1.5 sm:text-xs"
+                    className="shrink-0 cursor-pointer rounded-full bg-muted/80 px-3 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-muted sm:px-3 sm:py-1.5 sm:text-xs"
                   >
                     {monthSummary.trades} trades
                   </button>
                 ) : (
-                  <span className="rounded-full bg-muted/80 px-2.5 py-1 text-[10px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
+                  <span className="shrink-0 rounded-full bg-muted/80 px-3 py-1 text-[11px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
                     {monthSummary.trades} trades
                   </span>
                 )}
 
-                <span className="rounded-full bg-muted/80 px-2.5 py-1 text-[10px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
+                <span className="shrink-0 rounded-full bg-muted/80 px-3 py-1 text-[11px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
                   {monthSummary.winRate.toFixed(0)}% win rate
                 </span>
 
                 <span
-                  className={`rounded-full px-2.5 py-1 text-[10px] font-semibold sm:px-3 sm:py-1.5 sm:text-xs ${
+                  className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold sm:px-3 sm:py-1.5 sm:text-xs ${
                     monthSummary.profit >= 0
                       ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                       : "bg-red-500/15 text-red-600 dark:text-red-400"
@@ -217,141 +217,123 @@ export function PerformanceCalendar({
       </div>
 
       <div className="px-2 pb-3 sm:px-4 sm:pb-4">
-        <div className="w-full">
-          <div className="mb-1.5 grid grid-cols-7 gap-1 sm:mb-2 sm:grid-cols-8 sm:gap-2">
-            {WEEKDAY_LABELS.map((label) => (
-              <div
-                key={label}
-                className="py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:py-2 sm:text-[11px]"
-              >
-                {label}
+        <div className="-mx-2 overflow-x-auto px-2 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0">
+          <div className="min-w-[680px] sm:min-w-0">
+            <div className="mb-1.5 grid grid-cols-8 gap-1 sm:mb-2 sm:gap-2">
+              {WEEKDAY_LABELS.map((label) => (
+                <div
+                  key={label}
+                  className="py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:py-2 sm:text-[11px]"
+                >
+                  {label}
+                </div>
+              ))}
+              <div className="py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:py-2 sm:text-[11px]">
+                Week
               </div>
-            ))}
-            <div className="hidden py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:block sm:py-2 sm:text-[11px]">
-              Week
             </div>
-          </div>
 
-          {weeks.map((weekDays, wi) => {
-            const weekTotal = weekTotals[wi];
-            const weekIsProfit = weekTotal.profit >= 0;
+            {weeks.map((weekDays, wi) => {
+              const weekTotal = weekTotals[wi];
+              const weekIsProfit = weekTotal.profit >= 0;
 
-            return (
-              <div key={wi} className="mb-1.5 sm:mb-2">
-                <div className="grid grid-cols-7 gap-1 sm:grid-cols-8 sm:gap-2">
-                  {weekDays.map((day) => {
-                    const key = format(day, "yyyy-MM-dd");
-                    const data = byDate.get(key);
-                    const isCurrentMonth = isSameMonth(day, viewMonth);
-                    const hasData = Boolean(data && data.tradeCount > 0);
-                    const isProfit = hasData && (data?.profit ?? 0) >= 0;
+              return (
+                <div key={wi} className="mb-1.5 sm:mb-2">
+                  <div className="grid grid-cols-8 gap-1 sm:gap-2">
+                    {weekDays.map((day) => {
+                      const key = format(day, "yyyy-MM-dd");
+                      const data = byDate.get(key);
+                      const isCurrentMonth = isSameMonth(day, viewMonth);
+                      const hasData = Boolean(data && data.tradeCount > 0);
+                      const isProfit = hasData && (data?.profit ?? 0) >= 0;
 
-                    return (
-                      <div
-                        key={key}
-                        role={hasData && onDayClick ? "button" : undefined}
-                        onClick={hasData && onDayClick ? () => onDayClick(day) : undefined}
-                        className={`relative flex min-h-[52px] flex-col rounded-lg p-1 transition-all duration-200 ease-out active:scale-[0.98] sm:min-h-[72px] sm:rounded-xl sm:p-2.5 ${
-                          hasData && onDayClick ? "cursor-pointer" : "cursor-default"
-                        } ${!isCurrentMonth ? "opacity-35" : ""} ${
-                          hasData
-                            ? isProfit
-                              ? "bg-emerald-500/10 ring-1 ring-emerald-500/20 hover:scale-[1.03] hover:bg-emerald-500/15 hover:shadow-md hover:ring-2 hover:ring-emerald-500/40 hover:z-10 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/25"
-                              : "bg-red-500/10 ring-1 ring-red-500/20 hover:scale-[1.03] hover:bg-red-500/15 hover:shadow-md hover:ring-2 hover:ring-red-500/40 hover:z-10 dark:bg-red-500/20 dark:hover:bg-red-500/25"
-                            : "bg-muted/30 hover:scale-[1.03] hover:bg-muted/50 hover:shadow-md hover:ring-1 hover:ring-border hover:z-10 dark:bg-muted/20 dark:hover:bg-muted/30"
-                        }`}
-                      >
-                        <span
-                          className={`text-[9px] font-medium leading-tight sm:text-[11px] ${
-                            isCurrentMonth ? "text-foreground/80" : "text-muted-foreground"
+                      return (
+                        <div
+                          key={key}
+                          role={hasData && onDayClick ? "button" : undefined}
+                          onClick={hasData && onDayClick ? () => onDayClick(day) : undefined}
+                          className={`relative flex min-h-[56px] flex-col rounded-lg p-1 transition-all duration-200 ease-out active:scale-[0.98] sm:min-h-[72px] sm:rounded-xl sm:p-2.5 ${
+                            hasData && onDayClick ? "cursor-pointer" : "cursor-default"
+                          } ${!isCurrentMonth ? "opacity-35" : ""} ${
+                            hasData
+                              ? isProfit
+                                ? "bg-emerald-500/10 ring-1 ring-emerald-500/20 hover:scale-[1.03] hover:bg-emerald-500/15 hover:shadow-md hover:ring-2 hover:ring-emerald-500/40 hover:z-10 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/25"
+                                : "bg-red-500/10 ring-1 ring-red-500/20 hover:scale-[1.03] hover:bg-red-500/15 hover:shadow-md hover:ring-2 hover:ring-red-500/40 hover:z-10 dark:bg-red-500/20 dark:hover:bg-red-500/25"
+                              : "bg-muted/30 hover:scale-[1.03] hover:bg-muted/50 hover:shadow-md hover:ring-1 hover:ring-border hover:z-10 dark:bg-muted/20 dark:hover:bg-muted/30"
                           }`}
                         >
-                          {format(day, "d")}
-                        </span>
-
-                        {hasData ? (
-                          <>
-                            <span
-                              className={`mt-0.5 text-[10px] font-semibold leading-tight tabular-nums sm:mt-1 sm:text-[13px] ${
-                                isProfit
-                                  ? "text-emerald-600 dark:text-emerald-400"
-                                  : "text-red-600 dark:text-red-400"
-                              }`}
-                            >
-                              <span className="sm:hidden">{formatProfitCompact(data!.profit)}</span>
-                              <span className="hidden sm:inline">{formatProfit(data!.profit)}</span>
-                            </span>
-                            <span className="mt-0.5 text-[8px] leading-tight text-muted-foreground sm:text-[10px]">
-                              {data!.tradeCount} trade{data!.tradeCount !== 1 ? "s" : ""}
-                            </span>
-                          </>
-                        ) : (
-                          <span className="mt-0.5 text-[10px] leading-tight text-muted-foreground/50 sm:mt-1 sm:text-[11px]">
-                            --
+                          <span
+                            className={`text-[9px] font-medium leading-tight sm:text-[11px] ${
+                              isCurrentMonth ? "text-foreground/80" : "text-muted-foreground"
+                            }`}
+                          >
+                            {format(day, "d")}
                           </span>
-                        )}
-                      </div>
-                    );
-                  })}
 
-                  {weekTotal.trades > 0 && onWeekClick ? (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onWeekClick(startOfDay(weekDays[0]), endOfDay(weekDays[6]));
-                      }}
-                      className={`hidden min-h-[52px] flex-col justify-center rounded-lg p-1 transition-all duration-200 sm:flex sm:min-h-[72px] sm:rounded-xl sm:p-2.5 ${
-                        weekIsProfit
-                          ? "bg-emerald-500/5 ring-1 ring-emerald-500/20 hover:scale-[1.03] hover:bg-emerald-500/10 hover:shadow-md hover:ring-2 hover:ring-emerald-500/40 dark:bg-emerald-500/15 dark:hover:bg-emerald-500/20"
-                          : "bg-red-500/5 ring-1 ring-red-500/20 hover:scale-[1.03] hover:bg-red-500/10 hover:shadow-md hover:ring-2 hover:ring-red-500/40 dark:bg-red-500/15 dark:hover:bg-red-500/20"
-                      } cursor-pointer`}
-                    >
-                      <span
-                        className={`text-[10px] font-semibold leading-tight tabular-nums sm:text-[13px] ${
+                          {hasData ? (
+                            <>
+                              <span
+                                className={`mt-0.5 text-[10px] font-semibold leading-tight tabular-nums sm:mt-1 sm:text-[13px] ${
+                                  isProfit
+                                    ? "text-emerald-600 dark:text-emerald-400"
+                                    : "text-red-600 dark:text-red-400"
+                                }`}
+                              >
+                                <span className="sm:hidden">{formatProfitCompact(data!.profit)}</span>
+                                <span className="hidden sm:inline">{formatProfit(data!.profit)}</span>
+                              </span>
+                              <span className="mt-0.5 text-[8px] leading-tight text-muted-foreground sm:text-[10px]">
+                                {data!.tradeCount} trade{data!.tradeCount !== 1 ? "s" : ""}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="mt-0.5 text-[10px] leading-tight text-muted-foreground/50 sm:mt-1 sm:text-[11px]">
+                              --
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {weekTotal.trades > 0 && onWeekClick ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onWeekClick(startOfDay(weekDays[0]), endOfDay(weekDays[6]));
+                        }}
+                        className={`min-h-[56px] flex flex-col justify-center rounded-lg p-1 transition-all duration-200 sm:min-h-[72px] sm:rounded-xl sm:p-2.5 ${
                           weekIsProfit
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-red-600 dark:text-red-400"
-                        }`}
+                            ? "bg-emerald-500/5 ring-1 ring-emerald-500/20 hover:scale-[1.03] hover:bg-emerald-500/10 hover:shadow-md hover:ring-2 hover:ring-emerald-500/40 dark:bg-emerald-500/15 dark:hover:bg-emerald-500/20"
+                            : "bg-red-500/5 ring-1 ring-red-500/20 hover:scale-[1.03] hover:bg-red-500/10 hover:shadow-md hover:ring-2 hover:ring-red-500/40 dark:bg-red-500/15 dark:hover:bg-red-500/20"
+                        } cursor-pointer`}
                       >
-                        {formatProfit(weekTotal.profit)}
-                      </span>
-                      <span className="mt-0.5 text-[8px] leading-tight text-muted-foreground sm:text-[10px]">
-                        {weekTotal.trades} trades
-                      </span>
-                    </button>
-                  ) : (
-                    <div className="hidden min-h-[52px] flex-col justify-center rounded-lg bg-muted/50 p-1 ring-1 ring-border/50 sm:flex sm:min-h-[72px] sm:rounded-xl sm:p-2.5 dark:bg-muted/30">
-                      <span className="text-[10px] leading-tight text-muted-foreground/50 sm:text-[11px]">--</span>
-                    </div>
-                  )}
-                </div>
-
-                {weekTotal.trades > 0 && onWeekClick ? (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onWeekClick(startOfDay(weekDays[0]), endOfDay(weekDays[6]));
-                    }}
-                    className={`mt-1 flex min-h-[34px] w-full items-center justify-between rounded-lg px-2 py-1 text-[10px] sm:hidden ${
-                      weekIsProfit
-                        ? "bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/25 dark:bg-emerald-500/20 dark:text-emerald-400"
-                        : "bg-red-500/10 text-red-600 ring-1 ring-red-500/25 dark:bg-red-500/20 dark:text-red-400"
-                    }`}
-                  >
-                    <span className="font-semibold uppercase tracking-wide">Week</span>
-                    <span className="font-semibold tabular-nums">{formatProfitCompact(weekTotal.profit)}</span>
-                    <span className="text-muted-foreground">{weekTotal.trades} trades</span>
-                  </button>
-                ) : (
-                  <div className="mt-1 flex min-h-[34px] w-full items-center justify-center rounded-lg bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground/60 ring-1 ring-border/50 sm:hidden">
-                    --
+                        <span
+                          className={`text-[10px] font-semibold leading-tight tabular-nums sm:text-[13px] ${
+                            weekIsProfit
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-red-600 dark:text-red-400"
+                          }`}
+                        >
+                          <span className="sm:hidden">{formatProfitCompact(weekTotal.profit)}</span>
+                          <span className="hidden sm:inline">{formatProfit(weekTotal.profit)}</span>
+                        </span>
+                        <span className="mt-0.5 text-[8px] leading-tight text-muted-foreground sm:text-[10px]">
+                          {weekTotal.trades} trades
+                        </span>
+                      </button>
+                    ) : (
+                      <div className="min-h-[56px] flex flex-col justify-center rounded-lg bg-muted/50 p-1 ring-1 ring-border/50 sm:min-h-[72px] sm:rounded-xl sm:p-2.5 dark:bg-muted/30">
+                        <span className="text-[10px] leading-tight text-muted-foreground/50 sm:text-[11px]">
+                          --
+                        </span>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>

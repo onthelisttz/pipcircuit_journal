@@ -56,6 +56,7 @@ export function ObservationFilters({ filters, onChange, categories }: Observatio
           <DateRangePopover
             from={filters.from}
             to={filters.to}
+            quickPresetStorageKey="observations-date-quick-preset"
             onClose={() => setDateOpen(false)}
             onApply={(from, to) => {
               onChange({ ...filters, from, to });
@@ -109,4 +110,3 @@ export function ObservationFilters({ filters, onChange, categories }: Observatio
     </div>
   );
 }
-

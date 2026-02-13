@@ -93,9 +93,9 @@ export function DayOfWeekChart({ data }: DayOfWeekChartProps) {
 
   if (data.length === 0 || data.every((d) => d.tradeCount === 0)) {
     return (
-      <div className="rounded-xl border border-border bg-card p-4">
-        <h3 className="text-sm font-medium text-foreground mb-4">Gain/Losses by day of week</h3>
-        <div className="flex h-56 items-center justify-center text-muted-foreground text-sm">
+      <div className="rounded-xl border border-border bg-card p-3 sm:p-4">
+        <h3 className="mb-2 text-sm font-medium text-foreground sm:mb-4">Gain/Losses by day of week</h3>
+        <div className="flex h-52 items-center justify-center text-muted-foreground text-sm sm:h-56">
           No data
         </div>
       </div>
@@ -103,13 +103,13 @@ export function DayOfWeekChart({ data }: DayOfWeekChartProps) {
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <h3 className="text-sm font-medium text-foreground mb-4">Gain/Losses by day of week</h3>
-      <div className="h-56">
+    <div className="rounded-xl border border-border bg-card p-3 sm:p-4">
+      <h3 className="mb-2 text-sm font-medium text-foreground sm:mb-4">Gain/Losses by day of week</h3>
+      <div className="h-52 sm:h-56">
         <ResponsiveContainer width="100%" height="100%" minHeight={0}>
           <BarChart
             data={chartData}
-            margin={{ top: 12, right: 12, left: 12, bottom: 12 }}
+            margin={{ top: 4, right: 4, left: 0, bottom: 4 }}
             stackOffset="sign"
             barGap={4}
           >
@@ -118,23 +118,29 @@ export function DayOfWeekChart({ data }: DayOfWeekChartProps) {
             <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeWidth={1} strokeOpacity={0.6} />
             <XAxis
               dataKey="shortLabel"
-              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+              tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
               tickLine={false}
               axisLine={false}
+              tickMargin={6}
             />
             <YAxis
-              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+              tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
               tickLine={false}
               axisLine={false}
+              width={40}
               tickFormatter={(v) => `$${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`}
             />
-            <Tooltip content={<DayOfWeekTooltipContent />} cursor={{ fill: "var(--muted)", opacity: 0.2 }} />
+            <Tooltip
+              content={<DayOfWeekTooltipContent />}
+              cursor={{ fill: "var(--muted)", opacity: 0.2, stroke: "transparent" }}
+            />
             <Bar
               dataKey="winning"
               stackId="stack"
               fill="url(#dayBarWinGradient)"
               radius={[6, 6, 0, 0]}
               maxBarSize={36}
+              activeBar={{ stroke: "transparent", strokeWidth: 0 }}
             />
             <Bar
               dataKey="losing"
@@ -142,6 +148,7 @@ export function DayOfWeekChart({ data }: DayOfWeekChartProps) {
               fill="url(#dayBarLossGradient)"
               radius={[6, 6, 0, 0]}
               maxBarSize={36}
+              activeBar={{ stroke: "transparent", strokeWidth: 0 }}
             />
           </BarChart>
         </ResponsiveContainer>
