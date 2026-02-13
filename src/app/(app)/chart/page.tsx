@@ -18,11 +18,8 @@ import { TradeCandlestickChart } from "@ui/components/charts";
 import type { DrawingToolType, TradeCandlestickChartRef } from "@ui/components/charts/TradeCandlestickChart";
 import { useChartData } from "@ui/hooks/useChartData";
 import { useSyncProgress } from "@ui/hooks/useSyncProgress";
-import { useAuth } from "@ui/hooks/useAuth";
 import { useAccount } from "@ui/hooks/useAccount";
 import { DexieSymbolSyncProgressRepository } from "@infrastructure/db/dexie/repositories";
-import { SupabaseSymbolSyncProgressRepository } from "@infrastructure/db/supabase/repositories";
-import { DualSymbolSyncProgressRepository } from "@infrastructure/db/DualSymbolSyncProgressRepository";
 import { TokenStorage } from "@infrastructure/auth";
 
 const CHART_SELECTION_KEY = "chartSelection";
@@ -109,17 +106,8 @@ function statusMeta(status?: string) {
 }
 
 export default function ChartPage() {
-  const { user } = useAuth();
   const { activeAccount, accounts } = useAccount();
-  const progressRepo = useMemo(() => {
-    const dexie = new DexieSymbolSyncProgressRepository();
-    return user?.id
-      ? new DualSymbolSyncProgressRepository(
-          dexie,
-          new SupabaseSymbolSyncProgressRepository(user.id)
-        )
-      : dexie;
-  }, [user]);
+  const progressRepo = useMemo(() => new DexieSymbolSyncProgressRepository(), []);
 
   const { symbolProgress } = useSyncProgress({
     repository: progressRepo,

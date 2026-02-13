@@ -2,7 +2,6 @@ import type { IChartBarRepository } from "@application/ports/repositories";
 import type { ICTraderAPI } from "@application/ports/services";
 import type { ChartBar, ChartTimeframe, Trade } from "@domain/entities";
 import { CTraderMapper } from "@infrastructure/api/ctrader/CTraderMapper";
-import { isOnline } from "@infrastructure/sync/utils/connection";
 
 const MIN_BARS_FOR_CHART = 200;
 
@@ -31,8 +30,7 @@ export interface LoadChartWindowResult {
 export class LoadChartWindowUseCase {
     constructor(
         private readonly api: ICTraderAPI,
-        private readonly chartBarRepository: IChartBarRepository,
-        private readonly supabaseChartBarRepository?: IChartBarRepository
+        private readonly chartBarRepository: IChartBarRepository
     ) { }
 
     /**
@@ -106,49 +104,7 @@ export class LoadChartWindowUseCase {
             };
         }
 
-        // Step 2: Dexie has insufficient data, try Supabase if available and online
-        if (this.supabaseChartBarRepository && isOnline() && cachedBars.length < minBars) {
-            try {
-                let supabaseBars = await this.supabaseChartBarRepository.getByWindow(
-                    params.trade.symbol,
-                    params.timeframe,
-                    from,
-                    to,
-                    params.broker
-                );
-
-                if (supabaseBars.length === 0 && params.broker) {
-                    supabaseBars = await this.supabaseChartBarRepository.getByWindow(
-                        params.trade.symbol,
-                        params.timeframe,
-                        from,
-                        to,
-                        undefined
-                    );
-                }
-
-                if (supabaseBars.length >= minBars) {
-                    // Sync Supabase bars to Dexie for next time
-                    await this.chartBarRepository.upsertMany(supabaseBars);
-                    
-                    return {
-                        bars: supabaseBars.sort((a, b) => a.timestamp - b.timestamp),
-                        fromCache: true, // From Supabase cache
-                        windowStart: from,
-                        windowEnd: to,
-                    };
-                }
-                // Use Supabase bars even if incomplete if better than Dexie
-                if (supabaseBars.length > cachedBars.length) {
-                    await this.chartBarRepository.upsertMany(supabaseBars);
-                    cachedBars = supabaseBars;
-                }
-            } catch (error) {
-                console.warn("Failed to load from Supabase, falling back to API:", error);
-            }
-        }
-
-        // Step 3: Both Dexie and Supabase have insufficient data, fetch from cTrader API
+        // Step 2: Dexie has insufficient data, fetch from cTrader API
         if (params.accessToken && cachedBars.length < minBars) {
             try {
                 const apiBars = await this.api.getBars(
@@ -167,15 +123,6 @@ export class LoadChartWindowUseCase {
                         ? normalizedApiBars.map((bar) => ({ ...bar, broker: params.broker }))
                         : normalizedApiBars;
                     await this.chartBarRepository.upsertMany(barsWithBroker);
-
-                    // Sync to Supabase if available and online
-                    if (this.supabaseChartBarRepository && isOnline()) {
-                        try {
-                            await this.supabaseChartBarRepository.upsertMany(barsWithBroker);
-                        } catch (error) {
-                            console.warn("Failed to sync to Supabase:", error);
-                        }
-                    }
                 }
 
                 return {

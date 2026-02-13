@@ -1,11 +1,9 @@
 import type { ICTraderAPI } from "@application/ports/services";
 import type { IChartBarRepository, ISymbolSyncProgressRepository } from "@application/ports/repositories";
-import type { ChartBar, SymbolSyncProgress, SymbolSyncStatus } from "@domain/entities";
+import type { ChartBar, SymbolSyncStatus } from "@domain/entities";
 import { CTRADER_M1_MAX_CHUNK_DAYS } from "@config/ctrader";
 import { CTraderMapper } from "@infrastructure/api/ctrader/CTraderMapper";
-import { isOnline } from "@infrastructure/sync/utils/connection";
 import { progressEventEmitter } from "@infrastructure/sync/ProgressEventEmitter";
-import { SupabaseSyncQueue } from "@infrastructure/sync/SupabaseSyncQueue";
 
 export interface HybridSyncChartBarsParams {
   userId: string;
@@ -17,7 +15,7 @@ export interface HybridSyncChartBarsParams {
   accountNumber?: string;
   /** Chunk size in days (default: 9 for M1 - cTrader API limit is 14k bars/request) */
   chunkDays?: number;
-  /** Force full sync from cTrader (skip Supabase check) */
+  /** Force full sync from cTrader (skip local cache checks) */
   forceFullSync?: boolean;
   /** Callback for progress updates */
   onProgress?: (progress: {
@@ -25,7 +23,7 @@ export interface HybridSyncChartBarsParams {
     totalChunks: number;
     barsSynced: number;
     progressPercent: number;
-    source: "dexie" | "supabase" | "ctrader";
+    source: "dexie" | "ctrader";
   }) => void;
   /** Check if sync should be cancelled */
   shouldCancel?: () => boolean;
@@ -36,7 +34,7 @@ export interface HybridSyncChartBarsResult {
   totalBars: number;
   barsSynced: number;
   chunksProcessed: number;
-  source: "dexie" | "supabase" | "ctrader";
+  source: "dexie" | "ctrader";
   error?: string;
 }
 
@@ -44,33 +42,25 @@ export interface HybridSyncChartBarsResult {
  * HybridSyncChartBarsUseCase
  *
  * Implements hybrid sync strategy:
- * 1. Check Dexie (local) first → if data exists, use it
- * 2. If Dexie is empty → check Supabase → if data exists, sync to Dexie
- * 3. If Supabase is empty → fetch from cTrader API
- * 4. For incremental updates: Check last sync timestamp, fetch only new data
- * 5. Store in Dexie first (offline-first), then sync to Supabase
+ * 1. Check Dexie (local) first -> if data exists, use it
+ * 2. If local cache is empty or stale -> fetch from cTrader API
+ * 3. For incremental updates, fetch only new data after last sync timestamp
+ * 4. Store in Dexie (offline-first)
  */
 export class HybridSyncChartBarsUseCase {
   constructor(
     private readonly api: ICTraderAPI,
     private readonly dexieChartBarRepo: IChartBarRepository,
-    private readonly supabaseChartBarRepo: IChartBarRepository,
     private readonly progressRepo: ISymbolSyncProgressRepository
   ) {}
 
   async execute(params: HybridSyncChartBarsParams): Promise<HybridSyncChartBarsResult> {
     const {
-      userId,
       broker,
       symbol,
       fromDate,
       toDate,
-      accessToken,
-      accountNumber,
-      chunkDays = CTRADER_M1_MAX_CHUNK_DAYS,
       forceFullSync = false,
-      onProgress,
-      shouldCancel,
     } = params;
 
     
@@ -118,59 +108,7 @@ export class HybridSyncChartBarsUseCase {
         );
       }
 
-      // Step 2: Dexie is empty, check Supabase
-      if (isOnline() && !forceFullSync) {
-        
-        try {
-          const supabaseBars = await this.supabaseChartBarRepo.getByWindow(
-            symbol,
-            "M1",
-            fromDate.getTime(),
-            toDate.getTime(),
-            broker
-          );
-
-          if (supabaseBars.length > 0) {
-            
-            
-            // Sync Supabase bars to Dexie
-            await this.dexieChartBarRepo.upsertMany(supabaseBars);
-            
-
-            // Check if we need incremental update
-            const progress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
-            const needsIncrementalUpdate = progress?.lastSyncTime 
-              ? new Date(progress.lastSyncTime) < toDate
-              : true;
-
-            if (!needsIncrementalUpdate) {
-              
-              return {
-                success: true,
-                totalBars: supabaseBars.length,
-                barsSynced: supabaseBars.length,
-                chunksProcessed: 1,
-                source: "supabase",
-              };
-            }
-
-            // Need incremental update - fetch only new data from cTrader
-            
-            const lastSyncTime = progress?.lastSyncTime ? new Date(progress.lastSyncTime) : fromDate;
-            return await this.syncFromCTrader(
-              {
-                ...params,
-                fromDate: lastSyncTime > fromDate ? lastSyncTime : fromDate,
-              },
-              "ctrader"
-            );
-          }
-        } catch (error) {
-          console.warn(`[HybridSync] Failed to check Supabase, falling back to cTrader:`, error);
-        }
-      }
-
-      // Step 3: Both Dexie and Supabase are empty, fetch from cTrader
+      // Step 2: Local cache is empty/stale, fetch from cTrader
       
       return await this.syncFromCTrader(params, "ctrader");
     } catch (error) {
@@ -196,14 +134,13 @@ export class HybridSyncChartBarsUseCase {
   }
 
   /**
-   * Sync from cTrader API (original sync logic)
+   * Syncs chart bars directly from cTrader into local Dexie storage.
    */
   private async syncFromCTrader(
     params: HybridSyncChartBarsParams,
     source: "ctrader"
   ): Promise<HybridSyncChartBarsResult> {
     const {
-      userId,
       broker,
       symbol,
       fromDate,
@@ -347,41 +284,8 @@ export class HybridSyncChartBarsUseCase {
             }
           }
 
-          // Parallel storage: Store in Dexie immediately (fast, offline-first)
-          // and sync to Supabase in parallel (cloud backup)
-          
-          
-          const storagePromises = [
-            // Dexie storage (always, fast, offline-first)
-            this.dexieChartBarRepo.upsertMany(chartBars).then(() => {
-              
-            }),
-            
-            // Supabase sync (if online, can fail gracefully)
-            isOnline()
-              ? this.supabaseChartBarRepo.upsertMany(chartBars)
-                  .then(() => {
-                    
-                  })
-                  .catch(async (error) => {
-                    const errorMsg = error instanceof Error ? error.message : String(error);
-                    console.warn(`[HybridSync] Failed to sync to Supabase, queueing for retry:`, errorMsg);
-                    
-                    // Queue for retry - data is already in Dexie, so user can continue
-                    await SupabaseSyncQueue.queueForRetry(
-                      userId,
-                      broker,
-                      symbol,
-                      chartBars,
-                      errorMsg
-                    );
-                  })
-              : Promise.resolve(),
-          ];
-
-          // Wait for both to complete (Dexie will succeed, Supabase may fail)
-          await Promise.allSettled(storagePromises);
-          
+          // Local-only storage (offline-first)
+          await this.dexieChartBarRepo.upsertMany(chartBars);
 
           totalBars += chartBars.length;
           barsSynced += chartBars.length;
@@ -502,3 +406,4 @@ export class HybridSyncChartBarsUseCase {
     }
   }
 }
+

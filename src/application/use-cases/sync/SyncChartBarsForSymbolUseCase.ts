@@ -3,7 +3,6 @@ import type { IChartBarRepository, ISymbolSyncProgressRepository } from "@applic
 import type { ChartBar, SymbolSyncProgress, SymbolSyncStatus } from "@domain/entities";
 import { CTRADER_M1_MAX_CHUNK_DAYS } from "@config/ctrader";
 import { CTraderMapper } from "@infrastructure/api/ctrader/CTraderMapper";
-import { isOnline } from "@infrastructure/sync/utils/connection";
 import { progressEventEmitter } from "@infrastructure/sync/ProgressEventEmitter";
 
 export interface SyncChartBarsParams {
@@ -42,20 +41,17 @@ export interface SyncChartBarsResult {
  * - Fetches bars from cTrader API in 9-day chunks (cTrader limit: 14k bars/request)
  * - Adds broker field to bars
  * - Stores in Dexie (local)
- * - Syncs to Supabase if online
  * - Updates progress after each chunk
  */
 export class SyncChartBarsForSymbolUseCase {
   constructor(
     private readonly api: ICTraderAPI,
     private readonly dexieChartBarRepo: IChartBarRepository,
-    private readonly supabaseChartBarRepo: IChartBarRepository,
     private readonly progressRepo: ISymbolSyncProgressRepository
   ) {}
 
   async execute(params: SyncChartBarsParams): Promise<SyncChartBarsResult> {
     const {
-      userId,
       broker,
       symbol,
       fromDate,
@@ -182,20 +178,6 @@ export class SyncChartBarsForSymbolUseCase {
           
           await this.dexieChartBarRepo.upsertMany(chartBars);
           
-
-          // Sync to Supabase if online
-          if (isOnline()) {
-            try {
-              
-              await this.supabaseChartBarRepo.upsertMany(chartBars);
-              
-            } catch (error) {
-              console.warn(`[SyncChartBars] Failed to sync to Supabase (continuing with local):`, error);
-              // Continue even if Supabase sync fails
-            }
-          } else {
-            
-          }
 
           totalBars += chartBars.length;
           barsSynced += chartBars.length;

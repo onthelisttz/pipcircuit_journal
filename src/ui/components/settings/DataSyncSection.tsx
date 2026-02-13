@@ -148,16 +148,6 @@ export function DataSyncSection() {
         return;
       }
 
-      const fullSync = new FullSyncService(user.id);
-      const resumeResult = await fullSync.resumeChartBarsFromCloud((step) => updateStep(step));
-      if (!resumeResult.success) {
-        setLastSync({
-          success: false,
-          error: resumeResult.error ?? "Chart bar restore resume failed",
-        });
-        return;
-      }
-
       await reconcileSeededJournalDuplicates();
 
       setLastSync({ success: true });

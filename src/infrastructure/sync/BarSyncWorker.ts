@@ -1,9 +1,5 @@
-import type { ISyncQueueRepository } from "@application/ports/repositories";
-import type { ICTraderAPI } from "@application/ports/services";
 import type { SyncPlan } from "@application/use-cases/sync";
 import { SyncChartBarsForSymbolUseCase } from "@application/use-cases/sync/SyncChartBarsForSymbolUseCase";
-import { SyncAction, SyncStatus } from "@domain/enums";
-import type { SyncJob } from "@domain/entities";
 import { SyncQueueManager, type QueueProcessorOptions } from "./SyncQueueManager";
 import { isOnline } from "./utils/connection";
 
@@ -109,26 +105,13 @@ export class BarSyncWorker {
   }
 
   /**
-   * Queue plans for background sync
+   * Queueing chart-bar plans in sync_queue is disabled.
+   * Chart bars are now local-only and synced directly from cTrader.
    */
   async queuePlans(plans: SyncPlan[], userId: string): Promise<void> {
-    for (const plan of plans) {
-      const job: Omit<SyncJob, "id"> = {
-        action: SyncAction.Create,
-        table: "chart_bars",
-        payload: {
-          broker: plan.broker,
-          symbol: plan.symbol,
-          startDate: plan.startDate.toISOString(),
-          endDate: plan.endDate.toISOString(),
-        },
-        timestamp: new Date(),
-        retryCount: 0,
-        status: SyncStatus.Pending,
-      };
-
-      await this.syncQueueManager.enqueue(job);
-    }
+    void plans;
+    void userId;
+    return;
   }
 
   /**

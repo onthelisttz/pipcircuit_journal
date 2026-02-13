@@ -6,9 +6,6 @@ import { formatDistanceToNow, format } from "date-fns";
 import { CheckCircle2, Clock, XCircle, AlertCircle, Play, RefreshCw, PlayCircle, RotateCcw, Trash2, X } from "lucide-react";
 import type { SymbolSyncProgress } from "@domain/entities";
 import { DexieChartBarRepository } from "@infrastructure/db/dexie/repositories";
-import { SupabaseChartBarRepository } from "@infrastructure/db/supabase/repositories";
-import { useAuth } from "@ui/hooks/useAuth";
-import { isOnline } from "@infrastructure/sync/utils/connection";
 
 export interface SymbolSyncItemProps {
   progress: SymbolSyncProgress;
@@ -22,15 +19,11 @@ export interface SymbolSyncItemProps {
 }
 
 export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending, onDeleteBars, onCancel, isSyncing = false, isDeleting = false }: SymbolSyncItemProps) {
-  const { user } = useAuth();
   const [calculatedDates, setCalculatedDates] = useState<{
     firstBarDate: Date | null;
     lastBarDate: Date | null;
   } | null>(null);
-  const [barCounts, setBarCounts] = useState<{
-    dexie: number | null;
-    supabase: number | null;
-  }>({ dexie: null, supabase: null });
+  const [localBarCount, setLocalBarCount] = useState<number | null>(null);
 
   // Calculate dates and counts from existing bars if missing from progress
   useEffect(() => {
@@ -64,30 +57,15 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
         dexieChartRepo
           .countBars(progress.broker, progress.symbol, "M1")
           .then((count) => {
-            setBarCounts((prev) => ({ ...prev, dexie: count }));
+            setLocalBarCount(count);
           })
           .catch((error) => {
             console.error(`[SymbolSyncItem] Error counting Dexie bars for ${progress.symbol}:`, error);
+            setLocalBarCount(null);
           });
-
-        // Count Supabase bars if online
-        if (isOnline() && user?.id) {
-          const supabaseChartRepo = new SupabaseChartBarRepository(user.id);
-          supabaseChartRepo
-            .countBars(progress.broker, progress.symbol, "M1")
-            .then((count) => {
-              setBarCounts((prev) => ({ ...prev, supabase: count }));
-            })
-            .catch((error) => {
-              console.error(`[SymbolSyncItem] Error counting Supabase bars for ${progress.symbol}:`, error);
-              setBarCounts((prev) => ({ ...prev, supabase: null }));
-            });
-        } else {
-          setBarCounts((prev) => ({ ...prev, supabase: null }));
-        }
       }
     }
-  }, [progress.broker, progress.symbol, progress.status, progress.totalBars, progress.firstBarDate, progress.lastBarDate, user?.id]);
+  }, [progress.broker, progress.symbol, progress.status, progress.totalBars, progress.firstBarDate, progress.lastBarDate]);
 
   // Check if sync is stuck (syncing but no recent activity for 1+ min)
   const isStuck = progress.status === "syncing" && progress.lastSyncTime && 
@@ -150,19 +128,14 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
                 Total bars: {progress.totalBars.toLocaleString()}
               </div>
             )}
-            {progress.status === "completed" && (barCounts.dexie !== null || barCounts.supabase !== null) && (
+            {progress.status === "completed" && (
               <div className="space-y-0.5 text-muted-foreground">
-                {barCounts.dexie !== null && (
+                {localBarCount !== null && (
                   <div>
-                    Dexie: {barCounts.dexie.toLocaleString()} bars
+                    Local: {localBarCount.toLocaleString()} bars
                   </div>
                 )}
-                {barCounts.supabase !== null && (
-                  <div>
-                    Supabase: {barCounts.supabase.toLocaleString()} bars
-                  </div>
-                )}
-                {barCounts.dexie === null && barCounts.supabase === null && (
+                {localBarCount === null && (
                   <div className="text-muted-foreground italic">Loading counts...</div>
                 )}
               </div>

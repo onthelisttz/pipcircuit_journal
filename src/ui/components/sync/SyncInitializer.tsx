@@ -8,12 +8,8 @@ import { PlanBarSyncUseCase } from "@application/use-cases/sync";
 import { DexieTradeRepository } from "@infrastructure/db/dexie/repositories";
 import { DexieAccountRepository } from "@infrastructure/db/dexie/repositories";
 import { DexieSymbolSyncProgressRepository } from "@infrastructure/db/dexie/repositories";
-import { DualSymbolSyncProgressRepository } from "@infrastructure/db/DualSymbolSyncProgressRepository";
-import { SupabaseSymbolSyncProgressRepository } from "@infrastructure/db/supabase/repositories";
 import { useSyncProgress } from "@ui/hooks/useSyncProgress";
 import { isOnline, onConnectionChange } from "@infrastructure/sync/utils/connection";
-import { SupabaseSyncQueue } from "@infrastructure/sync/SupabaseSyncQueue";
-import { SupabaseChartBarRepository } from "@infrastructure/db/supabase/repositories";
 import { EntitySyncQueue } from "@infrastructure/sync/EntitySyncQueue";
 import { JournalDeltaSyncService } from "@infrastructure/sync/JournalDeltaSyncService";
 import { useFullSyncProgressStore } from "@ui/state/fullSyncProgressStore";
@@ -52,14 +48,8 @@ export function SyncInitializer() {
     [updateStep]
   );
   const progressRepo = useMemo(() => {
-    const dexie = new DexieSymbolSyncProgressRepository();
-    return user?.id
-      ? new DualSymbolSyncProgressRepository(
-          dexie,
-          new SupabaseSymbolSyncProgressRepository(user.id)
-        )
-      : dexie;
-  }, [user?.id]);
+    return new DexieSymbolSyncProgressRepository();
+  }, []);
   const { refresh } = useSyncProgress({
     repository: progressRepo,
     autoLoad: true,
@@ -156,13 +146,6 @@ export function SyncInitializer() {
 
         if (isOnline() && user.id) {
           try {
-            const supabaseRepo = new SupabaseChartBarRepository(user.id);
-            await SupabaseSyncQueue.processQueue(supabaseRepo);
-          } catch (error) {
-            console.warn("[SyncInitializer] Failed to process Supabase sync queue:", error);
-          }
-
-          try {
             startSync("Pulling latest cloud changes...");
             const reconnectSync = new JournalDeltaSyncService(user.id);
             const reconnectResult = await reconnectSync.runReconnectFlow((step) =>
@@ -172,16 +155,6 @@ export function SyncInitializer() {
               console.warn(
                 "[SyncInitializer] Journal reconnect flow finished with issues:",
                 reconnectResult
-              );
-            }
-            const fullSync = new FullSyncService(user.id);
-            const resumeResult = await fullSync.resumeChartBarsFromCloud((step) =>
-              reportStep(step)
-            );
-            if (!resumeResult.success) {
-              console.warn(
-                "[SyncInitializer] Chart restore resume finished with issues:",
-                resumeResult
               );
             }
             await reconcileSeededJournalDuplicates();
@@ -224,8 +197,6 @@ export function SyncInitializer() {
 
     const processQueue = async () => {
       try {
-        const supabaseRepo = new SupabaseChartBarRepository(user.id);
-        await SupabaseSyncQueue.processQueue(supabaseRepo);
         await EntitySyncQueue.processQueue(user.id);
       } catch (error) {
         console.warn("[SyncInitializer] Error processing sync queue:", error);
@@ -339,13 +310,11 @@ export function SyncInitializer() {
         for (const progress of stuckSyncs) {
           try {
             const dexieChartRepo = new DexieChartBarRepository();
-            const supabaseChartRepo = new SupabaseChartBarRepository(user.id);
             const api = new CTraderAPI();
 
             const syncUseCase = new HybridSyncChartBarsUseCase(
               api,
               dexieChartRepo,
-              supabaseChartRepo,
               progressRepo
             );
 
@@ -398,13 +367,6 @@ export function SyncInitializer() {
         const result = await reconnectSync.runReconnectFlow((step) => reportStep(step));
         if (!result.success) {
           console.warn("[SyncInitializer] Reconnect flow finished with issues:", result);
-        }
-        const fullSync = new FullSyncService(user.id);
-        const resumeResult = await fullSync.resumeChartBarsFromCloud((step) =>
-          reportStep(step)
-        );
-        if (!resumeResult.success) {
-          console.warn("[SyncInitializer] Chart restore resume finished with issues:", resumeResult);
         }
         await reconcileSeededJournalDuplicates();
       } catch (error) {

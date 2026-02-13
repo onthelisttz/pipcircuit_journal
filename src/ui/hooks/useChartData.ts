@@ -3,10 +3,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { Trade, ChartTimeframe, ChartBar } from "@domain/entities";
 import { DexieChartBarRepository } from "@infrastructure/db/dexie/repositories";
-import { SupabaseChartBarRepository } from "@infrastructure/db/supabase/repositories";
 import { CTraderAPI } from "@infrastructure/api/ctrader";
 import { LoadChartWindowUseCase } from "@application/use-cases/charts";
-import { useAuth } from "./useAuth";
 
 export interface UseChartDataOptions {
     /** Trade to fetch chart data for */
@@ -98,15 +96,11 @@ export function useChartData({
     }, [currentSeriesKey]);
 
     // Create use case with dependencies
-    const { user } = useAuth();
     const useCase = useMemo(() => {
         const chartBarRepository = new DexieChartBarRepository();
-        const supabaseChartBarRepository = user?.id 
-            ? new SupabaseChartBarRepository(user.id)
-            : undefined;
         const api = new CTraderAPI();
-        return new LoadChartWindowUseCase(api, chartBarRepository, supabaseChartBarRepository);
-    }, [user?.id]);
+        return new LoadChartWindowUseCase(api, chartBarRepository);
+    }, []);
 
     // Fetch chart data
     const fetchData = useCallback(async () => {

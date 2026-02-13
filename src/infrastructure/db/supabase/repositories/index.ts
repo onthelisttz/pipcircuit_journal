@@ -2,7 +2,6 @@
  * Supabase Repository Implementations
  */
 
-export { SupabaseChartBarRepository } from "./SupabaseChartBarRepository";
 export { SupabaseSymbolSyncProgressRepository } from "./SupabaseSymbolSyncProgressRepository";
 export { SupabaseTradeRepository } from "./SupabaseTradeRepository";
 export { SupabaseAccountRepository } from "./SupabaseAccountRepository";

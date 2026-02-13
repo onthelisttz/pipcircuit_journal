@@ -3,14 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@ui/hooks/useAuth";
 import { RealtimeSubscriptionManager } from "@infrastructure/sync/RealtimeSubscriptionManager";
-import { DexieChartBarRepository } from "@infrastructure/db/dexie/repositories";
-import { DexieSymbolSyncProgressRepository } from "@infrastructure/db/dexie/repositories";
 import { DexieTagRepository } from "@infrastructure/db/dexie/repositories";
 import { DexieNoteRepository } from "@infrastructure/db/dexie/repositories";
 import { DexieObservationRepository } from "@infrastructure/db/dexie/repositories";
 import { SupabaseTradeRepository } from "@infrastructure/db/supabase/repositories/SupabaseTradeRepository";
 import { db } from "@infrastructure/db/dexie/database";
-import type { ChartBar, SymbolSyncProgress } from "@domain/entities";
 import type { TagCategory } from "@domain/enums";
 
 function parseDate(value: unknown): Date {
@@ -50,8 +47,6 @@ export function useRealtimeSync() {
   const { user } = useAuth();
   const [isConnected, setIsConnected] = useState(false);
   const managerRef = useRef<RealtimeSubscriptionManager | null>(null);
-  const chartBarRepoRef = useRef(new DexieChartBarRepository());
-  const progressRepoRef = useRef(new DexieSymbolSyncProgressRepository());
   const tagRepoRef = useRef(new DexieTagRepository());
   const noteRepoRef = useRef(new DexieNoteRepository());
   const observationRepoRef = useRef(new DexieObservationRepository());
@@ -113,16 +108,6 @@ export function useRealtimeSync() {
 
     manager
       .start(user.id, {
-        onChartBarInsert: async (bar: ChartBar) => {
-          await chartBarRepoRef.current.upsertMany([bar]);
-        },
-        onChartBarUpdate: async (bar: ChartBar) => {
-          await chartBarRepoRef.current.upsertMany([bar]);
-        },
-        onChartBarDelete: async () => {},
-        onProgressUpdate: async (progress: SymbolSyncProgress) => {
-          await progressRepoRef.current.upsert(progress);
-        },
         onEntityRealtimeEvent: async (event) => {
           try {
             const row = (event.eventType === "DELETE" ? event.oldRow : event.newRow) ?? null;
