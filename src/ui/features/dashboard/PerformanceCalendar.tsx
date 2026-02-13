@@ -23,6 +23,8 @@ interface DayReturn {
   tradeCount: number;
   winning: number;
   losing: number;
+  winningTrades?: number;
+  losingTrades?: number;
 }
 
 interface PerformanceCalendarProps {
@@ -42,8 +44,24 @@ interface PerformanceCalendarProps {
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function formatProfit(n: number): string {
-  const sign = n >= 0 ? "+" : "";
+  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
   return `${sign}$${Math.abs(n).toFixed(2)}`;
+}
+
+function formatProfitCompact(n: number): string {
+  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+
+  if (abs >= 1000) {
+    const val = abs >= 10000 ? abs / 1000 : Number((abs / 1000).toFixed(1));
+    return `${sign}$${val}k`;
+  }
+
+  if (abs >= 100) {
+    return `${sign}$${abs.toFixed(0)}`;
+  }
+
+  return `${sign}$${abs.toFixed(1)}`;
 }
 
 export function PerformanceCalendar({
@@ -55,16 +73,9 @@ export function PerformanceCalendar({
   onWeekClick,
   onMonthClick,
 }: PerformanceCalendarProps) {
-  const initialMonthMs = initialMonth?.getTime();
-  const baseMonth = useMemo(
-    () => startOfMonth(initialMonth ?? new Date()),
-    [initialMonth, initialMonthMs]
-  );
+  const baseMonth = useMemo(() => startOfMonth(initialMonth ?? new Date()), [initialMonth]);
   const [monthOffset, setMonthOffset] = useState(0);
-  const viewMonth = useMemo(
-    () => addMonths(baseMonth, monthOffset),
-    [baseMonth, monthOffset]
-  );
+  const viewMonth = useMemo(() => addMonths(baseMonth, monthOffset), [baseMonth, monthOffset]);
   const { daily, loading: calendarLoading } = useCalendarMonthReturns(
     accountId,
     viewMonth,
@@ -80,11 +91,6 @@ export function PerformanceCalendar({
     return map;
   }, [daily]);
 
-  const monthsWithData = useMemo(() => {
-    const set = new Set(daily.map((d) => d.period.slice(0, 7)));
-    return Array.from(set).sort();
-  }, [daily]);
-
   const monthKey = format(viewMonth, "yyyy-MM");
   const monthData = useMemo(() => {
     return daily.filter((d) => d.period.startsWith(monthKey));
@@ -93,27 +99,27 @@ export function PerformanceCalendar({
   const monthSummary = useMemo(() => {
     const trades = monthData.reduce((a, d) => a + d.tradeCount, 0);
     const profit = monthData.reduce((a, d) => a + d.profit, 0);
-    const winning = monthData.reduce((a, d) => a + d.winning, 0);
-    const losing = monthData.reduce((a, d) => a + Math.abs(d.losing), 0);
-    const total = winning + losing;
-    const winPct = total > 0 ? (winning / total) * 100 : 0;
-    return { trades, profit, winPct };
+    const winningTrades = monthData.reduce((a, d) => a + (d.winningTrades ?? 0), 0);
+    const losingTrades = monthData.reduce((a, d) => a + (d.losingTrades ?? 0), 0);
+    const decidedTrades = winningTrades + losingTrades;
+    const winRate = decidedTrades > 0 ? (winningTrades / decidedTrades) * 100 : 0;
+    return { trades, profit, winRate };
   }, [monthData]);
 
   const weeks = useMemo(() => {
     const start = startOfWeek(startOfMonth(viewMonth), { weekStartsOn: 0 });
     const end = endOfWeek(endOfMonth(viewMonth), { weekStartsOn: 0 });
-    const weeks: Date[][] = [];
+    const result: Date[][] = [];
     let weekStart = start;
     while (weekStart <= end) {
       const week: Date[] = [];
       for (let i = 0; i < 7; i++) {
         week.push(addDays(weekStart, i));
       }
-      weeks.push(week);
+      result.push(week);
       weekStart = addDays(weekStart, 7);
     }
-    return weeks;
+    return result;
   }, [viewMonth]);
 
   const weekTotals = useMemo(() => {
@@ -136,37 +142,38 @@ export function PerformanceCalendar({
   const goNext = () => setMonthOffset((m) => m + 1);
 
   return (
-    <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-      <div className="p-3 sm:p-5 pb-3 sm:pb-4">
-        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-between gap-3 sm:gap-4">
-          <div className="flex items-center justify-between sm:justify-start gap-1">
+    <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <div className="p-3 pb-3 sm:p-5 sm:pb-4">
+        <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+          <div className="flex items-center justify-between gap-1 sm:justify-start">
             <button
               type="button"
               onClick={goPrev}
-              className="rounded-full p-2 text-muted-foreground hover:bg-muted hover:text-foreground hover:scale-110 active:scale-95 transition-all duration-200"
+              className="rounded-full p-2 text-muted-foreground transition-all duration-200 hover:scale-110 hover:bg-muted hover:text-foreground active:scale-95"
               aria-label="Previous month"
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
-            <h3 className="text-sm sm:text-base font-semibold text-foreground min-w-[120px] sm:min-w-[160px] text-center tabular-nums">
+            <h3 className="min-w-[120px] text-center text-sm font-semibold tabular-nums text-foreground sm:min-w-[160px] sm:text-base">
               {format(viewMonth, "MMMM yyyy")}
             </h3>
             <button
               type="button"
               onClick={goNext}
-              className="rounded-full p-2 text-muted-foreground hover:bg-muted hover:text-foreground hover:scale-110 active:scale-95 transition-all duration-200"
+              className="rounded-full p-2 text-muted-foreground transition-all duration-200 hover:scale-110 hover:bg-muted hover:text-foreground active:scale-95"
               aria-label="Next month"
             >
               <ChevronRight className="h-5 w-5" />
             </button>
           </div>
-          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 sm:gap-3">
+
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-end sm:gap-3">
             {calendarLoading ? (
-              <span className="rounded-full bg-muted/80 px-2.5 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-muted-foreground">
-                Loading…
+              <span className="rounded-full bg-muted/80 px-2.5 py-1 text-[10px] font-medium text-muted-foreground sm:px-3 sm:py-1.5 sm:text-xs">
+                Loading...
               </span>
             ) : monthSummary.trades === 0 ? (
-              <span className="rounded-full bg-muted/80 px-2.5 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-muted-foreground">
+              <span className="rounded-full bg-muted/80 px-2.5 py-1 text-[10px] font-medium text-muted-foreground sm:px-3 sm:py-1.5 sm:text-xs">
                 No trades this month
               </span>
             ) : (
@@ -180,20 +187,22 @@ export function PerformanceCalendar({
                         endOfDay(endOfMonth(viewMonth))
                       )
                     }
-                    className="rounded-full bg-muted/80 px-2.5 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-foreground hover:bg-muted cursor-pointer transition-colors"
+                    className="cursor-pointer rounded-full bg-muted/80 px-2.5 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-muted sm:px-3 sm:py-1.5 sm:text-xs"
                   >
                     {monthSummary.trades} trades
                   </button>
                 ) : (
-                  <span className="rounded-full bg-muted/80 px-2.5 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-foreground">
+                  <span className="rounded-full bg-muted/80 px-2.5 py-1 text-[10px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
                     {monthSummary.trades} trades
                   </span>
                 )}
-                <span className="rounded-full bg-muted/80 px-2.5 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-foreground">
-                  {monthSummary.winPct.toFixed(0)}% gain
+
+                <span className="rounded-full bg-muted/80 px-2.5 py-1 text-[10px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
+                  {monthSummary.winRate.toFixed(0)}% win rate
                 </span>
+
                 <span
-                  className={`rounded-full px-2.5 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold ${
+                  className={`rounded-full px-2.5 py-1 text-[10px] font-semibold sm:px-3 sm:py-1.5 sm:text-xs ${
                     monthSummary.profit >= 0
                       ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                       : "bg-red-500/15 text-red-600 dark:text-red-400"
@@ -207,115 +216,142 @@ export function PerformanceCalendar({
         </div>
       </div>
 
-      <div className="px-2 sm:px-4 pb-3 sm:pb-4 overflow-x-auto -mx-px">
-        <div className="min-w-[20rem] w-full">
-          {/* Weekday headers */}
-          <div className="grid grid-cols-8 gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
+      <div className="px-2 pb-3 sm:px-4 sm:pb-4">
+        <div className="w-full">
+          <div className="mb-1.5 grid grid-cols-7 gap-1 sm:mb-2 sm:grid-cols-8 sm:gap-2">
             {WEEKDAY_LABELS.map((label) => (
               <div
                 key={label}
-                className="py-1.5 sm:py-2 text-center text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+                className="py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:py-2 sm:text-[11px]"
               >
                 {label}
               </div>
             ))}
-            <div className="py-1.5 sm:py-2 text-center text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <div className="hidden py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:block sm:py-2 sm:text-[11px]">
               Week
             </div>
           </div>
 
-          {/* Week rows */}
-          {weeks.map((weekDays, wi) => (
-            <div
-              key={wi}
-              className="grid grid-cols-8 gap-1.5 sm:gap-2 mb-1.5 sm:mb-2"
-            >
-              {weekDays.map((day) => {
-                const key = format(day, "yyyy-MM-dd");
-                const data = byDate.get(key);
-                const isCurrentMonth = isSameMonth(day, viewMonth);
-                const hasData = data && data.tradeCount > 0;
-                const isProfit = hasData && data!.profit >= 0;
-                return (
-                  <div
-                    key={key}
-                    role={hasData && onDayClick ? "button" : undefined}
-                    onClick={hasData && onDayClick ? () => onDayClick(day) : undefined}
-                    className={`
-                      relative rounded-lg sm:rounded-xl min-h-[56px] sm:min-h-[72px] flex flex-col p-1.5 sm:p-2.5
-                      transition-all duration-200 ease-out
-                      hover:scale-[1.03] hover:shadow-md hover:z-10
-                      active:scale-[0.98]
-                      ${hasData && onDayClick ? "cursor-pointer" : "cursor-default"}
-                      ${!isCurrentMonth ? "opacity-35" : ""}
-                      ${hasData ? (isProfit ? "bg-emerald-500/10 dark:bg-emerald-500/20 ring-1 ring-emerald-500/20 hover:ring-2 hover:ring-emerald-500/40 hover:bg-emerald-500/15 dark:hover:bg-emerald-500/25" : "bg-red-500/10 dark:bg-red-500/20 ring-1 ring-red-500/20 hover:ring-2 hover:ring-red-500/40 hover:bg-red-500/15 dark:hover:bg-red-500/25") : "bg-muted/30 dark:bg-muted/20 hover:bg-muted/50 dark:hover:bg-muted/30 hover:ring-1 hover:ring-border"}
-                    `}
-                  >
-                    <span
-                      className={`text-[10px] sm:text-[11px] font-medium ${
-                        isCurrentMonth ? "text-foreground/80" : "text-muted-foreground"
-                      }`}
-                    >
-                      {format(day, "d")}
-                    </span>
-                    {data && data.tradeCount > 0 ? (
-                      <>
+          {weeks.map((weekDays, wi) => {
+            const weekTotal = weekTotals[wi];
+            const weekIsProfit = weekTotal.profit >= 0;
+
+            return (
+              <div key={wi} className="mb-1.5 sm:mb-2">
+                <div className="grid grid-cols-7 gap-1 sm:grid-cols-8 sm:gap-2">
+                  {weekDays.map((day) => {
+                    const key = format(day, "yyyy-MM-dd");
+                    const data = byDate.get(key);
+                    const isCurrentMonth = isSameMonth(day, viewMonth);
+                    const hasData = Boolean(data && data.tradeCount > 0);
+                    const isProfit = hasData && (data?.profit ?? 0) >= 0;
+
+                    return (
+                      <div
+                        key={key}
+                        role={hasData && onDayClick ? "button" : undefined}
+                        onClick={hasData && onDayClick ? () => onDayClick(day) : undefined}
+                        className={`relative flex min-h-[52px] flex-col rounded-lg p-1 transition-all duration-200 ease-out active:scale-[0.98] sm:min-h-[72px] sm:rounded-xl sm:p-2.5 ${
+                          hasData && onDayClick ? "cursor-pointer" : "cursor-default"
+                        } ${!isCurrentMonth ? "opacity-35" : ""} ${
+                          hasData
+                            ? isProfit
+                              ? "bg-emerald-500/10 ring-1 ring-emerald-500/20 hover:scale-[1.03] hover:bg-emerald-500/15 hover:shadow-md hover:ring-2 hover:ring-emerald-500/40 hover:z-10 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/25"
+                              : "bg-red-500/10 ring-1 ring-red-500/20 hover:scale-[1.03] hover:bg-red-500/15 hover:shadow-md hover:ring-2 hover:ring-red-500/40 hover:z-10 dark:bg-red-500/20 dark:hover:bg-red-500/25"
+                            : "bg-muted/30 hover:scale-[1.03] hover:bg-muted/50 hover:shadow-md hover:ring-1 hover:ring-border hover:z-10 dark:bg-muted/20 dark:hover:bg-muted/30"
+                        }`}
+                      >
                         <span
-                          className={`mt-0.5 sm:mt-1 font-semibold text-[11px] sm:text-[13px] tabular-nums ${
-                            isProfit
-                              ? "text-emerald-600 dark:text-emerald-400"
-                              : "text-red-600 dark:text-red-400"
+                          className={`text-[9px] font-medium leading-tight sm:text-[11px] ${
+                            isCurrentMonth ? "text-foreground/80" : "text-muted-foreground"
                           }`}
                         >
-                          {formatProfit(data.profit)}
+                          {format(day, "d")}
                         </span>
-                        <span className="mt-0.5 text-[9px] sm:text-[10px] text-muted-foreground">
-                          {data.tradeCount} trade{data.tradeCount !== 1 ? "s" : ""}
-                        </span>
-                      </>
-                    ) : (
-                      <span className="mt-0.5 sm:mt-1 text-muted-foreground/50 text-[10px] sm:text-[11px]">—</span>
-                    )}
-                  </div>
-                );
-              })}
-              {weekTotals[wi].trades > 0 && onWeekClick ? (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onWeekClick(startOfDay(weekDays[0]), endOfDay(weekDays[6]));
-                  }}
-                  className={
-                    weekTotals[wi].profit >= 0
-                      ? "rounded-lg sm:rounded-xl min-h-[56px] sm:min-h-[72px] flex flex-col justify-center p-1.5 sm:p-2.5 bg-emerald-500/5 dark:bg-emerald-500/15 ring-1 ring-emerald-500/20 transition-all duration-200 hover:scale-[1.03] hover:shadow-md hover:ring-2 hover:ring-emerald-500/40 hover:bg-emerald-500/10 dark:hover:bg-emerald-500/20 cursor-pointer"
-                      : "rounded-lg sm:rounded-xl min-h-[56px] sm:min-h-[72px] flex flex-col justify-center p-1.5 sm:p-2.5 bg-red-500/5 dark:bg-red-500/15 ring-1 ring-red-500/20 transition-all duration-200 hover:scale-[1.03] hover:shadow-md hover:ring-2 hover:ring-red-500/40 hover:bg-red-500/10 dark:hover:bg-red-500/20 cursor-pointer"
-                  }
-                >
-                  <span
-                    className={`font-semibold text-[11px] sm:text-[13px] tabular-nums ${
-                      weekTotals[wi].profit >= 0
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-red-600 dark:text-red-400"
+
+                        {hasData ? (
+                          <>
+                            <span
+                              className={`mt-0.5 text-[10px] font-semibold leading-tight tabular-nums sm:mt-1 sm:text-[13px] ${
+                                isProfit
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-red-600 dark:text-red-400"
+                              }`}
+                            >
+                              <span className="sm:hidden">{formatProfitCompact(data!.profit)}</span>
+                              <span className="hidden sm:inline">{formatProfit(data!.profit)}</span>
+                            </span>
+                            <span className="mt-0.5 text-[8px] leading-tight text-muted-foreground sm:text-[10px]">
+                              {data!.tradeCount} trade{data!.tradeCount !== 1 ? "s" : ""}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="mt-0.5 text-[10px] leading-tight text-muted-foreground/50 sm:mt-1 sm:text-[11px]">
+                            --
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {weekTotal.trades > 0 && onWeekClick ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onWeekClick(startOfDay(weekDays[0]), endOfDay(weekDays[6]));
+                      }}
+                      className={`hidden min-h-[52px] flex-col justify-center rounded-lg p-1 transition-all duration-200 sm:flex sm:min-h-[72px] sm:rounded-xl sm:p-2.5 ${
+                        weekIsProfit
+                          ? "bg-emerald-500/5 ring-1 ring-emerald-500/20 hover:scale-[1.03] hover:bg-emerald-500/10 hover:shadow-md hover:ring-2 hover:ring-emerald-500/40 dark:bg-emerald-500/15 dark:hover:bg-emerald-500/20"
+                          : "bg-red-500/5 ring-1 ring-red-500/20 hover:scale-[1.03] hover:bg-red-500/10 hover:shadow-md hover:ring-2 hover:ring-red-500/40 dark:bg-red-500/15 dark:hover:bg-red-500/20"
+                      } cursor-pointer`}
+                    >
+                      <span
+                        className={`text-[10px] font-semibold leading-tight tabular-nums sm:text-[13px] ${
+                          weekIsProfit
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-red-600 dark:text-red-400"
+                        }`}
+                      >
+                        {formatProfit(weekTotal.profit)}
+                      </span>
+                      <span className="mt-0.5 text-[8px] leading-tight text-muted-foreground sm:text-[10px]">
+                        {weekTotal.trades} trades
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="hidden min-h-[52px] flex-col justify-center rounded-lg bg-muted/50 p-1 ring-1 ring-border/50 sm:flex sm:min-h-[72px] sm:rounded-xl sm:p-2.5 dark:bg-muted/30">
+                      <span className="text-[10px] leading-tight text-muted-foreground/50 sm:text-[11px]">--</span>
+                    </div>
+                  )}
+                </div>
+
+                {weekTotal.trades > 0 && onWeekClick ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onWeekClick(startOfDay(weekDays[0]), endOfDay(weekDays[6]));
+                    }}
+                    className={`mt-1 flex min-h-[34px] w-full items-center justify-between rounded-lg px-2 py-1 text-[10px] sm:hidden ${
+                      weekIsProfit
+                        ? "bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/25 dark:bg-emerald-500/20 dark:text-emerald-400"
+                        : "bg-red-500/10 text-red-600 ring-1 ring-red-500/25 dark:bg-red-500/20 dark:text-red-400"
                     }`}
                   >
-                    {formatProfit(weekTotals[wi].profit)}
-                  </span>
-                  <span className="text-[9px] sm:text-[10px] text-muted-foreground mt-0.5">
-                    {weekTotals[wi].trades} trades
-                  </span>
-                </button>
-              ) : (
-                <div
-                  className={
-                    "rounded-lg sm:rounded-xl min-h-[56px] sm:min-h-[72px] flex flex-col justify-center p-1.5 sm:p-2.5 bg-muted/50 dark:bg-muted/30 ring-1 ring-border/50 transition-all duration-200 cursor-default"
-                  }
-                >
-                  <span className="text-muted-foreground/50 text-[10px] sm:text-[11px]">—</span>
-                </div>
-              )}
-            </div>
-          ))}
+                    <span className="font-semibold uppercase tracking-wide">Week</span>
+                    <span className="font-semibold tabular-nums">{formatProfitCompact(weekTotal.profit)}</span>
+                    <span className="text-muted-foreground">{weekTotal.trades} trades</span>
+                  </button>
+                ) : (
+                  <div className="mt-1 flex min-h-[34px] w-full items-center justify-center rounded-lg bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground/60 ring-1 ring-border/50 sm:hidden">
+                    --
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

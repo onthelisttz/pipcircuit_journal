@@ -17,6 +17,7 @@ const MINDSET_OPTIONS: { value: Mindset; label: string; emoji: string }[] = [
 const CATEGORY_LABELS: Record<TagCategory, string> = {
   [TagCategory.Strategy]: "Strategy",
   [TagCategory.Mistakes]: "Mistakes",
+  [TagCategory.Rules]: "Rules",
   [TagCategory.Custom]: "Custom",
 };
 
@@ -34,7 +35,6 @@ export function TradeTagsTab({ tradeId }: TradeTagsTabProps) {
     replaceTags,
     updateRating,
     updateMindset,
-    refetch,
   } = useTradeTags(tradeId);
 
   const toggleTag = useCallback(
@@ -119,7 +119,7 @@ export function TradeTagsTab({ tradeId }: TradeTagsTabProps) {
 
       {/* Tags by category */}
       <div className="space-y-4">
-        {([TagCategory.Strategy, TagCategory.Mistakes, TagCategory.Custom] as const).map(
+        {([TagCategory.Strategy, TagCategory.Mistakes, TagCategory.Rules, TagCategory.Custom] as const).map(
           (cat) => {
             const tags = tagsByCategory[cat] ?? [];
             return (

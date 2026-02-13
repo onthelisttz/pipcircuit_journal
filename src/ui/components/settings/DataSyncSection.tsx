@@ -6,9 +6,12 @@ import { useAuth } from "@ui/hooks/useAuth";
 import { useEntityQueueStatus } from "@ui/hooks";
 import { EntitySyncQueue } from "@infrastructure/sync/EntitySyncQueue";
 import { JournalDeltaSyncService } from "@infrastructure/sync/JournalDeltaSyncService";
+import { FullSyncService } from "@infrastructure/sync/FullSyncService";
 import { isOnline } from "@infrastructure/sync/utils/connection";
 import { useFullSyncProgressStore } from "@ui/state/fullSyncProgressStore";
 import { createSettingsRepository } from "@infrastructure/db/createDualRepositories";
+import { db } from "@infrastructure/db/dexie/database";
+import { reconcileSeededJournalDuplicates } from "@infrastructure/sync/reconcileSeededJournalDuplicates";
 
 export function DataSyncSection() {
   const { user } = useAuth();
@@ -19,11 +22,11 @@ export function DataSyncSection() {
   const [isRetryingFailed, setIsRetryingFailed] = useState(false);
   const [autoPushEnabled, setAutoPushEnabled] = useState(false);
   const [autoPushMinutes, setAutoPushMinutes] = useState<number>(10);
-  const { syncStep, isSyncing: isSyncingStore, startSync, updateStep, finishSync } =
+  const { syncStep, lastStep, isSyncing: isSyncingStore, startSync, updateStep, finishSync } =
     useFullSyncProgressStore();
 
   const isSyncing = isSyncingStore || isSyncingLocal;
-  const displayStep = syncStep;
+  const progressMessage = isSyncing ? (syncStep ?? "Sync in progress...") : lastStep;
 
   useEffect(() => {
     if (!user?.id) {
@@ -78,6 +81,43 @@ export function DataSyncSection() {
     startSync("Pulling latest cloud changes...");
 
     try {
+      const [
+        accountsCount,
+        tradesCount,
+        tradeNotesCount,
+        tradeTagsCount,
+        observationsCount,
+        queuedJobsCount,
+      ] = await Promise.all([
+        db.accounts.count(),
+        db.trades.count(),
+        db.trade_notes.count(),
+        db.trade_tags.count(),
+        db.observations.count(),
+        db.sync_queue.count(),
+      ]);
+
+      const localCoreIsEmpty =
+        accountsCount === 0 &&
+        tradesCount === 0 &&
+        tradeNotesCount === 0 &&
+        tradeTagsCount === 0 &&
+        observationsCount === 0 &&
+        queuedJobsCount === 0;
+
+      if (localCoreIsEmpty) {
+        updateStep("Bootstrapping local data from cloud...");
+        const fullSync = new FullSyncService(user.id);
+        const pullResult = await fullSync.pullFromSupabase((step) => updateStep(step));
+        if (!pullResult.success) {
+          setLastSync({
+            success: false,
+            error: pullResult.error ?? "Initial cloud bootstrap pull failed",
+          });
+          return;
+        }
+      }
+
       const reconnectSync = new JournalDeltaSyncService(user.id);
       const result = await reconnectSync.runReconnectFlow((step) => updateStep(step));
 
@@ -88,6 +128,18 @@ export function DataSyncSection() {
         });
         return;
       }
+
+      const fullSync = new FullSyncService(user.id);
+      const resumeResult = await fullSync.resumeChartBarsFromCloud((step) => updateStep(step));
+      if (!resumeResult.success) {
+        setLastSync({
+          success: false,
+          error: resumeResult.error ?? "Chart bar restore resume failed",
+        });
+        return;
+      }
+
+      await reconcileSeededJournalDuplicates();
 
       setLastSync({ success: true });
     } catch (err) {
@@ -181,6 +233,26 @@ export function DataSyncSection() {
         </div>
       </div>
 
+      {progressMessage && (
+        <div
+          className={`rounded-lg border p-4 ${
+            isSyncing
+              ? "border-sky-500/35 bg-sky-500/10"
+              : "border-border bg-muted/30"
+          }`}
+        >
+          <p className="text-sm font-medium text-foreground">
+            {isSyncing ? "Current sync step" : "Last sync step"}
+          </p>
+          <p
+            className="mt-1 whitespace-normal break-words text-sm text-muted-foreground"
+            data-sync-step-full
+          >
+            {progressMessage}
+          </p>
+        </div>
+      )}
+
       <div className="rounded-lg border border-border bg-muted/40 p-4">
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -272,12 +344,6 @@ export function DataSyncSection() {
           <span className={!autoPushEnabled ? "text-muted-foreground/60" : ""}>minutes</span>
         </div>
       </div>
-
-      {isSyncing && displayStep && (
-        <p className="mt-3 text-sm text-muted-foreground" data-sync-step>
-          {displayStep}
-        </p>
-      )}
 
       {lastSync && (
         <div

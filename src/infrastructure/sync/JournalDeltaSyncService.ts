@@ -498,24 +498,30 @@ export class JournalDeltaSyncService {
     }
 
     const remote = await this.deps.supaObs.getCategoryById(remoteCategoryId);
-    if (!remote?.clientId) {
+    if (!remote) {
       return null;
     }
 
-    const byClient = await this.deps.dexieObs.getCategoryByClientId(
-      remote.clientId,
-      true
-    );
-    if (byClient?.id != null) {
-      if (byClient.remoteId == null) {
-        await this.deps.dexieObs.updateCategory(byClient.id, {
-          remoteId: remoteCategoryId,
-        });
+    if (remote.clientId) {
+      const byClient = await this.deps.dexieObs.getCategoryByClientId(
+        remote.clientId,
+        true
+      );
+      if (byClient?.id != null) {
+        if (byClient.remoteId == null) {
+          await this.deps.dexieObs.updateCategory(byClient.id, {
+            remoteId: remoteCategoryId,
+          });
+        }
+        return byClient.id;
       }
-      return byClient.id;
     }
 
-    return null;
+    const created = await this.deps.dexieObs.upsertCategoryFromRemote({
+      ...remote,
+      deletedAt: remote.deletedAt ?? null,
+    });
+    return created.id ?? null;
   }
 
   private metaKey(table: JournalTable): string {

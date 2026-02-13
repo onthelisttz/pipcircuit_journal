@@ -12,6 +12,10 @@ function incrementVersion(current?: number): number {
   return (current ?? 1) + 1;
 }
 
+function normalizeTagName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
 export class DexieTagRepository implements ITagRepository {
   async getById(id: number): Promise<Tag | null> {
     const row = await db.tags.get(id);
@@ -38,8 +42,14 @@ export class DexieTagRepository implements ITagRepository {
   }
 
   async getByNameAndCategory(name: string, category: TagCategory): Promise<Tag | null> {
+    const normalized = normalizeTagName(name);
     const tag = await db.tags
-      .filter((t) => t.name === name && t.category === category && !t.deletedAt)
+      .filter(
+        (t) =>
+          !t.deletedAt &&
+          t.category === category &&
+          normalizeTagName(t.name) === normalized
+      )
       .first();
     return tag ?? null;
   }
@@ -87,10 +97,43 @@ export class DexieTagRepository implements ITagRepository {
   }
 
   async create(tag: Tag): Promise<Tag> {
+    const name = tag.name.trim();
+    const normalized = normalizeTagName(name);
+    const existing = await db.tags
+      .filter((t) => t.category === tag.category && normalizeTagName(t.name) === normalized)
+      .first();
+
+    if (existing?.id != null) {
+      // Treat create as upsert by normalized name/category to prevent duplicates.
+      const shouldUpdate =
+        Boolean(existing.deletedAt) || existing.name !== name || existing.color !== tag.color;
+
+      if (shouldUpdate) {
+        const updatedAt = tag.updatedAt ?? now();
+        await db.tags.update(existing.id, {
+          name,
+          color: tag.color,
+          deletedAt: null,
+          updatedAt,
+          deviceId: tag.deviceId ?? getOrCreateDeviceId(),
+          clientId: existing.clientId ?? tag.clientId ?? createUuid(),
+          version: incrementVersion(existing.version),
+        });
+        const revived = await db.tags.get(existing.id);
+        if (!revived) {
+          throw new Error(`Tag not found after revive/update: ${existing.id}`);
+        }
+        return revived;
+      }
+
+      return existing;
+    }
+
     const createdAt = tag.createdAt ?? now();
     const updatedAt = tag.updatedAt ?? createdAt;
     const record: Tag = {
       ...tag,
+      name,
       clientId: tag.clientId ?? createUuid(),
       deviceId: tag.deviceId ?? getOrCreateDeviceId(),
       createdAt,
@@ -108,8 +151,12 @@ export class DexieTagRepository implements ITagRepository {
       throw new Error(`Tag not found: ${id}`);
     }
 
+    const name =
+      updates.name !== undefined ? updates.name.trim() : undefined;
+
     const merged: Partial<Tag> = {
       ...updates,
+      name,
       clientId: updates.clientId ?? existing.clientId ?? createUuid(),
       deviceId: updates.deviceId ?? getOrCreateDeviceId(),
       updatedAt: updates.updatedAt ?? now(),

@@ -266,10 +266,6 @@ export function useRealtimeSync() {
                 }
               }
 
-              if (remoteCategoryId != null && localCategoryId == null && !deletedAt) {
-                return;
-              }
-
               await observationRepoRef.current.upsertFromRemote({
                 remoteId,
                 clientId,
@@ -348,4 +344,3 @@ export function useRealtimeSync() {
     isConnected,
   };
 }
-

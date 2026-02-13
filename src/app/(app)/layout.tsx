@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { AuthGuard, Header, Sidebar } from "@ui/components/layout";
-import { seedDefaultTags } from "@infrastructure/db/dexie/seedTags";
-import { seedDefaultObservationCategories } from "@infrastructure/db/dexie/seedObservationCategories";
 import { TradePanel, ObservationPanel } from "@ui/components/panels";
 import { TradePanelProvider, ObservationPanelProvider } from "@ui/providers";
 import { useRealtimeSync } from "@ui/hooks/useRealtimeSync";
@@ -15,11 +13,6 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   // Start realtime sync when user is logged in
   useRealtimeSync();
-
-  useEffect(() => {
-    void seedDefaultTags();
-    void seedDefaultObservationCategories();
-  }, []);
 
   return (
     <AuthGuard>

@@ -48,7 +48,11 @@ export function useObservations(filters?: UseObservationsFilters) {
     });
   })();
 
+  const sorted = [...filtered].sort(
+    (a, b) => toTimeMs(b.createdAt) - toTimeMs(a.createdAt)
+  );
+
   const refetch = useCallback(async () => {}, []);
 
-  return { observations: filtered, isLoading, error, refetch };
+  return { observations: sorted, isLoading, error, refetch };
 }

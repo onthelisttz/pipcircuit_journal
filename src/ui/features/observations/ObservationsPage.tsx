@@ -32,6 +32,10 @@ const defaultFilters: ObservationFiltersState = {
 };
 const OBS_FILTERS_KEY = "observationFilters";
 
+function isValidDate(value: Date): boolean {
+  return Number.isFinite(value.getTime());
+}
+
 export function ObservationsPage() {
   const [filters, setFilters] = useState<ObservationFiltersState>(() => {
     if (typeof window === "undefined") return defaultFilters;
@@ -43,8 +47,13 @@ export function ObservationsPage() {
         to?: string;
         categoryId?: number | null;
       };
-      const from = parsed.from ? new Date(parsed.from) : defaultFilters.from;
-      const to = parsed.to ? new Date(parsed.to) : defaultFilters.to;
+      const parsedFrom = parsed.from ? new Date(parsed.from) : defaultFilters.from;
+      const parsedTo = parsed.to ? new Date(parsed.to) : defaultFilters.to;
+      if (!isValidDate(parsedFrom) || !isValidDate(parsedTo)) {
+        return defaultFilters;
+      }
+      const from = parsedFrom.getTime() <= parsedTo.getTime() ? parsedFrom : parsedTo;
+      const to = parsedFrom.getTime() <= parsedTo.getTime() ? parsedTo : parsedFrom;
       return {
         from,
         to,
@@ -55,7 +64,11 @@ export function ObservationsPage() {
     }
   });
   const { observations: filteredObs, isLoading, refetch } = useObservations(filters);
-  const { categories, refetch: refetchCategories } = useObservationCategories();
+  const {
+    categories,
+    isLoading: isLoadingCategories,
+    refetch: refetchCategories,
+  } = useObservationCategories();
   const repo = useObservationRepository();
   const { openPanel } = useObservationPanel();
 
@@ -97,6 +110,14 @@ export function ObservationsPage() {
     }
     setEditingNames(map);
   }, [categories]);
+
+  useEffect(() => {
+    if (isLoadingCategories || filters.categoryId == null) return;
+    const stillExists = categories.some((category) => category.id === filters.categoryId);
+    if (!stillExists) {
+      setFilters((prev) => ({ ...prev, categoryId: null }));
+    }
+  }, [categories, filters.categoryId, isLoadingCategories]);
 
   const resetForm = useCallback(() => {
     setTitle("");
@@ -203,7 +224,6 @@ export function ObservationsPage() {
 
   const handleDeleteCategory = useCallback(
     async (id: number) => {
-      // eslint-disable-next-line no-alert
       const confirmed = window.confirm(
         "Delete this category? Existing observations using it will keep their category until you change them."
       );

@@ -512,9 +512,15 @@ export class FullSyncService {
           if (totalBars > 0) {
             const firstBarDate = firstTsSeen ? new Date(firstTsSeen) : p.firstBarDate;
             const lastBarDate = lastTsSeen ? new Date(lastTsSeen) : p.lastBarDate;
+            const localTotalBars = await dexieChartRepo.countBars(
+              p.broker,
+              p.symbol,
+              "M1"
+            );
+            const resolvedTotalBars = cloudTotalBars ?? localTotalBars;
 
             await progressRepo.updateProgress(p.broker, p.symbol, {
-              totalBars: (p.totalBars ?? 0) + totalBars,
+              totalBars: resolvedTotalBars,
               status: "completed",
               firstBarDate: firstBarDate ?? undefined,
               lastBarDate: lastBarDate ?? undefined,
@@ -526,7 +532,7 @@ export class FullSyncService {
               .where("[broker+symbol]")
               .equals([p.broker, p.symbol])
               .modify({
-                totalBars: (p.totalBars ?? 0) + totalBars,
+                totalBars: resolvedTotalBars,
                 status: "completed",
                 firstBarDate,
                 lastBarDate,
@@ -552,6 +558,210 @@ export class FullSyncService {
       console.error("[FullSync] Pull failed:", err);
       return { success: false, error: msg };
     }
+  }
+
+  /**
+   * Resume/continue chart-bar restore from cloud without re-pulling all other entities.
+   * Safe to run on app start after interruptions (e.g., page refresh).
+   */
+  async resumeChartBarsFromCloud(onProgress?: FullSyncProgressCallback): Promise<{
+    success: boolean;
+    restoredSymbols: number;
+    totalSymbols: number;
+    error?: string;
+  }> {
+    try {
+      const progressRepo = new SupabaseSymbolSyncProgressRepository(this.userId);
+      const syncProgressList = await progressRepo.getAll();
+      const { restoredSymbols, totalSymbols } =
+        await this.restoreChartBarsFromCloudInternal(syncProgressList, progressRepo, onProgress);
+      return { success: true, restoredSymbols, totalSymbols };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[FullSync] Resume chart bars failed:", err);
+      return { success: false, restoredSymbols: 0, totalSymbols: 0, error: msg };
+    }
+  }
+
+  private async restoreChartBarsFromCloudInternal(
+    syncProgressList: Awaited<ReturnType<SupabaseSymbolSyncProgressRepository["getAll"]>>,
+    progressRepo: SupabaseSymbolSyncProgressRepository,
+    onProgress?: FullSyncProgressCallback
+  ): Promise<{ restoredSymbols: number; totalSymbols: number }> {
+    onProgress?.("Checking local chart bars...");
+    const localBarCount = await db.chart_bars.count();
+
+    if (syncProgressList.length === 0) {
+      onProgress?.("Chart bars already up to date.");
+      return { restoredSymbols: 0, totalSymbols: 0 };
+    }
+
+    onProgress?.("Restoring chart bars from cloud...");
+    const supabase = getSupabaseClient();
+    const PAGE_SIZE = 5000;
+    const totalSymbols = syncProgressList.length;
+    let restoredSymbols = 0;
+
+    const hasAnyLocalBars = localBarCount > 0;
+    const { DexieChartBarRepository } = await import(
+      "@infrastructure/db/dexie/repositories/DexieChartBarRepository"
+    );
+    const dexieChartRepo = new DexieChartBarRepository();
+
+    for (const p of syncProgressList) {
+      if (!p.broker || !p.symbol) continue;
+      if (!p.firstBarDate || !p.lastBarDate) continue;
+
+      let fromTs: number | null = null;
+      const toTs = p.lastBarDate.getTime();
+
+      if (!hasAnyLocalBars) {
+        fromTs = p.firstBarDate.getTime();
+      } else {
+        const localRange = await dexieChartRepo.getDateRange(p.broker, p.symbol, "M1");
+        if (!localRange.firstBarDate || !localRange.lastBarDate) {
+          fromTs = p.firstBarDate.getTime();
+        } else {
+          const localLastTs = localRange.lastBarDate.getTime();
+          if (localLastTs >= toTs) {
+            continue;
+          }
+          fromTs = localLastTs + 1;
+        }
+      }
+
+      if (fromTs == null || fromTs > toTs) continue;
+
+      let cloudTotalBars: number | null = null;
+      try {
+        const { count, error: countError } = await supabase
+          .from("chart_bars")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", this.userId)
+          .eq("broker", p.broker)
+          .eq("symbol", p.symbol)
+          .eq("timeframe", "M1");
+        if (!countError) {
+          cloudTotalBars = count ?? null;
+        }
+      } catch {
+        // Non-fatal; progress message will show downloaded-only count.
+      }
+
+      let totalBars = 0;
+      let firstTsSeen: number | null = null;
+      let lastTsSeen: number | null = null;
+
+      while (fromTs <= toTs) {
+        const { data, error } = await supabase
+          .from("chart_bars")
+          .select("*")
+          .eq("user_id", this.userId)
+          .eq("broker", p.broker)
+          .eq("symbol", p.symbol)
+          .eq("timeframe", "M1")
+          .gte("timestamp", fromTs)
+          .lte("timestamp", toTs)
+          .order("timestamp", { ascending: true })
+          .limit(PAGE_SIZE);
+
+        if (error) {
+          throw new Error(
+            `Failed to restore chart bars for ${p.broker}:${p.symbol}: ${error.message}`
+          );
+        }
+
+        if (!data || data.length === 0) break;
+
+        const bars: ChartBar[] = (data as SupabaseChartBarRow[]).map((row) => ({
+          id: row.id,
+          broker: row.broker,
+          symbol: row.symbol,
+          timeframe: row.timeframe,
+          timestamp: row.timestamp,
+          open: Number(row.open),
+          high: Number(row.high),
+          low: Number(row.low),
+          close: Number(row.close),
+          volume: Number(row.volume),
+          syncedAt: row.synced_at ? new Date(row.synced_at) : null,
+        }));
+
+        await db.chart_bars.bulkPut(bars);
+
+        totalBars += bars.length;
+        firstTsSeen = firstTsSeen ?? bars[0]?.timestamp ?? null;
+        lastTsSeen = bars[bars.length - 1]?.timestamp ?? lastTsSeen;
+
+        const downloadedText = totalBars.toLocaleString();
+        const totalCloudText = cloudTotalBars != null ? `/${cloudTotalBars.toLocaleString()}` : "";
+        onProgress?.(
+          `Restoring chart bars from cloud… ${restoredSymbols}/${totalSymbols} symbols completed (${p.symbol}: ${downloadedText}${totalCloudText} bars)`
+        );
+
+        const lastTs = bars[bars.length - 1]?.timestamp;
+        if (!lastTs || lastTs >= toTs) break;
+        fromTs = lastTs + 1;
+      }
+
+      if (totalBars > 0) {
+        const firstBarDate = p.firstBarDate ?? (firstTsSeen ? new Date(firstTsSeen) : null);
+        const lastBarDate = p.lastBarDate ?? (lastTsSeen ? new Date(lastTsSeen) : null);
+        const localTotalBars = await dexieChartRepo.countBars(p.broker, p.symbol, "M1");
+        const resolvedTotalBars = cloudTotalBars ?? localTotalBars;
+        const now = new Date();
+
+        await progressRepo.updateProgress(p.broker, p.symbol, {
+          totalBars: resolvedTotalBars,
+          status: "completed",
+          firstBarDate: firstBarDate ?? undefined,
+          lastBarDate: lastBarDate ?? undefined,
+          lastSyncTime: now,
+          progressPercent: 100,
+        });
+
+        const existingLocal = await db.symbol_sync_progress
+          .where("[broker+symbol]")
+          .equals([p.broker, p.symbol])
+          .first();
+
+        if (existingLocal?.id != null) {
+          await db.symbol_sync_progress.update(existingLocal.id, {
+            totalBars: resolvedTotalBars,
+            status: "completed",
+            firstBarDate,
+            lastBarDate,
+            lastSyncTime: now,
+            progressPercent: 100,
+            error: null,
+          });
+        } else {
+          await db.symbol_sync_progress.put({
+            broker: p.broker,
+            symbol: p.symbol,
+            totalBars: resolvedTotalBars,
+            status: "completed",
+            firstBarDate,
+            lastBarDate,
+            lastSyncTime: now,
+            progressPercent: 100,
+            error: null,
+          });
+        }
+
+        restoredSymbols += 1;
+      }
+    }
+
+    if (restoredSymbols > 0) {
+      onProgress?.(
+        `Restoring chart bars from cloud… ${restoredSymbols}/${totalSymbols} symbols completed`
+      );
+    } else {
+      onProgress?.("Chart bars already up to date.");
+    }
+
+    return { restoredSymbols, totalSymbols };
   }
 
   /**

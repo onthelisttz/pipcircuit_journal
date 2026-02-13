@@ -10,6 +10,7 @@ import { ConfirmDialog } from "@ui/components/common";
 const CATEGORY_OPTIONS = [
   { value: TagCategory.Strategy, label: "Strategy" },
   { value: TagCategory.Mistakes, label: "Mistakes" },
+  { value: TagCategory.Rules, label: "Rules" },
   { value: TagCategory.Custom, label: "Custom" },
 ];
 

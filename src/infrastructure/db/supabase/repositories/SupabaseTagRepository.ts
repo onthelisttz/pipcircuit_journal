@@ -43,6 +43,10 @@ function toIso(value: Date | string | undefined | null): string {
   return toDate(value).toISOString();
 }
 
+function normalizeTagName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
 function toDomain(row: SupabaseTag): Tag {
   return {
     id: row.id,
@@ -77,16 +81,17 @@ function toDomainTradeTag(row: SupabaseTradeTag): TradeTag {
 }
 
 function toSupabase(t: Tag, userId: string): Record<string, unknown> {
+  const nowIso = new Date().toISOString();
   return {
     user_id: userId,
     client_id: t.clientId ?? createUuid(),
-    name: t.name,
+    name: t.name.trim(),
     category: t.category,
     color: t.color,
     created_at: toIso(t.createdAt),
     updated_at: toIso(t.updatedAt),
     deleted_at: t.deletedAt ? toIso(t.deletedAt) : null,
-    synced_at: t.syncedAt ? toIso(t.syncedAt) : null,
+    synced_at: t.syncedAt ? toIso(t.syncedAt) : nowIso,
     device_id: t.deviceId ?? getOrCreateDeviceId(),
     version: t.version ?? 1,
   };
@@ -94,6 +99,37 @@ function toSupabase(t: Tag, userId: string): Record<string, unknown> {
 
 export class SupabaseTagRepository implements ITagRepository {
   constructor(private readonly userId: string) {}
+
+  private async findAnyByNormalizedNameAndCategory(
+    name: string,
+    category: string
+  ): Promise<SupabaseTag | null> {
+    const normalized = normalizeTagName(name);
+    const { data, error } = await getSupabaseClient()
+      .from("tags")
+      .select("*")
+      .eq("user_id", this.userId)
+      .eq("category", category);
+
+    if (error) {
+      throw new Error(`Failed to find tag by normalized name/category: ${error.message}`);
+    }
+
+    const rows = ((data ?? []) as SupabaseTag[]).filter(
+      (row) => normalizeTagName(row.name) === normalized
+    );
+
+    if (rows.length === 0) return null;
+
+    const active = rows.find((row) => row.deleted_at == null);
+    if (active) return active;
+
+    rows.sort(
+      (a, b) =>
+        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    );
+    return rows[0];
+  }
 
   async getById(id: number, includeDeleted = true): Promise<Tag | null> {
     let query = getSupabaseClient()
@@ -185,7 +221,34 @@ export class SupabaseTagRepository implements ITagRepository {
   }
 
   async create(tag: Tag): Promise<Tag> {
-    const row = toSupabase(tag, this.userId);
+    const cleanName = tag.name.trim();
+    const existing = await this.findAnyByNormalizedNameAndCategory(cleanName, tag.category);
+
+    if (existing?.id != null) {
+      const updatedAt = tag.updatedAt ? toIso(tag.updatedAt) : new Date().toISOString();
+      const { data, error } = await getSupabaseClient()
+        .from("tags")
+        .update({
+          name: cleanName,
+          category: tag.category,
+          color: tag.color,
+          deleted_at: null,
+          updated_at: updatedAt,
+          synced_at: new Date().toISOString(),
+          device_id: tag.deviceId ?? getOrCreateDeviceId(),
+          version: (existing.version ?? 1) + 1,
+          client_id: existing.client_id ?? tag.clientId ?? createUuid(),
+        })
+        .eq("user_id", this.userId)
+        .eq("id", existing.id)
+        .select("*")
+        .single();
+
+      if (error) throw new Error(`Failed to revive existing tag: ${error.message}`);
+      return toDomain(data as SupabaseTag);
+    }
+
+    const row = toSupabase({ ...tag, name: cleanName }, this.userId);
     const { data, error } = await getSupabaseClient()
       .from("tags")
       .upsert(row, { onConflict: "user_id,client_id", ignoreDuplicates: false })
@@ -206,7 +269,7 @@ export class SupabaseTagRepository implements ITagRepository {
       device_id: updates.deviceId ?? getOrCreateDeviceId(),
       version: updates.version ?? (current.version ?? 1) + 1,
     };
-    if (updates.name !== undefined) supabaseUpdates.name = updates.name;
+    if (updates.name !== undefined) supabaseUpdates.name = updates.name.trim();
     if (updates.category !== undefined) supabaseUpdates.category = updates.category;
     if (updates.color !== undefined) supabaseUpdates.color = updates.color;
     if (updates.clientId !== undefined) supabaseUpdates.client_id = updates.clientId;
@@ -537,8 +600,8 @@ export class SupabaseTagRepository implements ITagRepository {
     if (tags.length === 0) return;
     const byKey = new Map<string, Tag>();
     for (const tag of tags) {
-      const key = tag.clientId ?? `${tag.name}::${tag.category}`;
-      byKey.set(key, tag);
+      const key = tag.clientId ?? `${normalizeTagName(tag.name)}::${tag.category}`;
+      byKey.set(key, { ...tag, name: tag.name.trim() });
     }
 
     const rows = Array.from(byKey.values()).map((tag) => toSupabase(tag, this.userId));
@@ -549,17 +612,9 @@ export class SupabaseTagRepository implements ITagRepository {
   }
 
   async getByNameAndCategory(name: string, category: string): Promise<Tag | null> {
-    const { data, error } = await getSupabaseClient()
-      .from("tags")
-      .select("*")
-      .eq("user_id", this.userId)
-      .eq("name", name)
-      .eq("category", category)
-      .is("deleted_at", null)
-      .maybeSingle();
-
-    if (error || !data) return null;
-    return toDomain(data as SupabaseTag);
+    const row = await this.findAnyByNormalizedNameAndCategory(name, category);
+    if (!row || row.deleted_at) return null;
+    return toDomain(row);
   }
 
   private async getTradeTagByTradeAndTag(

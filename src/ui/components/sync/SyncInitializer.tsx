@@ -22,6 +22,9 @@ import { DexieChartBarRepository } from "@infrastructure/db/dexie/repositories";
 import { CTraderAPI } from "@infrastructure/api/ctrader/CTraderAPI";
 import { TokenStorage } from "@infrastructure/auth";
 import { createSettingsRepository } from "@infrastructure/db/createDualRepositories";
+import { FullSyncService } from "@infrastructure/sync/FullSyncService";
+import { db } from "@infrastructure/db/dexie/database";
+import { reconcileSeededJournalDuplicates } from "@infrastructure/sync/reconcileSeededJournalDuplicates";
 
 /**
  * SyncInitializer - Component that initializes sync after login
@@ -63,6 +66,51 @@ export function SyncInitializer() {
       initializedRef.current = true;
 
       try {
+        const maybeBootstrapFromCloud = async () => {
+          if (!isOnline() || !user.id) return;
+
+          const [
+            accountsCount,
+            tradesCount,
+            tradeNotesCount,
+            tradeTagsCount,
+            observationsCount,
+            queuedJobsCount,
+          ] = await Promise.all([
+            db.accounts.count(),
+            db.trades.count(),
+            db.trade_notes.count(),
+            db.trade_tags.count(),
+            db.observations.count(),
+            db.sync_queue.count(),
+          ]);
+
+          const localCoreIsEmpty =
+            accountsCount === 0 &&
+            tradesCount === 0 &&
+            tradeNotesCount === 0 &&
+            tradeTagsCount === 0 &&
+            observationsCount === 0 &&
+            queuedJobsCount === 0;
+
+          if (!localCoreIsEmpty) return;
+
+          startSync("Bootstrapping local data from cloud...");
+          try {
+            const fullSync = new FullSyncService(user.id);
+            const pullResult = await fullSync.pullFromSupabase((step) => updateStep(step));
+            if (!pullResult.success) {
+              console.warn("[SyncInitializer] Initial cloud bootstrap pull failed:", pullResult);
+            }
+          } catch (error) {
+            console.warn("[SyncInitializer] Initial cloud bootstrap pull failed:", error);
+          } finally {
+            finishSync();
+          }
+        };
+
+        await maybeBootstrapFromCloud();
+
         const tradeRepo = new DexieTradeRepository();
         const accountRepo = new DexieAccountRepository();
 
@@ -112,6 +160,17 @@ export function SyncInitializer() {
                 reconnectResult
               );
             }
+            const fullSync = new FullSyncService(user.id);
+            const resumeResult = await fullSync.resumeChartBarsFromCloud((step) =>
+              updateStep(step)
+            );
+            if (!resumeResult.success) {
+              console.warn(
+                "[SyncInitializer] Chart restore resume finished with issues:",
+                resumeResult
+              );
+            }
+            await reconcileSeededJournalDuplicates();
 
             await refresh();
           } catch (error) {
@@ -324,6 +383,14 @@ export function SyncInitializer() {
         if (!result.success) {
           console.warn("[SyncInitializer] Reconnect flow finished with issues:", result);
         }
+        const fullSync = new FullSyncService(user.id);
+        const resumeResult = await fullSync.resumeChartBarsFromCloud((step) =>
+          updateStep(step)
+        );
+        if (!resumeResult.success) {
+          console.warn("[SyncInitializer] Chart restore resume finished with issues:", resumeResult);
+        }
+        await reconcileSeededJournalDuplicates();
       } catch (error) {
         console.warn("[SyncInitializer] Reconnect flow failed:", error);
       } finally {
