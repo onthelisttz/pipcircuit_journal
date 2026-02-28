@@ -1,6 +1,6 @@
 import type { ITagRepository } from "@application/ports/repositories";
 import type { Tag, TradeTag } from "@domain/entities";
-import type { TagCategory } from "@domain/enums";
+import { TagCategory } from "@domain/enums";
 import { createUuid, getOrCreateDeviceId } from "@infrastructure/sync/utils";
 import { db } from "../database";
 
@@ -12,46 +12,77 @@ function incrementVersion(current?: number): number {
   return (current ?? 1) + 1;
 }
 
-function normalizeTagName(name: string): string {
-  return name.trim().toLowerCase();
+const DEFAULT_TAG_NAME = "Untitled";
+const DEFAULT_TAG_COLOR = "#6b7280";
+const TAG_CATEGORIES = new Set<TagCategory>(Object.values(TagCategory));
+
+function sanitizeTagName(name: unknown): string {
+  const value = typeof name === "string" ? name.trim() : "";
+  return value.length > 0 ? value : DEFAULT_TAG_NAME;
+}
+
+function sanitizeTagCategory(category: unknown): TagCategory {
+  return TAG_CATEGORIES.has(category as TagCategory)
+    ? (category as TagCategory)
+    : TagCategory.Custom;
+}
+
+function sanitizeTagColor(color: unknown): string {
+  const value = typeof color === "string" ? color.trim() : "";
+  return value.length > 0 ? value : DEFAULT_TAG_COLOR;
+}
+
+function normalizeTagName(name: unknown): string {
+  return sanitizeTagName(name).toLowerCase();
+}
+
+function normalizeStoredTag(tag: Tag): Tag {
+  return {
+    ...tag,
+    name: sanitizeTagName(tag.name),
+    category: sanitizeTagCategory(tag.category),
+    color: sanitizeTagColor(tag.color),
+  };
 }
 
 export class DexieTagRepository implements ITagRepository {
   async getById(id: number): Promise<Tag | null> {
     const row = await db.tags.get(id);
     if (!row || row.deletedAt) return null;
-    return row;
+    return normalizeStoredTag(row);
   }
 
   async getByIdIncludingDeleted(id: number): Promise<Tag | null> {
-    return (await db.tags.get(id)) ?? null;
+    const row = await db.tags.get(id);
+    return row ? normalizeStoredTag(row) : null;
   }
 
   async getByRemoteId(remoteId: number, includeDeleted = false): Promise<Tag | null> {
     const tag = await db.tags.where("remoteId").equals(remoteId).first();
     if (!tag) return null;
     if (!includeDeleted && tag.deletedAt) return null;
-    return tag;
+    return normalizeStoredTag(tag);
   }
 
   async getByClientId(clientId: string, includeDeleted = false): Promise<Tag | null> {
     const tag = await db.tags.where("clientId").equals(clientId).first();
     if (!tag) return null;
     if (!includeDeleted && tag.deletedAt) return null;
-    return tag;
+    return normalizeStoredTag(tag);
   }
 
   async getByNameAndCategory(name: string, category: TagCategory): Promise<Tag | null> {
     const normalized = normalizeTagName(name);
+    const safeCategory = sanitizeTagCategory(category);
     const tag = await db.tags
       .filter(
         (t) =>
           !t.deletedAt &&
-          t.category === category &&
+          sanitizeTagCategory(t.category) === safeCategory &&
           normalizeTagName(t.name) === normalized
       )
       .first();
-    return tag ?? null;
+    return tag ? normalizeStoredTag(tag) : null;
   }
 
   async upsertFromRemote(tag: Tag): Promise<Tag> {
@@ -65,6 +96,9 @@ export class DexieTagRepository implements ITagRepository {
 
     const payload: Tag = {
       ...tag,
+      name: sanitizeTagName(tag.name),
+      category: sanitizeTagCategory(tag.category),
+      color: sanitizeTagColor(tag.color),
       clientId: tag.clientId ?? existing?.clientId ?? createUuid(),
       deviceId: tag.deviceId ?? null,
       deletedAt: tag.deletedAt ?? null,
@@ -80,39 +114,49 @@ export class DexieTagRepository implements ITagRepository {
       if (!updated) {
         throw new Error(`Tag not found after remote upsert: ${existing.id}`);
       }
-      return updated;
+      return normalizeStoredTag(updated);
     }
 
     const toInsert: Tag = { ...payload };
     delete (toInsert as { id?: number }).id;
     const id = await db.tags.add(toInsert);
-    return { ...toInsert, id };
+    return normalizeStoredTag({ ...toInsert, id });
   }
 
   async list(category?: TagCategory): Promise<Tag[]> {
+    const safeCategory = category ? sanitizeTagCategory(category) : undefined;
     if (!category) {
-      return db.tags.filter((t) => !t.deletedAt).toArray();
+      const tags = await db.tags.filter((t) => !t.deletedAt).toArray();
+      return tags.map((tag) => normalizeStoredTag(tag));
     }
-    return db.tags.filter((t) => t.category === category && !t.deletedAt).toArray();
+    const tags = await db.tags
+      .filter((t) => sanitizeTagCategory(t.category) === safeCategory && !t.deletedAt)
+      .toArray();
+    return tags.map((tag) => normalizeStoredTag(tag));
   }
 
   async create(tag: Tag): Promise<Tag> {
-    const name = tag.name.trim();
+    const name = sanitizeTagName(tag.name);
+    const category = sanitizeTagCategory(tag.category);
+    const color = sanitizeTagColor(tag.color);
     const normalized = normalizeTagName(name);
     const existing = await db.tags
-      .filter((t) => t.category === tag.category && normalizeTagName(t.name) === normalized)
+      .filter(
+        (t) => sanitizeTagCategory(t.category) === category && normalizeTagName(t.name) === normalized
+      )
       .first();
 
     if (existing?.id != null) {
       // Treat create as upsert by normalized name/category to prevent duplicates.
       const shouldUpdate =
-        Boolean(existing.deletedAt) || existing.name !== name || existing.color !== tag.color;
+        Boolean(existing.deletedAt) || existing.name !== name || existing.color !== color;
 
       if (shouldUpdate) {
         const updatedAt = tag.updatedAt ?? now();
         await db.tags.update(existing.id, {
           name,
-          color: tag.color,
+          category,
+          color,
           deletedAt: null,
           updatedAt,
           deviceId: tag.deviceId ?? getOrCreateDeviceId(),
@@ -123,10 +167,10 @@ export class DexieTagRepository implements ITagRepository {
         if (!revived) {
           throw new Error(`Tag not found after revive/update: ${existing.id}`);
         }
-        return revived;
+        return normalizeStoredTag(revived);
       }
 
-      return existing;
+      return normalizeStoredTag(existing);
     }
 
     const createdAt = tag.createdAt ?? now();
@@ -134,6 +178,8 @@ export class DexieTagRepository implements ITagRepository {
     const record: Tag = {
       ...tag,
       name,
+      category,
+      color,
       clientId: tag.clientId ?? createUuid(),
       deviceId: tag.deviceId ?? getOrCreateDeviceId(),
       createdAt,
@@ -142,7 +188,7 @@ export class DexieTagRepository implements ITagRepository {
       version: tag.version ?? 1,
     };
     const id = await db.tags.add(record);
-    return { ...record, id };
+    return normalizeStoredTag({ ...record, id });
   }
 
   async update(id: number, updates: Partial<Tag>): Promise<Tag> {
@@ -151,24 +197,37 @@ export class DexieTagRepository implements ITagRepository {
       throw new Error(`Tag not found: ${id}`);
     }
 
-    const name =
-      updates.name !== undefined ? updates.name.trim() : undefined;
-
     const merged: Partial<Tag> = {
       ...updates,
-      name,
       clientId: updates.clientId ?? existing.clientId ?? createUuid(),
       deviceId: updates.deviceId ?? getOrCreateDeviceId(),
       updatedAt: updates.updatedAt ?? now(),
       version: updates.version ?? incrementVersion(existing.version),
     };
 
+    // Important: never write undefined into persisted tag fields on partial updates.
+    if (updates.name !== undefined) {
+      merged.name = sanitizeTagName(updates.name);
+    } else {
+      delete (merged as { name?: string }).name;
+    }
+    if (updates.category !== undefined) {
+      merged.category = sanitizeTagCategory(updates.category);
+    } else {
+      delete (merged as { category?: TagCategory }).category;
+    }
+    if (updates.color !== undefined) {
+      merged.color = sanitizeTagColor(updates.color);
+    } else {
+      delete (merged as { color?: string }).color;
+    }
+
     await db.tags.update(id, merged);
     const updated = await db.tags.get(id);
     if (!updated) {
       throw new Error(`Tag not found: ${id}`);
     }
-    return updated;
+    return normalizeStoredTag(updated);
   }
 
   async delete(id: number): Promise<void> {
@@ -225,7 +284,9 @@ export class DexieTagRepository implements ITagRepository {
       return [];
     }
     const tags = await db.tags.bulkGet(tagIds);
-    return tags.filter((tag): tag is Tag => Boolean(tag && !tag.deletedAt));
+    return tags
+      .filter((tag): tag is Tag => Boolean(tag && !tag.deletedAt))
+      .map((tag) => normalizeStoredTag(tag));
   }
 
   async addToTrade(tradeId: number, tagId: number): Promise<TradeTag> {

@@ -3,9 +3,21 @@
 import { useState, useCallback, useMemo } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import type { Tag } from "@domain/entities";
+import { TagCategory } from "@domain/enums";
 import { createTagRepository } from "@infrastructure/db/createDualRepositories";
 import { db } from "@infrastructure/db/dexie/database";
 import { useAuth } from "@ui/hooks/useAuth";
+
+const TAG_CATEGORIES = new Set<TagCategory>(Object.values(TagCategory));
+
+function normalizeTag(tag: Tag): Tag {
+  const name = typeof tag.name === "string" && tag.name.trim() ? tag.name.trim() : "Untitled";
+  const category = TAG_CATEGORIES.has(tag.category as TagCategory)
+    ? (tag.category as TagCategory)
+    : TagCategory.Custom;
+  const color = typeof tag.color === "string" && tag.color.trim() ? tag.color : "#6b7280";
+  return { ...tag, name, category, color };
+}
 
 export function useTagsList() {
   const { user } = useAuth();
@@ -14,7 +26,7 @@ export function useTagsList() {
     () => db.tags.filter((tag) => !tag.deletedAt).sortBy("name"),
     [user?.id]
   );
-  const tags = liveTags ?? [];
+  const tags = useMemo(() => (liveTags ?? []).map((tag) => normalizeTag(tag)), [liveTags]);
   const isLoading = liveTags === undefined;
   const [error, setError] = useState<Error | null>(null);
 

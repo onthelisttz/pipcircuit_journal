@@ -4,7 +4,7 @@ import { Direction, Mindset, TagCategory } from "@domain/enums";
 import type { Tag } from "@domain/entities";
 import { format } from "date-fns";
 import { Calendar, ChevronDown, Star } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DateRangePopover } from "@ui/components/common";
 
 export const DASHBOARD_RATING_OPTIONS = [1, 2, 3, 4, 5] as const;
@@ -61,6 +61,12 @@ function getEffectiveSelectedCount(selectedCount: number, totalCount: number): n
   return selectedCount;
 }
 
+function sortByTagName(a: Tag, b: Tag): number {
+  const nameA = typeof a.name === "string" ? a.name : "";
+  const nameB = typeof b.name === "string" ? b.name : "";
+  return nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
+}
+
 export function DashboardFilters({
   filters,
   onChange,
@@ -76,6 +82,7 @@ export function DashboardFilters({
   const symbolRef = useRef<HTMLDivElement>(null);
   const directionRef = useRef<HTMLDivElement>(null);
   const tagsRef = useRef<HTMLDivElement>(null);
+  const tagsPopoverRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -96,25 +103,78 @@ export function DashboardFilters({
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  const updateTagsPopoverPosition = useCallback(() => {
+    if (!tagsOpen || typeof window === "undefined") return;
+    const trigger = tagsRef.current;
+    const popover = tagsPopoverRef.current;
+    if (!trigger || !popover) return;
+
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const useViewportAnchoring = viewportWidth < 1024;
+
+    if (!useViewportAnchoring) {
+      popover.style.position = "";
+      popover.style.left = "";
+      popover.style.right = "";
+      popover.style.top = "";
+      popover.style.width = "";
+      popover.style.maxHeight = "";
+      return;
+    }
+
+    const gutter = 8;
+    const maxWidth = Math.min(352, viewportWidth - gutter * 2);
+    const triggerRect = trigger.getBoundingClientRect();
+    const left = Math.min(
+      Math.max(gutter, Math.round(triggerRect.left)),
+      viewportWidth - gutter - maxWidth
+    );
+    const top = Math.max(gutter, Math.round(triggerRect.bottom + 6));
+    const maxHeight = Math.max(200, viewportHeight - top - gutter);
+
+    popover.style.position = "fixed";
+    popover.style.left = `${left}px`;
+    popover.style.right = "auto";
+    popover.style.top = `${top}px`;
+    popover.style.width = `${maxWidth}px`;
+    popover.style.maxHeight = `${maxHeight}px`;
+  }, [tagsOpen]);
+
+  useEffect(() => {
+    if (!tagsOpen) return;
+
+    updateTagsPopoverPosition();
+
+    const handleReposition = () => updateTagsPopoverPosition();
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+
+    return () => {
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+    };
+  }, [tagsOpen, updateTagsPopoverPosition]);
+
   const strategyTags = useMemo(
     () =>
       availableTags
         .filter((tag) => tag.category === TagCategory.Strategy && tag.id != null)
-        .sort((a, b) => a.name.localeCompare(b.name)),
+        .sort(sortByTagName),
     [availableTags]
   );
   const rulesTags = useMemo(
     () =>
       availableTags
         .filter((tag) => tag.category === TagCategory.Rules && tag.id != null)
-        .sort((a, b) => a.name.localeCompare(b.name)),
+        .sort(sortByTagName),
     [availableTags]
   );
   const customTags = useMemo(
     () =>
       availableTags
         .filter((tag) => tag.category === TagCategory.Custom && tag.id != null)
-        .sort((a, b) => a.name.localeCompare(b.name)),
+        .sort(sortByTagName),
     [availableTags]
   );
 
@@ -308,7 +368,10 @@ export function DashboardFilters({
           <ChevronDown className="h-4 w-4" />
         </button>
         {tagsOpen && (
-          <div className="absolute right-0 z-10 mt-1 max-h-[70vh] w-[22rem] overflow-y-auto rounded-lg border border-border bg-popover p-3 shadow-lg">
+          <div
+            ref={tagsPopoverRef}
+            className="absolute right-0 z-20 mt-1 max-h-[70dvh] w-[22rem] max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-lg border border-border bg-popover p-3 shadow-lg"
+          >
             <div className="mb-3 flex items-center justify-between border-b border-border pb-2">
               <span className="text-sm font-semibold">Tag Filters</span>
               <div className="flex items-center gap-3 text-xs">
@@ -459,7 +522,7 @@ export function DashboardFilters({
                               : undefined
                           }
                         >
-                          {tag.name}
+                          {tag.name || "Untitled"}
                         </button>
                       );
                     })}
@@ -511,7 +574,7 @@ export function DashboardFilters({
                               : undefined
                           }
                         >
-                          {tag.name}
+                          {tag.name || "Untitled"}
                         </button>
                       );
                     })}
@@ -563,7 +626,7 @@ export function DashboardFilters({
                               : undefined
                           }
                         >
-                          {tag.name}
+                          {tag.name || "Untitled"}
                         </button>
                       );
                     })}

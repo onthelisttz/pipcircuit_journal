@@ -1,6 +1,6 @@
 import type { ITagRepository } from "@application/ports/repositories";
 import type { Tag, TradeTag } from "@domain/entities";
-import type { TagCategory } from "@domain/enums";
+import { TagCategory } from "@domain/enums";
 import { createUuid, getOrCreateDeviceId } from "@infrastructure/sync/utils";
 import { getSupabaseClient } from "../client";
 
@@ -42,7 +42,7 @@ function formatTagPersistenceError(
   const isCategoryCheckFailure =
     msg.includes("tags_category_check") || msg.includes("violates check constraint");
 
-  if (isCategoryCheckFailure && category === "Rules") {
+  if (isCategoryCheckFailure && category === TagCategory.Rules) {
     return `Failed to ${action} Rules tag: database is missing migration 014_allow_rules_tag_category.sql`;
   }
 
@@ -59,8 +59,28 @@ function toIso(value: Date | string | undefined | null): string {
   return toDate(value).toISOString();
 }
 
-function normalizeTagName(name: string): string {
-  return name.trim().toLowerCase();
+const DEFAULT_TAG_NAME = "Untitled";
+const DEFAULT_TAG_COLOR = "#6b7280";
+const TAG_CATEGORIES = new Set<TagCategory>(Object.values(TagCategory));
+
+function sanitizeTagName(name: unknown): string {
+  const value = typeof name === "string" ? name.trim() : "";
+  return value.length > 0 ? value : DEFAULT_TAG_NAME;
+}
+
+function sanitizeTagCategory(category: unknown): TagCategory {
+  return TAG_CATEGORIES.has(category as TagCategory)
+    ? (category as TagCategory)
+    : TagCategory.Custom;
+}
+
+function sanitizeTagColor(color: unknown): string {
+  const value = typeof color === "string" ? color.trim() : "";
+  return value.length > 0 ? value : DEFAULT_TAG_COLOR;
+}
+
+function normalizeTagName(name: unknown): string {
+  return sanitizeTagName(name).toLowerCase();
 }
 
 function toDomain(row: SupabaseTag): Tag {
@@ -68,9 +88,9 @@ function toDomain(row: SupabaseTag): Tag {
     id: row.id,
     remoteId: row.id,
     clientId: row.client_id,
-    name: row.name,
-    category: row.category as TagCategory,
-    color: row.color,
+    name: sanitizeTagName(row.name),
+    category: sanitizeTagCategory(row.category),
+    color: sanitizeTagColor(row.color),
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
     deletedAt: row.deleted_at ? new Date(row.deleted_at) : null,
@@ -101,9 +121,9 @@ function toSupabase(t: Tag, userId: string): Record<string, unknown> {
   return {
     user_id: userId,
     client_id: t.clientId ?? createUuid(),
-    name: t.name.trim(),
-    category: t.category,
-    color: t.color,
+    name: sanitizeTagName(t.name),
+    category: sanitizeTagCategory(t.category),
+    color: sanitizeTagColor(t.color),
     created_at: toIso(t.createdAt),
     updated_at: toIso(t.updatedAt),
     deleted_at: t.deletedAt ? toIso(t.deletedAt) : null,
@@ -121,11 +141,12 @@ export class SupabaseTagRepository implements ITagRepository {
     category: string
   ): Promise<SupabaseTag | null> {
     const normalized = normalizeTagName(name);
+    const safeCategory = sanitizeTagCategory(category);
     const { data, error } = await getSupabaseClient()
       .from("tags")
       .select("*")
       .eq("user_id", this.userId)
-      .eq("category", category);
+      .eq("category", safeCategory);
 
     if (error) {
       throw new Error(`Failed to find tag by normalized name/category: ${error.message}`);
@@ -237,8 +258,10 @@ export class SupabaseTagRepository implements ITagRepository {
   }
 
   async create(tag: Tag): Promise<Tag> {
-    const cleanName = tag.name.trim();
-    const existing = await this.findAnyByNormalizedNameAndCategory(cleanName, tag.category);
+    const cleanName = sanitizeTagName(tag.name);
+    const safeCategory = sanitizeTagCategory(tag.category);
+    const safeColor = sanitizeTagColor(tag.color);
+    const existing = await this.findAnyByNormalizedNameAndCategory(cleanName, safeCategory);
 
     if (existing?.id != null) {
       const updatedAt = tag.updatedAt ? toIso(tag.updatedAt) : new Date().toISOString();
@@ -246,8 +269,8 @@ export class SupabaseTagRepository implements ITagRepository {
         .from("tags")
         .update({
           name: cleanName,
-          category: tag.category,
-          color: tag.color,
+          category: safeCategory,
+          color: safeColor,
           deleted_at: null,
           updated_at: updatedAt,
           synced_at: new Date().toISOString(),
@@ -262,13 +285,16 @@ export class SupabaseTagRepository implements ITagRepository {
 
       if (error) {
         throw new Error(
-          formatTagPersistenceError("revive", error.message, tag.category)
+          formatTagPersistenceError("revive", error.message, safeCategory)
         );
       }
       return toDomain(data as SupabaseTag);
     }
 
-    const row = toSupabase({ ...tag, name: cleanName }, this.userId);
+    const row = toSupabase(
+      { ...tag, name: cleanName, category: safeCategory, color: safeColor },
+      this.userId
+    );
     const { data, error } = await getSupabaseClient()
       .from("tags")
       .upsert(row, { onConflict: "user_id,client_id", ignoreDuplicates: false })
@@ -276,7 +302,7 @@ export class SupabaseTagRepository implements ITagRepository {
       .single();
 
     if (error) {
-      throw new Error(formatTagPersistenceError("create", error.message, tag.category));
+      throw new Error(formatTagPersistenceError("create", error.message, safeCategory));
     }
     return toDomain(data as SupabaseTag);
   }
@@ -291,9 +317,11 @@ export class SupabaseTagRepository implements ITagRepository {
       device_id: updates.deviceId ?? getOrCreateDeviceId(),
       version: updates.version ?? (current.version ?? 1) + 1,
     };
-    if (updates.name !== undefined) supabaseUpdates.name = updates.name.trim();
-    if (updates.category !== undefined) supabaseUpdates.category = updates.category;
-    if (updates.color !== undefined) supabaseUpdates.color = updates.color;
+    if (updates.name !== undefined) supabaseUpdates.name = sanitizeTagName(updates.name);
+    if (updates.category !== undefined) {
+      supabaseUpdates.category = sanitizeTagCategory(updates.category);
+    }
+    if (updates.color !== undefined) supabaseUpdates.color = sanitizeTagColor(updates.color);
     if (updates.clientId !== undefined) supabaseUpdates.client_id = updates.clientId;
     if (updates.deletedAt !== undefined) {
       supabaseUpdates.deleted_at = updates.deletedAt ? toIso(updates.deletedAt) : null;
@@ -306,7 +334,7 @@ export class SupabaseTagRepository implements ITagRepository {
       .eq("id", id);
 
     if (error) {
-      const category = updates.category ?? current.category;
+      const category = sanitizeTagCategory(updates.category ?? current.category);
       throw new Error(formatTagPersistenceError("update", error.message, category));
     }
     const updated = await this.getById(id);
@@ -625,8 +653,15 @@ export class SupabaseTagRepository implements ITagRepository {
     if (tags.length === 0) return;
     const byKey = new Map<string, Tag>();
     for (const tag of tags) {
-      const key = tag.clientId ?? `${normalizeTagName(tag.name)}::${tag.category}`;
-      byKey.set(key, { ...tag, name: tag.name.trim() });
+      const safeName = sanitizeTagName(tag.name);
+      const safeCategory = sanitizeTagCategory(tag.category);
+      const key = tag.clientId ?? `${normalizeTagName(safeName)}::${safeCategory}`;
+      byKey.set(key, {
+        ...tag,
+        name: safeName,
+        category: safeCategory,
+        color: sanitizeTagColor(tag.color),
+      });
     }
 
     const rows = Array.from(byKey.values()).map((tag) => toSupabase(tag, this.userId));
@@ -637,7 +672,10 @@ export class SupabaseTagRepository implements ITagRepository {
   }
 
   async getByNameAndCategory(name: string, category: string): Promise<Tag | null> {
-    const row = await this.findAnyByNormalizedNameAndCategory(name, category);
+    const row = await this.findAnyByNormalizedNameAndCategory(
+      sanitizeTagName(name),
+      sanitizeTagCategory(category)
+    );
     if (!row || row.deleted_at) return null;
     return toDomain(row);
   }

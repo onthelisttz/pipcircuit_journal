@@ -41,7 +41,8 @@ export class DualTagRepository implements ITagRepository {
 
   private async syncToSupabase<T>(
     fn: () => Promise<T>,
-    onFallback?: () => Promise<void>
+    onFallback?: () => Promise<void>,
+    shouldRethrow?: (err: unknown) => boolean
   ): Promise<boolean> {
     if (!this.supabase || !isOnline()) {
       if (onFallback) await onFallback();
@@ -54,8 +55,25 @@ export class DualTagRepository implements ITagRepository {
     } catch (err) {
       console.warn("[DualTagRepo] Supabase sync failed (Dexie updated):", err);
       if (onFallback) await onFallback();
+      if (shouldRethrow?.(err)) {
+        throw err instanceof Error ? err : new Error(String(err));
+      }
       return false;
     }
+  }
+
+  private shouldRethrowRulesCategorySyncError(
+    category: string | undefined,
+    err: unknown
+  ): boolean {
+    if (category !== "Rules") return false;
+    const message = (err instanceof Error ? err.message : String(err)).toLowerCase();
+    return (
+      message.includes("014_allow_rules_tag_category") ||
+      message.includes("failed to create rules tag") ||
+      message.includes("failed to update rules tag") ||
+      message.includes("tags_category_check")
+    );
   }
 
   private async queueTradeTagsReplacement(tradeId: number): Promise<void> {
@@ -104,7 +122,8 @@ export class DualTagRepository implements ITagRepository {
         if (result.id != null) {
           await EntitySyncQueue.queueTagUpsert({ localId: result.id });
         }
-      }
+      },
+      (err) => this.shouldRethrowRulesCategorySyncError(result.category, err)
     );
 
     return result;
@@ -169,7 +188,8 @@ export class DualTagRepository implements ITagRepository {
           previousName: previous?.name,
           previousCategory: previous?.category,
         });
-      }
+      },
+      (err) => this.shouldRethrowRulesCategorySyncError(result.category, err)
     );
 
     return result;

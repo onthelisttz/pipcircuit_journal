@@ -24,6 +24,7 @@ import { DualTagRepository } from "./DualTagRepository";
 import { DualObservationRepository } from "./DualObservationRepository";
 import { DualSettingsRepository } from "./DualSettingsRepository";
 import { DualDailySummaryRepository } from "./DualDailySummaryRepository";
+import { TagCategory } from "@domain/enums";
 import type { ITradeRepository, IAccountRepository, INoteRepository, ITagRepository, IObservationRepository, ISettingsRepository, IDailySummaryRepository } from "@application/ports/repositories";
 
 export function createTradeRepository(userId: string | undefined): ITradeRepository {
@@ -68,27 +69,45 @@ export function createTagRepository(userId: string | undefined): ITagRepository 
   const resolveTagId = async (dexieTagId: number): Promise<number | null> => {
     const tag = await dexieTag.getById(dexieTagId);
     if (!tag) return null;
+    const safeName = typeof tag.name === "string" && tag.name.trim() ? tag.name.trim() : "Untitled";
+    const safeCategory = Object.values(TagCategory).includes(tag.category as TagCategory)
+      ? (tag.category as TagCategory)
+      : TagCategory.Custom;
+    const safeColor = typeof tag.color === "string" && tag.color.trim() ? tag.color : "#6b7280";
+    if (safeName !== tag.name || safeCategory !== tag.category || safeColor !== tag.color) {
+      await dexieTag.update(dexieTagId, {
+        name: safeName,
+        category: safeCategory,
+        color: safeColor,
+      });
+    }
+    const safeTag = {
+      ...tag,
+      name: safeName,
+      category: safeCategory,
+      color: safeColor,
+    };
     if (tag.remoteId != null) return tag.remoteId;
-    let supabaseTagObj = tag.clientId
-      ? await supabaseTag.getByClientId(tag.clientId)
-      : await supabaseTag.getByNameAndCategory(tag.name, tag.category);
+    let supabaseTagObj = safeTag.clientId
+      ? await supabaseTag.getByClientId(safeTag.clientId)
+      : await supabaseTag.getByNameAndCategory(safeTag.name, safeTag.category);
 
     // If not yet synced remotely, create it first so trade-tag sync can resolve FK.
     if (!supabaseTagObj) {
       try {
-        supabaseTagObj = await supabaseTag.create(tag);
+        supabaseTagObj = await supabaseTag.create(safeTag);
       } catch {
         // Handle races/duplicates by retrying lookup.
-        supabaseTagObj = tag.clientId
-          ? await supabaseTag.getByClientId(tag.clientId)
-          : await supabaseTag.getByNameAndCategory(tag.name, tag.category);
+        supabaseTagObj = safeTag.clientId
+          ? await supabaseTag.getByClientId(safeTag.clientId)
+          : await supabaseTag.getByNameAndCategory(safeTag.name, safeTag.category);
       }
     }
 
     if (supabaseTagObj?.id != null) {
       await dexieTag.update(dexieTagId, {
         remoteId: supabaseTagObj.id,
-        clientId: supabaseTagObj.clientId ?? tag.clientId,
+        clientId: supabaseTagObj.clientId ?? safeTag.clientId,
         syncedAt: new Date(),
       });
       return supabaseTagObj.id;

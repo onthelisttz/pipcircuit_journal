@@ -1,4 +1,4 @@
-import { SyncAction, SyncStatus, type TagCategory } from "@domain/enums";
+import { SyncAction, SyncStatus, TagCategory } from "@domain/enums";
 import type { Observation, SyncJob, TradeNote } from "@domain/entities";
 import { db } from "@infrastructure/db/dexie/database";
 import {
@@ -80,6 +80,9 @@ const MAX_RETRIES = 8;
 const BASE_BACKOFF_MS = 15_000;
 const MAX_BACKOFF_MS = 30 * 60_000;
 const RETRY_JITTER_MS = 2_000;
+const DEFAULT_TAG_NAME = "Untitled";
+const DEFAULT_TAG_COLOR = "#6b7280";
+const TAG_CATEGORIES = new Set<TagCategory>(Object.values(TagCategory));
 
 function toDate(value: Date | string | undefined | null): Date {
   if (value instanceof Date) return value;
@@ -113,6 +116,22 @@ function nextRetryDate(retryCount: number): Date {
   );
   const jitter = Math.floor(Math.random() * RETRY_JITTER_MS);
   return new Date(Date.now() + exponential + jitter);
+}
+
+function sanitizeTagName(name: unknown): string {
+  const value = typeof name === "string" ? name.trim() : "";
+  return value.length > 0 ? value : DEFAULT_TAG_NAME;
+}
+
+function sanitizeTagCategory(category: unknown): TagCategory {
+  return TAG_CATEGORIES.has(category as TagCategory)
+    ? (category as TagCategory)
+    : TagCategory.Custom;
+}
+
+function sanitizeTagColor(color: unknown): string {
+  const value = typeof color === "string" ? color.trim() : "";
+  return value.length > 0 ? value : DEFAULT_TAG_COLOR;
 }
 
 type QueueContext = {
@@ -396,6 +415,21 @@ export class EntitySyncQueue {
       return;
     }
 
+    const localName = sanitizeTagName(local.name);
+    const localCategory = sanitizeTagCategory(local.category);
+    const localColor = sanitizeTagColor(local.color);
+    if (
+      localName !== local.name ||
+      localCategory !== local.category ||
+      localColor !== local.color
+    ) {
+      await context.dexieTag.update(local.id, {
+        name: localName,
+        category: localCategory,
+        color: localColor,
+      });
+    }
+
     let remote =
       local.clientId ? await context.supaTag.getByClientId(local.clientId) : null;
     if (!remote && local.remoteId != null) {
@@ -408,7 +442,7 @@ export class EntitySyncQueue {
       );
     }
     if (!remote) {
-      remote = await context.supaTag.getByNameAndCategory(local.name, local.category);
+      remote = await context.supaTag.getByNameAndCategory(localName, localCategory);
     }
 
     if (remote && isDeleted(remote)) {
@@ -434,14 +468,19 @@ export class EntitySyncQueue {
     const synced = remote
       ? await context.supaTag.update(remote.id!, {
           clientId: local.clientId,
-          name: local.name,
-          category: local.category,
-          color: local.color,
+          name: localName,
+          category: localCategory,
+          color: localColor,
           updatedAt: local.updatedAt,
           deletedAt: null,
           version: local.version,
         })
-      : await context.supaTag.create(local);
+      : await context.supaTag.create({
+          ...local,
+          name: localName,
+          category: localCategory,
+          color: localColor,
+        });
 
     await context.dexieTag.update(local.id, {
       remoteId: synced.id ?? synced.remoteId,
@@ -463,8 +502,12 @@ export class EntitySyncQueue {
     if (!remote && payload.remoteId != null) {
       remote = await context.supaTag.getById(payload.remoteId);
     }
-    if (!remote && payload.name && payload.category) {
-      remote = await context.supaTag.getByNameAndCategory(payload.name, payload.category);
+    const payloadName = typeof payload.name === "string" ? payload.name.trim() : "";
+    if (!remote && payloadName && payload.category) {
+      remote = await context.supaTag.getByNameAndCategory(
+        payloadName,
+        sanitizeTagCategory(payload.category)
+      );
     }
     if (remote?.id) {
       await context.supaTag.delete(remote.id);
@@ -875,14 +918,26 @@ export class EntitySyncQueue {
       return localTag.remoteId;
     }
 
+    const safeName = sanitizeTagName(localTag.name);
+    const safeCategory = sanitizeTagCategory(localTag.category);
+    const safeColor = sanitizeTagColor(localTag.color);
+    if (
+      safeName !== localTag.name ||
+      safeCategory !== localTag.category ||
+      safeColor !== localTag.color
+    ) {
+      await context.dexieTag.update(localTag.id, {
+        name: safeName,
+        category: safeCategory,
+        color: safeColor,
+      });
+    }
+
     let remote = localTag.clientId
       ? await context.supaTag.getByClientId(localTag.clientId)
       : null;
     if (!remote) {
-      remote = await context.supaTag.getByNameAndCategory(
-        localTag.name,
-        localTag.category
-      );
+      remote = await context.supaTag.getByNameAndCategory(safeName, safeCategory);
     }
     if (remote?.id) {
       await context.dexieTag.update(localTag.id, {
@@ -892,7 +947,12 @@ export class EntitySyncQueue {
       return remote.id;
     }
 
-    const created = await context.supaTag.create(localTag);
+    const created = await context.supaTag.create({
+      ...localTag,
+      name: safeName,
+      category: safeCategory,
+      color: safeColor,
+    });
     await context.dexieTag.update(localTag.id, {
       remoteId: created.id,
       clientId: created.clientId ?? localTag.clientId,

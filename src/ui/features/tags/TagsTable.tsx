@@ -57,11 +57,15 @@ export function TagsTable() {
         : tags.filter((tag) => tag.category === categoryFilter);
     const copy = [...filtered];
     copy.sort((a, b) => {
+      const aName = typeof a.name === "string" ? a.name : "";
+      const bName = typeof b.name === "string" ? b.name : "";
+      const aCategory = typeof a.category === "string" ? a.category : "";
+      const bCategory = typeof b.category === "string" ? b.category : "";
       let cmp = 0;
       if (sortBy === "name") {
-        cmp = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+        cmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
       } else {
-        cmp = a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
+        cmp = aCategory.localeCompare(bCategory, undefined, { sensitivity: "base" });
       }
       return sortDir === "asc" ? cmp : -cmp;
     });
@@ -106,7 +110,7 @@ export function TagsTable() {
   const openEdit = (tag: Tag) => {
     setEditing(tag);
     setForm({
-      name: tag.name,
+      name: typeof tag.name === "string" ? tag.name : "",
       category: tag.category,
       color: tag.color,
     });
@@ -308,7 +312,7 @@ export function TagsTable() {
               <tbody>
                 {filteredSortedTags.map((tag) => (
                   <tr key={tag.id} className="border-b border-border last:border-0">
-                    <td className="px-4 py-3 font-medium">{tag.name}</td>
+                    <td className="px-4 py-3 font-medium">{tag.name || "Untitled"}</td>
                     <td className="px-4 py-3">{tag.category}</td>
                     <td className="px-4 py-3">
                       <span
