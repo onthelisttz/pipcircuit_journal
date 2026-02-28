@@ -1,5 +1,6 @@
 import type { ITradeRepository, TradeQuery } from "@application/ports/repositories";
 import type { Trade } from "@domain/entities";
+import { Mindset, TagCategory } from "@domain/enums";
 import { getSupabaseClient } from "../client";
 
 interface SupabaseTrade {
@@ -163,7 +164,85 @@ export class SupabaseTradeRepository implements ITradeRepository {
       results = results.filter((t) => t.outcome === query.outcome);
     }
     if (query?.tagIds?.length) {
-      // Would need join - for now skip
+      const supabase = getSupabaseClient();
+      const { data: tradeTags, error: tradeTagsError } = await supabase
+        .from("trade_tags")
+        .select("trade_id")
+        .eq("user_id", this.userId)
+        .in("tag_id", query.tagIds)
+        .is("deleted_at", null);
+
+      if (tradeTagsError) {
+        throw new Error(`Failed to filter trades by trade-tags: ${tradeTagsError.message}`);
+      }
+
+      const tradeIdSet = new Set(
+        (tradeTags ?? [])
+          .map((row) => Number((row as { trade_id: number }).trade_id))
+          .filter((id) => Number.isFinite(id))
+      );
+      results = results.filter((t) => t.id != null && tradeIdSet.has(t.id));
+    }
+    if (query?.ratingValues?.length) {
+      const ratingSet = new Set(query.ratingValues);
+      results = results.filter((t) => t.rating != null && ratingSet.has(t.rating));
+    }
+    if (query?.mindsets?.length) {
+      const mindsetSet = new Set<Mindset>(query.mindsets);
+      results = results.filter((t) => t.mindset != null && mindsetSet.has(t.mindset));
+    }
+    if (query?.hasRating) {
+      results = results.filter((t) => t.rating != null);
+    }
+    if (query?.hasMindset) {
+      results = results.filter((t) => t.mindset != null);
+    }
+    if (query?.tagCategories?.length) {
+      const requestedCategories = query.tagCategories.filter(
+        (category) =>
+          category === TagCategory.Strategy ||
+          category === TagCategory.Rules ||
+          category === TagCategory.Custom
+      );
+
+      if (requestedCategories.length > 0) {
+        const supabase = getSupabaseClient();
+        const { data: tags, error: tagsError } = await supabase
+          .from("tags")
+          .select("id")
+          .eq("user_id", this.userId)
+          .in("category", requestedCategories)
+          .is("deleted_at", null);
+
+        if (tagsError) throw new Error(`Failed to filter trades by tags: ${tagsError.message}`);
+
+        const tagIds = (tags ?? [])
+          .map((row) => Number((row as { id: number }).id))
+          .filter((id) => Number.isFinite(id));
+
+        if (tagIds.length === 0) {
+          results = [];
+        } else {
+          const { data: tradeTags, error: tradeTagsError } = await supabase
+            .from("trade_tags")
+            .select("trade_id")
+            .eq("user_id", this.userId)
+            .in("tag_id", tagIds)
+            .is("deleted_at", null);
+
+          if (tradeTagsError) {
+            throw new Error(`Failed to filter trades by trade-tags: ${tradeTagsError.message}`);
+          }
+
+          const tradeIdSet = new Set(
+            (tradeTags ?? [])
+              .map((row) => Number((row as { trade_id: number }).trade_id))
+              .filter((id) => Number.isFinite(id))
+          );
+
+          results = results.filter((t) => t.id != null && tradeIdSet.has(t.id));
+        }
+      }
     }
     if (query?.ratingMin != null) {
       results = results.filter((t) => (t.rating ?? 0) >= query.ratingMin!);

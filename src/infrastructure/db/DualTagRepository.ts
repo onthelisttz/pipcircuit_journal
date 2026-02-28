@@ -264,7 +264,12 @@ export class DualTagRepository implements ITagRepository {
         const supabaseTagIds: number[] = [];
         for (const tid of tagIds) {
           const sid = this.resolveTagId ? await this.resolveTagId(tid) : null;
-          if (sid != null) supabaseTagIds.push(sid);
+          if (sid == null) {
+            // Avoid partial cloud replacement when any tag is unresolved.
+            // This forces queued retry, preserving consistency across devices.
+            throw new Error(`Could not resolve cloud tag ID for local tag ${tid}`);
+          }
+          supabaseTagIds.push(sid);
         }
         await this.supabase!.replaceForTrade(supabaseTradeId, supabaseTagIds);
       },

@@ -19,6 +19,7 @@ import {
   Minimize2,
   Activity,
   X,
+  RotateCcw,
 } from "lucide-react";
 import type { Trade } from "@domain/entities";
 import { useTradePanel } from "@ui/providers";
@@ -30,7 +31,9 @@ interface TradePanelContentProps {
   trades: Trade[];
   isLoading: boolean;
   isExpanded: boolean;
+  canResetToDefaultSize?: boolean;
   onToggleExpanded: () => void;
+  onResetToDefaultSize?: () => void;
   onClosePanel: () => void;
 }
 
@@ -45,7 +48,9 @@ export function TradePanelContent({
   trades,
   isLoading,
   isExpanded,
+  canResetToDefaultSize = false,
   onToggleExpanded,
+  onResetToDefaultSize,
   onClosePanel,
 }: TradePanelContentProps) {
   const { selectedTradeId, setSelectedTradeId } = useTradePanel();
@@ -207,6 +212,19 @@ export function TradePanelContent({
             </div>
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-1">
+            {canResetToDefaultSize && onResetToDefaultSize ? (
+              <button
+                type="button"
+                onClick={onResetToDefaultSize}
+                className={`hidden rounded text-muted-foreground hover:bg-accent hover:text-foreground md:inline-flex ${
+                  isChartFocused ? "p-1" : "p-1.5"
+                }`}
+                aria-label="Reset panel to default width"
+                title="Reset to default width"
+              >
+                <RotateCcw className={isChartFocused ? "h-3.5 w-3.5" : "h-4 w-4"} aria-hidden="true" />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onToggleExpanded}

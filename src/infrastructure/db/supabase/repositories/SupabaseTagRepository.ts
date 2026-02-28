@@ -33,6 +33,22 @@ interface SupabaseTradeTag {
   version: number | null;
 }
 
+function formatTagPersistenceError(
+  action: string,
+  errorMessage: string,
+  category?: string
+): string {
+  const msg = errorMessage.toLowerCase();
+  const isCategoryCheckFailure =
+    msg.includes("tags_category_check") || msg.includes("violates check constraint");
+
+  if (isCategoryCheckFailure && category === "Rules") {
+    return `Failed to ${action} Rules tag: database is missing migration 014_allow_rules_tag_category.sql`;
+  }
+
+  return `Failed to ${action} tag: ${errorMessage}`;
+}
+
 function toDate(value: Date | string | undefined | null): Date {
   if (value instanceof Date) return value;
   if (!value) return new Date();
@@ -244,7 +260,11 @@ export class SupabaseTagRepository implements ITagRepository {
         .select("*")
         .single();
 
-      if (error) throw new Error(`Failed to revive existing tag: ${error.message}`);
+      if (error) {
+        throw new Error(
+          formatTagPersistenceError("revive", error.message, tag.category)
+        );
+      }
       return toDomain(data as SupabaseTag);
     }
 
@@ -255,7 +275,9 @@ export class SupabaseTagRepository implements ITagRepository {
       .select("*")
       .single();
 
-    if (error) throw new Error(`Failed to create tag: ${error.message}`);
+    if (error) {
+      throw new Error(formatTagPersistenceError("create", error.message, tag.category));
+    }
     return toDomain(data as SupabaseTag);
   }
 
@@ -283,7 +305,10 @@ export class SupabaseTagRepository implements ITagRepository {
       .eq("user_id", this.userId)
       .eq("id", id);
 
-    if (error) throw new Error(`Failed to update tag: ${error.message}`);
+    if (error) {
+      const category = updates.category ?? current.category;
+      throw new Error(formatTagPersistenceError("update", error.message, category));
+    }
     const updated = await this.getById(id);
     if (!updated) throw new Error(`Tag not found: ${id}`);
     return updated;

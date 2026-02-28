@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { subDays, startOfDay, endOfDay } from "date-fns";
-import { TradeOutcome, Direction } from "@domain/enums";
-import { useAccount, useTradesByQuery } from "@ui/hooks";
+import { TradeOutcome, Direction, Mindset } from "@domain/enums";
+import { useAccount, useTradesByQuery, useTagsList } from "@ui/hooks";
 import type { TradeQuery } from "@application/ports/repositories";
 import { useTradePanel } from "@ui/providers";
 import {
@@ -25,13 +25,52 @@ import type { DashboardFiltersState } from "@ui/features/dashboard";
 import { useDashboard, useDashboardSymbols, useScrollPersistence } from "@ui/hooks";
 import Link from "next/link";
 
+function getAdvancedQueryFilters(filters: DashboardFiltersState): Pick<
+  TradeQuery,
+  "ratingValues" | "mindsets" | "tagIds"
+> {
+  const tagIds = Array.from(
+    new Set([
+      ...filters.strategyTagIds,
+      ...filters.rulesTagIds,
+      ...filters.customTagIds,
+    ])
+  );
+
+  return {
+    ratingValues: filters.ratings.length > 0 ? filters.ratings : undefined,
+    mindsets: filters.mindsets.length > 0 ? filters.mindsets : undefined,
+    tagIds: tagIds.length > 0 ? tagIds : undefined,
+  };
+}
+
 const defaultFilters: DashboardFiltersState = {
   symbols: [],
   direction: "Both",
   from: subDays(new Date(), 30),
   to: new Date(),
+  ratings: [],
+  mindsets: [],
+  strategyTagIds: [],
+  rulesTagIds: [],
+  customTagIds: [],
 };
 const DASHBOARD_FILTERS_KEY = "dashboardFilters";
+
+function parseNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isFinite(entry));
+}
+
+function parseMindsets(value: unknown): Mindset[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set(Object.values(Mindset));
+  return value.filter(
+    (entry): entry is Mindset => typeof entry === "string" && allowed.has(entry as Mindset)
+  );
+}
 
 export default function DashboardPage() {
   const { activeAccount } = useAccount();
@@ -47,6 +86,11 @@ export default function DashboardPage() {
         direction?: string;
         from?: string;
         to?: string;
+        ratings?: number[];
+        mindsets?: string[];
+        strategyTagIds?: number[];
+        rulesTagIds?: number[];
+        customTagIds?: number[];
       };
       const from = parsed.from ? new Date(parsed.from) : defaultFilters.from;
       const to = parsed.to ? new Date(parsed.to) : defaultFilters.to;
@@ -59,12 +103,23 @@ export default function DashboardPage() {
         direction,
         from,
         to,
+        ratings: parseNumberArray(parsed.ratings).filter((value) => value >= 1 && value <= 5),
+        mindsets: parseMindsets(parsed.mindsets),
+        strategyTagIds: parseNumberArray(parsed.strategyTagIds),
+        rulesTagIds: parseNumberArray(parsed.rulesTagIds),
+        customTagIds: parseNumberArray(parsed.customTagIds),
       };
     } catch {
       return defaultFilters;
     }
   });
   const availableSymbols = useDashboardSymbols(accountId);
+  const { tags: availableTags } = useTagsList();
+
+  const advancedQuery = useMemo(
+    () => getAdvancedQueryFilters(filters),
+    [filters]
+  );
 
   // Persist filters whenever they change
   useEffect(() => {
@@ -77,6 +132,11 @@ export default function DashboardPage() {
           direction: filters.direction,
           from: filters.from.toISOString(),
           to: filters.to.toISOString(),
+          ratings: filters.ratings,
+          mindsets: filters.mindsets,
+          strategyTagIds: filters.strategyTagIds,
+          rulesTagIds: filters.rulesTagIds,
+          customTagIds: filters.customTagIds,
         })
       );
     } catch {
@@ -93,9 +153,17 @@ export default function DashboardPage() {
             to: endOfDay(filters.to),
             symbols: filters.symbols.length > 0 ? filters.symbols : undefined,
             direction: filters.direction !== "Both" ? filters.direction : undefined,
+            ...advancedQuery,
           } as const)
         : null,
-    [accountId, filters.from, filters.to, filters.symbols, filters.direction]
+    [
+      accountId,
+      filters.from,
+      filters.to,
+      filters.symbols,
+      filters.direction,
+      advancedQuery,
+    ]
   );
 
   const { trades } = useTradesByQuery(panelQuery);
@@ -112,6 +180,9 @@ export default function DashboardPage() {
       to: panelQuery.to,
       symbols: panelQuery.symbols,
       direction: panelQuery.direction,
+      ratingValues: panelQuery.ratingValues,
+      mindsets: panelQuery.mindsets,
+      tagIds: panelQuery.tagIds,
     };
 
     let query: TradeQuery = queryBase;
@@ -196,6 +267,7 @@ export default function DashboardPage() {
           filters={filters}
           onChange={setFilters}
           availableSymbols={availableSymbols}
+          availableTags={availableTags}
         />
       </div>
 
@@ -248,6 +320,7 @@ export default function DashboardPage() {
             accountId={accountId!}
             symbols={filters.symbols}
             direction={filters.direction}
+            advancedQuery={advancedQuery}
             initialMonth={filters.from}
             onDayClick={
               panelQuery
@@ -358,7 +431,7 @@ export default function DashboardPage() {
       <ScrollToTop
         threshold={400}
         containerSelector="main"
-        className={isPanelOpen ? "right-6 md:right-[calc(min(50%,28rem)+1.5rem)]" : "right-6"}
+        className={isPanelOpen ? "right-6 md:right-[calc(var(--trade-panel-desktop-width,28rem)+1.5rem)]" : "right-6"}
       />
     </div>
   );

@@ -1,6 +1,6 @@
 import type { ITradeRepository, TradeQuery } from "@application/ports/repositories";
 import type { Trade } from "@domain/entities";
-import { Direction, TradeOutcome } from "@domain/enums";
+import { Direction, Mindset, TagCategory, TradeOutcome } from "@domain/enums";
 import { db } from "../database";
 import { estimateGrossProfit, volumeToLots } from "@lib/pnl-estimate";
 
@@ -118,8 +118,53 @@ export class DexieTradeRepository implements ITradeRepository {
         .where("tagId")
         .anyOf(query.tagIds)
         .toArray();
-      const tradeIdSet = new Set(tradeTags.map((entry) => entry.tradeId));
+      const tradeIdSet = new Set(
+        tradeTags
+          .filter((entry) => !entry.deletedAt)
+          .map((entry) => entry.tradeId)
+      );
       results = results.filter((trade) => trade.id && tradeIdSet.has(trade.id));
+    }
+    if (query.ratingValues && query.ratingValues.length > 0) {
+      const ratingSet = new Set(query.ratingValues);
+      results = results.filter(
+        (trade) => trade.rating != null && ratingSet.has(trade.rating)
+      );
+    }
+    if (query.mindsets && query.mindsets.length > 0) {
+      const mindsetSet = new Set<Mindset>(query.mindsets);
+      results = results.filter(
+        (trade) => trade.mindset != null && mindsetSet.has(trade.mindset)
+      );
+    }
+    if (query.hasRating) {
+      results = results.filter((trade) => trade.rating != null);
+    }
+    if (query.hasMindset) {
+      results = results.filter((trade) => trade.mindset != null);
+    }
+    if (query.tagCategories && query.tagCategories.length > 0) {
+      const categorySet = new Set<TagCategory>(query.tagCategories);
+      const matchingTags = await db.tags
+        .filter((tag) => !tag.deletedAt && categorySet.has(tag.category))
+        .toArray();
+      const tagIds = matchingTags
+        .map((tag) => tag.id)
+        .filter((id): id is number => id != null);
+
+      if (tagIds.length === 0) {
+        results = [];
+      } else {
+        const tradeTags = await db.trade_tags.where("tagId").anyOf(tagIds).toArray();
+        const tradeIdSet = new Set(
+          tradeTags
+            .filter((entry) => !entry.deletedAt)
+            .map((entry) => entry.tradeId)
+        );
+        results = results.filter(
+          (trade) => trade.id != null && tradeIdSet.has(trade.id)
+        );
+      }
     }
     if (query.ratingMin !== undefined) {
       results = results.filter(

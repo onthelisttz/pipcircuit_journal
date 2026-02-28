@@ -16,6 +16,7 @@ import {
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCalendarMonthReturns } from "@ui/hooks";
 import type { Direction } from "@domain/enums";
+import type { TradeQuery } from "@application/ports/repositories";
 
 interface DayReturn {
   period: string;
@@ -31,6 +32,7 @@ interface PerformanceCalendarProps {
   accountId: string;
   symbols: string[];
   direction: Direction | "Both";
+  advancedQuery?: Pick<TradeQuery, "ratingValues" | "mindsets" | "tagIds">;
   /** Initial month to show (e.g. from dashboard filter) */
   initialMonth?: Date;
   /** When a day with trades is clicked, open panel with that day's trades */
@@ -68,6 +70,7 @@ export function PerformanceCalendar({
   accountId,
   symbols,
   direction,
+  advancedQuery,
   initialMonth,
   onDayClick,
   onWeekClick,
@@ -80,7 +83,8 @@ export function PerformanceCalendar({
     accountId,
     viewMonth,
     symbols,
-    direction
+    direction,
+    advancedQuery
   );
 
   const byDate = useMemo(() => {

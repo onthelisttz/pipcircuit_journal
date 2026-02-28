@@ -1,4 +1,4 @@
-import { Direction, TradeOutcome } from "@domain/enums";
+import { Direction, Mindset, TagCategory, TradeOutcome } from "@domain/enums";
 import type { Trade } from "@domain/entities";
 
 export interface TradeQuery {
@@ -10,6 +10,16 @@ export interface TradeQuery {
   from?: Date;
   to?: Date;
   tagIds?: number[];
+  /** Include only trades with these rating values. */
+  ratingValues?: number[];
+  /** Include only trades with these mindsets. */
+  mindsets?: Mindset[];
+  /** Include only trades with a numeric rating. */
+  hasRating?: boolean;
+  /** Include only trades with mindset set. */
+  hasMindset?: boolean;
+  /** Include trades that have at least one tag in any of these categories. */
+  tagCategories?: TagCategory[];
   ratingMin?: number;
   ratingMax?: number;
   /** Fetch only trades with these IDs */

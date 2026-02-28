@@ -16,10 +16,29 @@ import {
   GetLongShortStatsUseCase,
   GetReturnsByDayOfWeekUseCase,
 } from "@application/use-cases";
+import type { TradeQuery } from "@application/ports/repositories";
 import type { DashboardFiltersState } from "@ui/features/dashboard/DashboardFilters";
 import { Direction } from "@domain/enums";
 import { startOfDay, endOfDay, startOfMonth, endOfMonth, format } from "date-fns";
 import { useAuth } from "@ui/hooks/useAuth";
+
+function getAdvancedFilterQuery(filters: DashboardFiltersState): Pick<
+  TradeQuery,
+  "ratingValues" | "mindsets" | "tagIds"
+> {
+  const tagIds = Array.from(
+    new Set([
+      ...filters.strategyTagIds,
+      ...filters.rulesTagIds,
+      ...filters.customTagIds,
+    ])
+  );
+  return {
+    ratingValues: filters.ratings.length > 0 ? filters.ratings : undefined,
+    mindsets: filters.mindsets.length > 0 ? filters.mindsets : undefined,
+    tagIds: tagIds.length > 0 ? tagIds : undefined,
+  };
+}
 
 export function useDashboard(
   accountId: string | undefined,
@@ -52,6 +71,7 @@ export function useDashboard(
     if (filters.direction !== "Both") {
       q.direction = filters.direction;
     }
+    Object.assign(q, getAdvancedFilterQuery(filters));
     return q;
   }, [accountId, filters]);
 
@@ -133,7 +153,8 @@ export function useCalendarMonthReturns(
   accountId: string | undefined,
   viewMonth: Date,
   symbols: string[],
-  direction: Direction | "Both"
+  direction: Direction | "Both",
+  advancedQuery?: Pick<TradeQuery, "ratingValues" | "mindsets" | "tagIds">
 ) {
   const { user } = useAuth();
   const tradeRepo = useMemo(() => createTradeRepository(user?.id), [user?.id]);
@@ -151,8 +172,9 @@ export function useCalendarMonthReturns(
     };
     if (symbols.length > 0) q.symbols = symbols;
     if (direction !== "Both") q.direction = direction;
+    Object.assign(q, advancedQuery ?? {});
     return q;
-  }, [accountId, monthKey, symbols, direction, viewMonth]);
+  }, [accountId, monthKey, symbols, direction, advancedQuery, viewMonth]);
 
   useEffect(() => {
     if (!accountId) {

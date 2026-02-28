@@ -69,10 +69,32 @@ export function createTagRepository(userId: string | undefined): ITagRepository 
     const tag = await dexieTag.getById(dexieTagId);
     if (!tag) return null;
     if (tag.remoteId != null) return tag.remoteId;
-    const supabaseTagObj = tag.clientId
+    let supabaseTagObj = tag.clientId
       ? await supabaseTag.getByClientId(tag.clientId)
       : await supabaseTag.getByNameAndCategory(tag.name, tag.category);
-    return supabaseTagObj?.id ?? null;
+
+    // If not yet synced remotely, create it first so trade-tag sync can resolve FK.
+    if (!supabaseTagObj) {
+      try {
+        supabaseTagObj = await supabaseTag.create(tag);
+      } catch {
+        // Handle races/duplicates by retrying lookup.
+        supabaseTagObj = tag.clientId
+          ? await supabaseTag.getByClientId(tag.clientId)
+          : await supabaseTag.getByNameAndCategory(tag.name, tag.category);
+      }
+    }
+
+    if (supabaseTagObj?.id != null) {
+      await dexieTag.update(dexieTagId, {
+        remoteId: supabaseTagObj.id,
+        clientId: supabaseTagObj.clientId ?? tag.clientId,
+        syncedAt: new Date(),
+      });
+      return supabaseTagObj.id;
+    }
+
+    return null;
   };
   return new DualTagRepository(dexie, new SupabaseTagRepository(userId), resolveTradeId, resolveTagId);
 }

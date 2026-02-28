@@ -1,4 +1,5 @@
 export { DashboardFilters } from "./DashboardFilters";
+export { DASHBOARD_RATING_OPTIONS, DASHBOARD_MINDSET_OPTIONS } from "./DashboardFilters";
 export type { DashboardFiltersState } from "./DashboardFilters";
 export { SummaryCards } from "./SummaryCards";
 export { EquityCurveChart } from "./EquityCurveChart";
