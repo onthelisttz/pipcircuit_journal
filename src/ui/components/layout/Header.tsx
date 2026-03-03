@@ -32,7 +32,7 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
             account.accountNumber;
         return account.type ? `${base} (${account.type})` : base;
     };
-    const { logout } = useAuth();
+    const { user, logout } = useAuth();
 
     // Prevent hydration mismatch
     useEffect(() => {
@@ -158,9 +158,15 @@ export function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
                     </button>
                     {actionsMenuOpen && (
                         <div
-                            className="absolute right-0 mt-2 w-44 rounded-lg border border-border bg-popover p-1 text-sm shadow-lg"
+                            className="absolute right-0 mt-2 w-56 rounded-lg border border-border bg-popover p-1 text-sm shadow-lg"
                             role="menu"
                         >
+                            {user?.email && (
+                              <div className="mb-1 border-b border-border px-3 py-2">
+                                <p className="text-[11px] text-muted-foreground">Signed in as</p>
+                                <p className="truncate text-xs text-foreground">{user.email}</p>
+                              </div>
+                            )}
                             {mounted && (
                               <button
                                 onClick={() =>

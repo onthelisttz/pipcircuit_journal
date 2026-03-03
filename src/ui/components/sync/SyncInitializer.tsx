@@ -96,13 +96,14 @@ export function SyncInitializer() {
             tradeTagsCount === 0 &&
             observationsCount === 0 &&
             queuedJobsCount === 0;
-          const localJournalIsEmpty =
-            tradeNotesCount === 0 &&
-            tradeTagsCount === 0 &&
-            observationsCount === 0 &&
-            queuedJobsCount === 0;
+          const hasLocalJournalData =
+            tradeNotesCount > 0 ||
+            tradeTagsCount > 0 ||
+            observationsCount > 0;
           const missingCoreData = accountsCount === 0 || tradesCount === 0;
-          const shouldBootstrapFromCloud = localCoreIsEmpty || (localJournalIsEmpty && missingCoreData);
+          const shouldBootstrapFromCloud =
+            localCoreIsEmpty ||
+            (!hasLocalJournalData && missingCoreData);
 
           if (!shouldBootstrapFromCloud) return;
 
