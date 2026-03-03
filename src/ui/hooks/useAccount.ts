@@ -236,7 +236,16 @@ export function useAccount() {
       if (!response.ok || data.error) {
         throw new Error(data.error ?? "Failed to sync trades");
       }
+      const existingTrades = await tradeRepository.getByAccountId(accountNumber);
+      const existingByTicketId = new Map<string, (typeof existingTrades)[number]>();
+      for (const trade of existingTrades) {
+        if (trade.ticketId) {
+          existingByTicketId.set(trade.ticketId, trade);
+        }
+      }
       const trades = (data.trades ?? []).map((trade) => {
+        const ticketId = String(trade["ticketId"] ?? "");
+        const existing = ticketId ? existingByTicketId.get(ticketId) : undefined;
         const closeTime = trade["closeTime"] ? new Date(String(trade["closeTime"])) : null;
         const openPrice = parseNum(trade["openPrice"]) ?? 0;
         const closePrice = (closeTime ? parseNum(trade["closePrice"]) : undefined) ?? null;
@@ -303,8 +312,9 @@ export function useAccount() {
         }
 
         return {
+          id: existing?.id,
           accountId: accountNumber,
-          ticketId: String(trade["ticketId"] ?? ""),
+          ticketId,
           symbol,
           direction,
           orderType: OrderType.Market,
@@ -323,7 +333,10 @@ export function useAccount() {
           percentGain,
           balance: tradeBalance,
           pips,
-          createdAt: new Date(),
+          rating: existing?.rating,
+          mindset: existing?.mindset,
+          comment: existing?.comment ?? null,
+          createdAt: existing?.createdAt ?? new Date(),
           updatedAt: new Date(),
         };
       });
