@@ -24,6 +24,7 @@ import { ScrollToTop } from "@ui/components/common";
 import type { DashboardFiltersState } from "@ui/features/dashboard";
 import { useDashboard, useDashboardSymbols, useScrollPersistence } from "@ui/hooks";
 import Link from "next/link";
+import { clampDateToAllTimeStart } from "@lib/date-range";
 
 function getAdvancedQueryFilters(filters: DashboardFiltersState): Pick<
   TradeQuery,
@@ -92,8 +93,16 @@ export default function DashboardPage() {
         rulesTagIds?: number[];
         customTagIds?: number[];
       };
-      const from = parsed.from ? new Date(parsed.from) : defaultFilters.from;
-      const to = parsed.to ? new Date(parsed.to) : defaultFilters.to;
+      const rawFrom = parsed.from ? new Date(parsed.from) : defaultFilters.from;
+      const rawTo = parsed.to ? new Date(parsed.to) : defaultFilters.to;
+      const safeFrom = Number.isFinite(rawFrom.getTime()) ? rawFrom : defaultFilters.from;
+      const safeTo = Number.isFinite(rawTo.getTime()) ? rawTo : defaultFilters.to;
+      const clampedFrom = clampDateToAllTimeStart(safeFrom);
+      const clampedTo = clampDateToAllTimeStart(safeTo);
+      const from =
+        clampedFrom.getTime() <= clampedTo.getTime() ? clampedFrom : clampedTo;
+      const to =
+        clampedFrom.getTime() <= clampedTo.getTime() ? clampedTo : clampedFrom;
       const direction: DashboardFiltersState["direction"] =
         parsed.direction === "Buy" || parsed.direction === "Sell" || parsed.direction === "Both"
           ? (parsed.direction as DashboardFiltersState["direction"])
@@ -231,7 +240,6 @@ export default function DashboardPage() {
     drawdown,
     returns,
     assetPerf,
-    riskMetrics,
     sessionPerf,
     bestWorst,
     streakStats,

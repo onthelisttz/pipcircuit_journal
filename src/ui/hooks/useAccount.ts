@@ -5,7 +5,6 @@ import type { Account } from "@domain/entities";
 import { TokenStorage } from "@infrastructure/auth";
 import { Direction, OrderType } from "@domain/enums";
 import { createAccountRepository, createTradeRepository } from "@infrastructure/db/createDualRepositories";
-import { db } from "@infrastructure/db/dexie/database";
 import { useAccountStore } from "@ui/state";
 import { useAuth } from "@ui/hooks/useAuth";
 import { estimateGrossProfit, volumeToLots, priceDiffToPips } from "@lib/pnl-estimate";
@@ -26,7 +25,7 @@ export function useAccount() {
     setAccounts(records);
     const active = records.find((record) => record.isActive);
     setActiveAccountId(active?.id ?? null);
-  }, [setAccounts, setActiveAccountId]);
+  }, [accountRepository, setAccounts, setActiveAccountId]);
 
   const syncFromCTrader = useCallback(async () => {
     // Prevent concurrent syncs
@@ -56,139 +55,138 @@ export function useAccount() {
         return;
       }
 
-      // Use transaction to prevent race conditions
-      await db.transaction("rw", db.accounts, async () => {
-        for (const raw of accountsData) {
-          const accountNumber = String(
-            raw["accountNumber"] ??
-              raw["ctidTraderAccountId"] ??
-              raw["accountId"] ??
-              raw["login"] ??
-              raw["id"]
-          );
-          if (!accountNumber || accountNumber === "undefined") {
-            continue;
-          }
-          const rawBalance =
-            typeof raw["balance"] === "number"
-              ? raw["balance"]
-              : typeof raw["balance"] === "string"
-                ? Number.parseFloat(raw["balance"])
-                : undefined;
-          const rawEquity =
-            typeof raw["equity"] === "number"
-              ? raw["equity"]
-              : typeof raw["equity"] === "string"
-                ? Number.parseFloat(raw["equity"])
-                : undefined;
-          const precision =
-            typeof raw["moneyDigits"] === "number"
-              ? raw["moneyDigits"]
-              : typeof raw["currencyDigits"] === "number"
-                ? raw["currencyDigits"]
-                : typeof raw["balanceDigits"] === "number"
-                  ? raw["balanceDigits"]
-                  : typeof raw["digits"] === "number"
-                    ? raw["digits"]
-                    : 2;
-          const normalizeMoney = (value?: number) => {
-            if (value === undefined || Number.isNaN(value)) {
-              return undefined;
-            }
-            if (precision > 0 && Number.isInteger(value)) {
-              return value / 10 ** precision;
-            }
-            if (Number.isInteger(value) && value >= 1000) {
-              return value / 100;
-            }
-            return value;
-          };
-          const balance = normalizeMoney(rawBalance);
-          const equity = normalizeMoney(rawEquity);
-          const accountType = String(
-            raw["accountType"] ??
-              raw["type"] ??
-              raw["traderAccountType"] ??
-              raw["accountTypeName"] ??
-              raw["environment"] ??
-              raw["environmentType"] ??
-              raw["brokerType"] ??
-              ""
-          ).toLowerCase();
-          const liveFlag =
-            typeof raw["live"] === "boolean"
-              ? raw["live"]
-              : typeof raw["isLive"] === "boolean"
-                ? raw["isLive"]
-                : typeof raw["isLiveAccount"] === "boolean"
-                  ? raw["isLiveAccount"]
-                  : typeof raw["isDemo"] === "boolean"
-                    ? !raw["isDemo"]
-                    : undefined;
-          const nameHint = `${raw["name"] ?? ""} ${raw["brokerName"] ?? ""} ${raw["server"] ?? ""}`.toLowerCase();
-          const type =
-            accountType.includes("demo") ||
-            nameHint.includes("demo") ||
-            liveFlag === false
-              ? "Demo"
-              : accountType.includes("live") ||
-                  nameHint.includes("live") ||
-                  liveFlag === true
-                ? "Live"
-                : undefined;
-          const broker =
-            typeof raw["brokerTitle"] === "string"
-              ? raw["brokerTitle"]
-              : typeof raw["brokerName"] === "string"
-                ? raw["brokerName"]
-                : undefined;
-          const server =
-            typeof raw["server"] === "string" ? raw["server"] : broker ?? undefined;
-          const name =
-            typeof raw["name"] === "string"
-              ? raw["name"]
-              : broker ?? (typeof raw["server"] === "string" ? raw["server"] : undefined);
-
-          const existing = await accountRepository.getByAccountNumber(accountNumber);
-          const record: Account = {
-            ...(existing || {}), // Preserve existing fields (especially id and lastSyncAt)
-            accountNumber,
-            ctraderAccountId:
-              typeof raw["accountId"] === "number"
-                ? raw["accountId"]
-                : typeof raw["ctidTraderAccountId"] === "number"
-                  ? raw["ctidTraderAccountId"]
-                  : existing?.ctraderAccountId,
-            platform: "cTrader",
-            // Preserve user-renamed name if present; otherwise use remote name
-            name: existing?.name ?? name,
-            broker: broker ?? existing?.broker,
-            server: server ?? existing?.server,
-            type: type ?? existing?.type,
-            currency:
-              typeof raw["currency"] === "string"
-                ? raw["currency"]
-                : typeof raw["depositCurrency"] === "string"
-                  ? raw["depositCurrency"]
-                  : existing?.currency,
-            balance,
-            equity,
-            leverage: typeof raw["leverage"] === "number" ? raw["leverage"] : existing?.leverage,
-            createdAt: existing?.createdAt ?? new Date(),
-            updatedAt: new Date(),
-            // lastSyncAt is reserved for trade sync; preserve existing value so
-            // initial trade sync can fetch full history instead of "from now".
-            lastSyncAt: existing?.lastSyncAt ?? null,
-            isActive: existing?.isActive ?? false,
-          };
-          
-          if (existing?.id) {
-            await accountRepository.update(existing.id, record);
-          } else {
-            await accountRepository.create(record);
-          }
+      // Do not wrap this in a Dexie transaction: DualAccountRepository writes to Dexie
+      // and then does async Supabase sync, which can invalidate Dexie transactions.
+      for (const raw of accountsData) {
+        const accountNumber = String(
+          raw["accountNumber"] ??
+            raw["ctidTraderAccountId"] ??
+            raw["accountId"] ??
+            raw["login"] ??
+            raw["id"]
+        );
+        if (!accountNumber || accountNumber === "undefined") {
+          continue;
         }
-      });
+        const rawBalance =
+          typeof raw["balance"] === "number"
+            ? raw["balance"]
+            : typeof raw["balance"] === "string"
+              ? Number.parseFloat(raw["balance"])
+              : undefined;
+        const rawEquity =
+          typeof raw["equity"] === "number"
+            ? raw["equity"]
+            : typeof raw["equity"] === "string"
+              ? Number.parseFloat(raw["equity"])
+              : undefined;
+        const precision =
+          typeof raw["moneyDigits"] === "number"
+            ? raw["moneyDigits"]
+            : typeof raw["currencyDigits"] === "number"
+              ? raw["currencyDigits"]
+              : typeof raw["balanceDigits"] === "number"
+                ? raw["balanceDigits"]
+                : typeof raw["digits"] === "number"
+                  ? raw["digits"]
+                  : 2;
+        const normalizeMoney = (value?: number) => {
+          if (value === undefined || Number.isNaN(value)) {
+            return undefined;
+          }
+          if (precision > 0 && Number.isInteger(value)) {
+            return value / 10 ** precision;
+          }
+          if (Number.isInteger(value) && value >= 1000) {
+            return value / 100;
+          }
+          return value;
+        };
+        const balance = normalizeMoney(rawBalance);
+        const equity = normalizeMoney(rawEquity);
+        const accountType = String(
+          raw["accountType"] ??
+            raw["type"] ??
+            raw["traderAccountType"] ??
+            raw["accountTypeName"] ??
+            raw["environment"] ??
+            raw["environmentType"] ??
+            raw["brokerType"] ??
+            ""
+        ).toLowerCase();
+        const liveFlag =
+          typeof raw["live"] === "boolean"
+            ? raw["live"]
+            : typeof raw["isLive"] === "boolean"
+              ? raw["isLive"]
+              : typeof raw["isLiveAccount"] === "boolean"
+                ? raw["isLiveAccount"]
+                : typeof raw["isDemo"] === "boolean"
+                  ? !raw["isDemo"]
+                  : undefined;
+        const nameHint = `${raw["name"] ?? ""} ${raw["brokerName"] ?? ""} ${raw["server"] ?? ""}`.toLowerCase();
+        const type =
+          accountType.includes("demo") ||
+          nameHint.includes("demo") ||
+          liveFlag === false
+            ? "Demo"
+            : accountType.includes("live") ||
+                nameHint.includes("live") ||
+                liveFlag === true
+              ? "Live"
+              : undefined;
+        const broker =
+          typeof raw["brokerTitle"] === "string"
+            ? raw["brokerTitle"]
+            : typeof raw["brokerName"] === "string"
+              ? raw["brokerName"]
+              : undefined;
+        const server =
+          typeof raw["server"] === "string" ? raw["server"] : broker ?? undefined;
+        const name =
+          typeof raw["name"] === "string"
+            ? raw["name"]
+            : broker ?? (typeof raw["server"] === "string" ? raw["server"] : undefined);
+
+        const existing = await accountRepository.getByAccountNumber(accountNumber);
+        const record: Account = {
+          ...(existing || {}), // Preserve existing fields (especially id and lastSyncAt)
+          accountNumber,
+          ctraderAccountId:
+            typeof raw["accountId"] === "number"
+              ? raw["accountId"]
+              : typeof raw["ctidTraderAccountId"] === "number"
+                ? raw["ctidTraderAccountId"]
+                : existing?.ctraderAccountId,
+          platform: "cTrader",
+          // Preserve user-renamed name if present; otherwise use remote name
+          name: existing?.name ?? name,
+          broker: broker ?? existing?.broker,
+          server: server ?? existing?.server,
+          type: type ?? existing?.type,
+          currency:
+            typeof raw["currency"] === "string"
+              ? raw["currency"]
+              : typeof raw["depositCurrency"] === "string"
+                ? raw["depositCurrency"]
+                : existing?.currency,
+          balance,
+          equity,
+          leverage: typeof raw["leverage"] === "number" ? raw["leverage"] : existing?.leverage,
+          createdAt: existing?.createdAt ?? new Date(),
+          updatedAt: new Date(),
+          // lastSyncAt is reserved for trade sync; preserve existing value so
+          // initial trade sync can fetch full history instead of "from now".
+          lastSyncAt: existing?.lastSyncAt ?? null,
+          isActive: existing?.isActive ?? false,
+        };
+
+        if (existing?.id) {
+          await accountRepository.update(existing.id, record);
+        } else {
+          await accountRepository.create(record);
+        }
+      }
 
       const refreshed = await accountRepository.list();
       setAccounts(refreshed);
@@ -378,7 +376,7 @@ export function useAccount() {
       }
     };
     void run();
-  }, [loadAccounts, syncFromCTrader]);
+  }, [accountRepository, loadAccounts, syncFromCTrader]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -386,7 +384,13 @@ export function useAccount() {
     }
     const handler = (event: MessageEvent) => {
       if (event.data?.type === "ctrader-linked") {
-        void syncFromCTrader();
+        if (event.data?.error) {
+          console.warn("[useAccount] cTrader link callback reported error:", event.data.error);
+          return;
+        }
+        void syncFromCTrader().catch((error) => {
+          console.error("[useAccount] Failed to sync accounts after cTrader link:", error);
+        });
       }
     };
     window.addEventListener("message", handler);

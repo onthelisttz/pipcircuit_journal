@@ -12,6 +12,7 @@ import { ObservationFormModal } from "./ObservationFormModal";
 import { ObservationFilters } from "./ObservationFilters";
 import type { ObservationFiltersState } from "./ObservationFilters";
 import { format } from "date-fns";
+import { clampDateToAllTimeStart } from "@lib/date-range";
 
 function stripHtml(html: string): string {
   if (!html) return "";
@@ -67,8 +68,10 @@ export function ObservationsPage() {
       if (!isValidDate(parsedFrom) || !isValidDate(parsedTo)) {
         return defaultFilters;
       }
-      const from = parsedFrom.getTime() <= parsedTo.getTime() ? parsedFrom : parsedTo;
-      const to = parsedFrom.getTime() <= parsedTo.getTime() ? parsedTo : parsedFrom;
+      const clampedFrom = clampDateToAllTimeStart(parsedFrom);
+      const clampedTo = clampDateToAllTimeStart(parsedTo);
+      const from = clampedFrom.getTime() <= clampedTo.getTime() ? clampedFrom : clampedTo;
+      const to = clampedFrom.getTime() <= clampedTo.getTime() ? clampedTo : clampedFrom;
       return {
         from,
         to,

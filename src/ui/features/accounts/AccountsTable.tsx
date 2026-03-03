@@ -18,7 +18,7 @@ function formatBalance(balance?: number, currency?: string) {
 }
 
 export function AccountsTable() {
-  const { accounts, activeAccountId, setActive, renameAccount, syncFromCTrader, syncTradesForAccount } =
+  const { accounts, activeAccountId, setActive, renameAccount, syncTradesForAccount } =
     useAccount();
   const [renameTarget, setRenameTarget] = useState<{
     id: number;
@@ -113,12 +113,20 @@ export function AccountsTable() {
           </tr>
         </thead>
         <tbody>
-          {accounts.map((account) => (
+          {accounts.map((account) => {
+            const typeLabel = account.type ?? "Unknown";
+            const isLiveType = typeLabel.toLowerCase() === "live";
+
+            return (
             <tr key={account.id} className="border-b border-border last:border-0">
               <td className="px-4 py-3">{account.name ?? account.broker ?? "cTrader"}</td>
               <td className="px-4 py-3">{account.accountNumber}</td>
               <td className="px-4 py-3">{account.server ?? account.broker ?? "-"}</td>
-              <td className="px-4 py-3">{account.type ?? "Unknown"}</td>
+              <td className="px-4 py-3">
+                <span className={isLiveType ? "font-medium text-emerald-500" : undefined}>
+                  {typeLabel}
+                </span>
+              </td>
               <td className="px-4 py-3">cTrader</td>
               <td className="px-4 py-3">
                 <span>${formatBalance(account.balance, undefined)}</span>
@@ -200,7 +208,7 @@ export function AccountsTable() {
                 </button>
               </td>
             </tr>
-          ))}
+          )})}
         </tbody>
         </table>
       </div>

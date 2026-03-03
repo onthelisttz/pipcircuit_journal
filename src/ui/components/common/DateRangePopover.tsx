@@ -2,11 +2,13 @@
 
 import {
   addMonths,
+  endOfDay,
   endOfMonth,
   endOfWeek,
   endOfYear,
   format,
   isSameDay,
+  startOfDay,
   startOfMonth,
   startOfWeek,
   startOfYear,
@@ -15,8 +17,9 @@ import {
   subWeeks,
   subYears,
 } from "date-fns";
-import { X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { APP_ALL_TIME_START_DATE, clampDateToAllTimeStart } from "@lib/date-range";
 
 export interface DateRangePopoverProps {
   from: Date;
@@ -99,10 +102,11 @@ const QUICK_PRESETS: QuickPreset[] = [
   {
     key: "allTime",
     label: "All Time",
-    getRange: (now) => ({ from: new Date(2010, 0, 1), to: now }),
+    getRange: (now) => ({ from: new Date(APP_ALL_TIME_START_DATE), to: now }),
   },
 ];
 const QUICK_PRESET_KEYS = new Set<QuickPresetKey>(QUICK_PRESETS.map((preset) => preset.key));
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function isQuickPresetKey(value: string): value is QuickPresetKey {
   return QUICK_PRESET_KEYS.has(value as QuickPresetKey);
@@ -155,14 +159,45 @@ export function DateRangePopover({
   onApply,
   quickPresetStorageKey,
 }: DateRangePopoverProps) {
-  const [tempFrom, setTempFrom] = useState<Date>(from);
-  const [tempTo, setTempTo] = useState<Date>(to);
-  const [isSelectingEnd, setIsSelectingEnd] = useState(false);
-  const [monthLeft, setMonthLeft] = useState<Date>(startOfMonth(from));
-  const monthRight = useMemo(() => addMonths(monthLeft, 1), [monthLeft]);
   const today = useMemo(() => new Date(), []);
+  const minSelectableDate = useMemo(() => startOfDay(APP_ALL_TIME_START_DATE), []);
+  const maxSelectableDate = useMemo(() => endOfDay(today), [today]);
+  const minMonth = useMemo(() => startOfMonth(APP_ALL_TIME_START_DATE), []);
+  const maxLeftMonth = useMemo(() => {
+    const candidate = startOfMonth(subMonths(today, 1));
+    return candidate.getTime() < minMonth.getTime() ? minMonth : candidate;
+  }, [minMonth, today]);
+  const normalizeDate = useCallback(
+    (date: Date): Date => {
+      const clampedMin = clampDateToAllTimeStart(date);
+      return clampedMin.getTime() > maxSelectableDate.getTime()
+        ? new Date(maxSelectableDate)
+        : clampedMin;
+    },
+    [maxSelectableDate]
+  );
+  const initialRange = useMemo(() => {
+    const normalizedFrom = normalizeDate(from);
+    const normalizedTo = normalizeDate(to);
+    if (normalizedTo.getTime() < normalizedFrom.getTime()) {
+      return { from: normalizedFrom, to: normalizedFrom };
+    }
+    return { from: normalizedFrom, to: normalizedTo };
+  }, [from, to, normalizeDate]);
+  const clampMonthLeft = (month: Date): Date => {
+    const normalizedMonth = startOfMonth(month);
+    if (normalizedMonth.getTime() < minMonth.getTime()) return minMonth;
+    if (normalizedMonth.getTime() > maxLeftMonth.getTime()) return maxLeftMonth;
+    return normalizedMonth;
+  };
+
+  const [tempFrom, setTempFrom] = useState<Date>(initialRange.from);
+  const [tempTo, setTempTo] = useState<Date>(initialRange.to);
+  const [isSelectingEnd, setIsSelectingEnd] = useState(false);
+  const [monthLeft, setMonthLeft] = useState<Date>(clampMonthLeft(startOfMonth(initialRange.from)));
+  const monthRight = useMemo(() => addMonths(monthLeft, 1), [monthLeft]);
   const [selectedQuickPreset, setSelectedQuickPreset] = useState<QuickPresetKey | null>(() => {
-    const detected = detectQuickPreset(from, to, new Date());
+    const detected = detectQuickPreset(initialRange.from, initialRange.to, new Date());
     return detected ?? readStoredQuickPreset(quickPresetStorageKey);
   });
 
@@ -179,6 +214,10 @@ export function DateRangePopover({
     ].join(" ");
 
   const selectDay = (day: Date) => {
+    const isDayDisabled =
+      day.getTime() < minSelectableDate.getTime() || day.getTime() > maxSelectableDate.getTime();
+    if (isDayDisabled) return;
+
     setSelectedQuickPreset(null);
     if (!isSelectingEnd) {
       setTempFrom(day);
@@ -211,6 +250,21 @@ export function DateRangePopover({
     day.getTime() <= new Date(tempTo).setHours(23, 59, 59, 999);
 
   const headerLabel = `${format(tempFrom, "MMM d, yyyy")} - ${format(tempTo, "MMM d, yyyy")}`;
+  const yearOptions = useMemo(() => {
+    const years: number[] = [];
+    for (let y = minMonth.getFullYear(); y <= maxLeftMonth.getFullYear(); y += 1) {
+      years.push(y);
+    }
+    return years;
+  }, [maxLeftMonth, minMonth]);
+  const canGoPrevMonth = monthLeft.getTime() > minMonth.getTime();
+  const canGoNextMonth = monthLeft.getTime() < maxLeftMonth.getTime();
+  const setVisibleMonth = (monthIndex: number, year: number) => {
+    setMonthLeft(clampMonthLeft(new Date(year, monthIndex, 1)));
+  };
+  const shiftVisibleMonth = (delta: number) => {
+    setMonthLeft((prev) => clampMonthLeft(addMonths(prev, delta)));
+  };
 
   return (
     <div className="fixed inset-x-2 bottom-2 top-16 z-30 overflow-y-auto rounded-xl border border-border bg-popover p-3 shadow-2xl animate-in fade-in-0 zoom-in-95 sm:absolute sm:inset-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[540px] sm:max-w-[calc(100vw-2rem)] sm:max-h-[80vh] sm:p-4">
@@ -235,9 +289,11 @@ export function DateRangePopover({
             onClick={() => {
               const now = new Date();
               const range = preset.getRange(now);
-              setTempFrom(range.from);
-              setTempTo(range.to);
-              setMonthLeft(startOfMonth(range.from));
+              const normalizedFrom = normalizeDate(range.from);
+              const normalizedTo = normalizeDate(range.to);
+              setTempFrom(normalizedFrom);
+              setTempTo(normalizedTo.getTime() < normalizedFrom.getTime() ? normalizedFrom : normalizedTo);
+              setMonthLeft(clampMonthLeft(startOfMonth(normalizedFrom)));
               setIsSelectingEnd(false);
               setSelectedQuickPreset(preset.key);
             }}
@@ -248,6 +304,53 @@ export function DateRangePopover({
         ))}
       </div>
 
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => shiftVisibleMonth(-1)}
+          disabled={!canGoPrevMonth}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="Previous month"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <div className="flex items-center gap-2">
+          <select
+            value={monthLeft.getMonth()}
+            onChange={(event) => setVisibleMonth(Number(event.target.value), monthLeft.getFullYear())}
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+            aria-label="Select month"
+          >
+            {MONTH_NAMES.map((monthName, monthIndex) => (
+              <option key={monthName} value={monthIndex}>
+                {monthName}
+              </option>
+            ))}
+          </select>
+          <select
+            value={monthLeft.getFullYear()}
+            onChange={(event) => setVisibleMonth(monthLeft.getMonth(), Number(event.target.value))}
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+            aria-label="Select year"
+          >
+            {yearOptions.map((year) => (
+              <option key={year} value={year}>
+                {year}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          type="button"
+          onClick={() => shiftVisibleMonth(1)}
+          disabled={!canGoNextMonth}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="Next month"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 gap-4 text-xs sm:grid-cols-2">
         {[monthLeft, monthRight].map((month, idx) => {
           const days = buildMonthDays(month);
@@ -255,22 +358,8 @@ export function DateRangePopover({
           const firstWeekday = new Date(month).getDay();
           return (
             <div key={idx}>
-              <div className="mb-2 flex items-center justify-between">
-                <button
-                  disabled={idx === 0}
-                  onClick={() => setMonthLeft((prev) => addMonths(prev, -1))}
-                  className="px-1 text-muted-foreground hover:text-foreground disabled:opacity-40"
-                >
-                  &lt;
-                </button>
+              <div className="mb-2 flex items-center justify-center">
                 <span className="text-xs font-medium text-foreground">{monthLabel}</span>
-                <button
-                  disabled={idx === 1}
-                  onClick={() => setMonthLeft((prev) => addMonths(prev, 1))}
-                  className="px-1 text-muted-foreground hover:text-foreground disabled:opacity-40"
-                >
-                  &gt;
-                </button>
               </div>
               <div className="mb-1 grid grid-cols-7 gap-1 text-[10px] text-muted-foreground">
                 <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
@@ -283,10 +372,15 @@ export function DateRangePopover({
                   const selected = isSameDay(day, tempFrom) || isSameDay(day, tempTo);
                   const inRange = isInRange(day);
                   const isToday = isSameDay(day, today);
+                  const isDisabled =
+                    day.getTime() < minSelectableDate.getTime() ||
+                    day.getTime() > maxSelectableDate.getTime();
 
                   return (
                     <button
                       key={day.toISOString()}
+                      type="button"
+                      disabled={isDisabled}
                       onClick={() => selectDay(day)}
                       className={[
                         "h-8 w-8 rounded-full text-xs transition-colors",
@@ -295,6 +389,7 @@ export function DateRangePopover({
                           : inRange
                             ? "bg-accent text-accent-foreground"
                             : "hover:bg-accent/60",
+                        isDisabled ? "cursor-not-allowed opacity-35 hover:bg-transparent" : "",
                         isToday ? "ring-1 ring-primary/70 ring-offset-1 ring-offset-popover" : "",
                       ].filter(Boolean).join(" ")}
                     >
@@ -310,13 +405,15 @@ export function DateRangePopover({
 
       <div className="mt-4 flex items-center justify-between">
         <button
+          type="button"
           onClick={onClose}
           className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
         >
           Cancel
         </button>
         <button
-          onClick={() => onApply(tempFrom, tempTo)}
+          type="button"
+          onClick={() => onApply(normalizeDate(tempFrom), normalizeDate(tempTo))}
           className="rounded-lg bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
         >
           Apply

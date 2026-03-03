@@ -208,6 +208,8 @@ export function TradeChartView({
         return volumeToLots(trade.volume ?? 0, trade.symbol ?? "");
     }, [trade.lots, trade.volume, trade.symbol]);
     const headerPnl = trade.netProfit ?? trade.grossProfit ?? 0;
+    const headerPnlClass =
+        headerPnl > 0 ? "text-emerald-400" : headerPnl < 0 ? "text-red-400" : "text-muted-foreground";
     const headerDate = trade.closeTime ?? trade.openTime;
 
     // Reset view - switch to M1, scroll to trade, fit charts, remove all drawing tools (delay to allow M1 data to load)
@@ -398,7 +400,11 @@ export function TradeChartView({
                                 {trade.symbol} - {trade.direction}
                             </p>
                             <p className="truncate text-[11px] text-muted-foreground">
-                                {headerLots.toFixed(2)} lots | {formatProfit(headerPnl)} | {formatHeaderDate(headerDate)}
+                                {headerLots.toFixed(2)} lots |{" "}
+                                <span className={`font-medium ${headerPnlClass}`}>
+                                    {formatProfit(headerPnl)}
+                                </span>{" "}
+                                | {formatHeaderDate(headerDate)}
                             </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
