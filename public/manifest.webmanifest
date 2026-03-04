@@ -1,4 +1,5 @@
 {
+  "id": "/?source=pwa",
   "name": "pipCircuit",
   "short_name": "pipCircuit",
   "description": "Offline-first trading analytics and journaling app with multi-device sync",
@@ -7,12 +8,19 @@
   "display": "standalone",
   "background_color": "#0a0a0a",
   "theme_color": "#0a0a0a",
+  "prefer_related_applications": false,
   "icons": [
     {
-      "src": "/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
       "src": "/pj-icon.svg",
@@ -22,4 +30,3 @@
     }
   ]
 }
-
