@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { format } from "date-fns";
 import {
   ChevronLeft,
@@ -22,7 +22,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import type { Trade } from "@domain/entities";
-import { useTradePanel } from "@ui/providers";
+import { useTradePanel, type TradePanelSortState } from "@ui/providers";
 import { TradePanelDetailTabs } from "./TradePanelDetailTabs";
 import { volumeToLots } from "@lib/pnl-estimate";
 
@@ -30,6 +30,8 @@ interface TradePanelContentProps {
   title: string;
   trades: Trade[];
   isLoading: boolean;
+  initialSort?: TradePanelSortState | null;
+  preserveInputOrder?: boolean;
   isExpanded: boolean;
   canResetToDefaultSize?: boolean;
   onToggleExpanded: () => void;
@@ -47,6 +49,8 @@ export function TradePanelContent({
   title,
   trades,
   isLoading,
+  initialSort,
+  preserveInputOrder = false,
   isExpanded,
   canResetToDefaultSize = false,
   onToggleExpanded,
@@ -55,9 +59,12 @@ export function TradePanelContent({
 }: TradePanelContentProps) {
   const { selectedTradeId, setSelectedTradeId } = useTradePanel();
   const [activeTab, setActiveTab] = useState<"details" | "journal" | "tags" | "chart" | "pnl">("details");
-  type SortCol = "name" | "type" | "size" | "pnl" | "date";
-  const [sortCol, setSortCol] = useState<SortCol>("date");
-  const [sortAsc, setSortAsc] = useState(false);
+  type SortCol = TradePanelSortState["key"];
+  const [sortCol, setSortCol] = useState<SortCol>(() => initialSort?.key ?? "date");
+  const [sortAsc, setSortAsc] = useState(() => (initialSort?.dir ?? "desc") === "asc");
+  const [useInputOrder, setUseInputOrder] = useState(
+    () => Boolean(preserveInputOrder && !initialSort)
+  );
   const [listCollapsed, setListCollapsed] = useState(false);
   const [chartExpanded, setChartExpanded] = useState(false);
 
@@ -70,6 +77,8 @@ export function TradePanelContent({
   }, [trades]);
 
   const sortedTrades = useMemo(() => {
+    if (useInputOrder) return trades;
+
     const arr = [...trades];
     const mult = sortAsc ? 1 : -1;
     arr.sort((a, b) => {
@@ -110,29 +119,32 @@ export function TradePanelContent({
       return mult * cmp;
     });
     return arr;
-  }, [trades, sortCol, sortAsc]);
+  }, [trades, sortCol, sortAsc, useInputOrder]);
 
   const toggleSort = (col: SortCol) => {
-    if (sortCol === col) setSortAsc((a) => !a);
-    else {
+    setUseInputOrder(false);
+    if (sortCol === col) {
+      setSortAsc((a) => !a);
+    } else {
       setSortCol(col);
       setSortAsc(col === "date" || col === "pnl" ? false : true);
     }
   };
 
   const selectedIndex = useMemo(
-    () => trades.findIndex((t) => t.id === selectedTradeId),
-    [trades, selectedTradeId]
+    () => sortedTrades.findIndex((t) => t.id === selectedTradeId),
+    [sortedTrades, selectedTradeId]
   );
+  const selectedTrade = selectedIndex >= 0 ? sortedTrades[selectedIndex] : null;
 
   useEffect(() => {
-    if (trades.length === 0) return;
+    if (sortedTrades.length === 0) return;
     const hasValidSelection =
-      selectedTradeId != null && trades.some((t) => t.id === selectedTradeId);
+      selectedTradeId != null && sortedTrades.some((t) => t.id === selectedTradeId);
     if (!hasValidSelection) {
-      setSelectedTradeId(trades[0].id ?? null);
+      setSelectedTradeId(sortedTrades[0].id ?? null);
     }
-  }, [trades, selectedTradeId, setSelectedTradeId]);
+  }, [sortedTrades, selectedTradeId, setSelectedTradeId]);
 
   useEffect(() => {
     const fireResize = () => window.dispatchEvent(new Event("resize"));
@@ -144,13 +156,51 @@ export function TradePanelContent({
     };
   }, [isExpanded, activeTab]);
 
-  const goPrev = () => {
-    if (selectedIndex > 0) setSelectedTradeId(trades[selectedIndex - 1].id ?? null);
-  };
-  const goNext = () => {
-    if (selectedIndex >= 0 && selectedIndex < trades.length - 1)
-      setSelectedTradeId(trades[selectedIndex + 1].id ?? null);
-  };
+  const goPrev = useCallback(() => {
+    if (selectedIndex > 0) setSelectedTradeId(sortedTrades[selectedIndex - 1].id ?? null);
+  }, [selectedIndex, setSelectedTradeId, sortedTrades]);
+
+  const goNext = useCallback(() => {
+    if (selectedIndex >= 0 && selectedIndex < sortedTrades.length - 1) {
+      setSelectedTradeId(sortedTrades[selectedIndex + 1].id ?? null);
+    }
+  }, [selectedIndex, setSelectedTradeId, sortedTrades]);
+
+  useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      const el = target as HTMLElement | null;
+      return Boolean(
+        el &&
+          (el.tagName === "INPUT" ||
+            el.tagName === "TEXTAREA" ||
+            el.isContentEditable ||
+            el.closest("[contenteditable='true']"))
+      );
+    };
+
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isEditableTarget(event.target)) return;
+
+      if (event.key === "PageDown" || event.key === "ArrowRight") {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        goNext();
+        return;
+      }
+
+      if (event.key === "PageUp" || event.key === "ArrowLeft") {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        goPrev();
+      }
+    };
+
+    window.addEventListener("keydown", handleShortcut, true);
+    return () => window.removeEventListener("keydown", handleShortcut, true);
+  }, [goNext, goPrev]);
 
   const tabs = [
     { id: "details" as const, label: "Details", icon: BarChart3 },
@@ -300,7 +350,7 @@ export function TradePanelContent({
                   : "px-4 pb-2"
             }
           >
-            {selectedIndex >= 0 && trades[selectedIndex] ? (
+            {selectedTrade ? (
               <div
                 className={`flex items-center justify-between ${
                   isExpanded ? "text-xs" : isChartFocused ? "text-[11px]" : "text-xs"
@@ -308,13 +358,13 @@ export function TradePanelContent({
               >
                 <div className="flex flex-col gap-0.5">
                   <span className="font-medium text-foreground">
-                    {trades[selectedIndex].symbol}
+                    {selectedTrade.symbol}
                   </span>
                   <span className="text-muted-foreground">
-                    {trades[selectedIndex].direction} ·{" "}
+                    {selectedTrade.direction} ·{" "}
                     {(
-                      trades[selectedIndex].lots ??
-                      volumeToLots(trades[selectedIndex].volume ?? 0, trades[selectedIndex].symbol ?? "")
+                      selectedTrade.lots ??
+                      volumeToLots(selectedTrade.volume ?? 0, selectedTrade.symbol ?? "")
                     ).toFixed(2)}{" "}
                     lots
                   </span>
@@ -322,18 +372,18 @@ export function TradePanelContent({
                 <div className="text-right">
                   <span
                     className={`block tabular-nums ${
-                      (trades[selectedIndex].netProfit ?? trades[selectedIndex].grossProfit ?? 0) >= 0
+                      (selectedTrade.netProfit ?? selectedTrade.grossProfit ?? 0) >= 0
                         ? "text-emerald-600 dark:text-emerald-400"
                         : "text-destructive"
                     }`}
                   >
                     {formatProfit(
-                      trades[selectedIndex].netProfit ?? trades[selectedIndex].grossProfit ?? 0
+                      selectedTrade.netProfit ?? selectedTrade.grossProfit ?? 0
                     )}
                   </span>
                   <span className="block text-[11px] text-muted-foreground">
                     {format(
-                      new Date(trades[selectedIndex].closeTime ?? trades[selectedIndex].openTime ?? 0),
+                      new Date(selectedTrade.closeTime ?? selectedTrade.openTime ?? 0),
                       "MMM d HH:mm"
                     )}
                   </span>
@@ -556,20 +606,22 @@ export function TradePanelContent({
                   className={`rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 ${
                     isChartFocused ? "p-1" : "p-1.5"
                   }`}
-                  aria-label="Previous trade"
+                  aria-label="Previous trade (PageUp or ArrowLeft)"
+                  title="Previous trade (PageUp or ArrowLeft)"
                 >
                   <ChevronLeft className={isChartFocused ? "h-3.5 w-3.5" : "h-4 w-4"} />
                 </button>
                 <span className={isChartFocused ? "text-[11px] text-muted-foreground" : "text-xs text-muted-foreground"}>
-                  {selectedIndex + 1} / {trades.length}
+                  {selectedIndex + 1} / {sortedTrades.length}
                 </span>
                 <button
                   onClick={goNext}
-                  disabled={selectedIndex >= trades.length - 1}
+                  disabled={selectedIndex >= sortedTrades.length - 1}
                   className={`rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 ${
                     isChartFocused ? "p-1" : "p-1.5"
                   }`}
-                  aria-label="Next trade"
+                  aria-label="Next trade (PageDown or ArrowRight)"
+                  title="Next trade (PageDown or ArrowRight)"
                 >
                   <ChevronRight className={isChartFocused ? "h-3.5 w-3.5" : "h-4 w-4"} />
                 </button>
@@ -597,12 +649,12 @@ export function TradePanelContent({
                 onPrevTrade={goPrev}
                 onNextTrade={goNext}
                 canPrevTrade={selectedIndex > 0}
-                canNextTrade={selectedIndex >= 0 && selectedIndex < trades.length - 1}
+                canNextTrade={selectedIndex >= 0 && selectedIndex < sortedTrades.length - 1}
                 isChartExpanded={chartExpanded}
                 onChartExpandedChange={setChartExpanded}
-                fallbackTrade={selectedIndex >= 0 ? trades[selectedIndex] : undefined}
+                fallbackTrade={selectedTrade ?? undefined}
                 currentTradePosition={selectedIndex >= 0 ? selectedIndex + 1 : 0}
-                totalTrades={trades.length}
+                totalTrades={sortedTrades.length}
               />
             </div>
           </>

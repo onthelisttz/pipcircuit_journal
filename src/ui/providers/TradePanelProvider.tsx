@@ -10,12 +10,22 @@ import {
 } from "react";
 import type { TradeQuery } from "@application/ports/repositories";
 
+export type TradePanelSortKey = "name" | "type" | "size" | "pnl" | "date";
+export type TradePanelSortDir = "asc" | "desc";
+
+export interface TradePanelSortState {
+  key: TradePanelSortKey;
+  dir: TradePanelSortDir;
+}
+
 export interface TradePanelOpenOptions {
   title: string;
   /** Trade IDs to show (takes precedence over query) */
   tradeIds?: number[];
   /** Query to fetch trades (used when tradeIds not provided) */
   query?: TradeQuery;
+  /** Optional initial sort to apply in detail panel */
+  initialSort?: TradePanelSortState | null;
   /** Pre-select this trade in the list when panel opens */
   selectedTradeId?: number | null;
 }
@@ -25,6 +35,7 @@ interface TradePanelState {
   title: string;
   tradeIds: number[] | null;
   query: TradeQuery | null;
+  initialSort: TradePanelSortState | null;
   selectedTradeId: number | null;
 }
 
@@ -42,6 +53,7 @@ export function TradePanelProvider({ children }: { children: ReactNode }) {
     title: "",
     tradeIds: null,
     query: null,
+    initialSort: null,
     selectedTradeId: null,
   });
 
@@ -51,6 +63,7 @@ export function TradePanelProvider({ children }: { children: ReactNode }) {
       title: options.title,
       tradeIds: options.tradeIds ?? null,
       query: options.query ?? null,
+      initialSort: options.initialSort ?? null,
       selectedTradeId: options.selectedTradeId ?? null,
     });
   }, []);

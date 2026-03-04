@@ -415,6 +415,8 @@ export function TradeChartView({
                                         onClick={onPrevTrade}
                                         disabled={!onPrevTrade || !canPrevTrade}
                                         className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
+                                        title="Previous trade (PageUp or ArrowLeft)"
+                                        aria-label="Previous trade (PageUp or ArrowLeft)"
                                     >
                                         <ChevronLeft className="h-3.5 w-3.5" />
                                         Back
@@ -424,6 +426,8 @@ export function TradeChartView({
                                         onClick={onNextTrade}
                                         disabled={!onNextTrade || !canNextTrade}
                                         className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
+                                        title="Next trade (PageDown or ArrowRight)"
+                                        aria-label="Next trade (PageDown or ArrowRight)"
                                     >
                                         Next
                                         <ChevronRight className="h-3.5 w-3.5" />

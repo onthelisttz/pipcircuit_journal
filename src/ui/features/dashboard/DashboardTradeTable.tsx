@@ -77,15 +77,14 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
   const [page, setPage] = useState(1);
 
   const handleSort = useCallback((key: SortKey) => {
-    setSortKey((prev) => {
-      if (prev === key) {
-        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-        return prev;
-      }
-      setSortDir("desc");
-      return key;
-    });
-  }, []);
+    setPage(1);
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(key);
+    setSortDir("desc");
+  }, [sortKey]);
 
   const balanceByTradeId = useMemo(() => {
     const byCloseTime = [...trades].sort((a, b) => {

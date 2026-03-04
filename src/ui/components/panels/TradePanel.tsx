@@ -22,7 +22,7 @@ const PANEL_WIDTH_CSS_VAR = "--trade-panel-desktop-width";
  * - Keyboard: Escape to close
  */
 export function TradePanel() {
-  const { isOpen, title, tradeIds, query, closePanel } = useTradePanel();
+  const { isOpen, title, tradeIds, query, initialSort, closePanel } = useTradePanel();
   const { activeAccount } = useAccount();
   const [isExpanded, setIsExpanded] = useState(false);
   const [desktopPanelWidth, setDesktopPanelWidth] = useState(DEFAULT_DESKTOP_PANEL_WIDTH_PX);
@@ -107,10 +107,24 @@ export function TradePanel() {
 
   const { trades: rawTrades, isLoading } = useTradesByQuery(effectiveQuery);
 
-  // When opened by query (e.g. from dashboard cards), show only closed trades so count matches dashboard
+  // When opened by query (e.g. from dashboard cards), show only closed trades so count matches dashboard.
+  // When opened with explicit IDs, keep the incoming ID order (dashboard sort order) stable.
   const trades = useMemo(() => {
-    if (tradeIds && tradeIds.length > 0) return rawTrades;
-    return rawTrades.filter((t) => t.closeTime);
+    const filtered = tradeIds && tradeIds.length > 0
+      ? rawTrades
+      : rawTrades.filter((t) => t.closeTime);
+
+    if (!tradeIds || tradeIds.length === 0) return filtered;
+    const idToIndex = new Map<number, number>();
+    tradeIds.forEach((id, idx) => idToIndex.set(id, idx));
+
+    return [...filtered].sort((a, b) => {
+      const idxA = a.id != null ? idToIndex.get(a.id) : undefined;
+      const idxB = b.id != null ? idToIndex.get(b.id) : undefined;
+      const ordA = idxA ?? Number.MAX_SAFE_INTEGER;
+      const ordB = idxB ?? Number.MAX_SAFE_INTEGER;
+      return ordA - ordB;
+    });
   }, [rawTrades, tradeIds]);
 
   const handleClose = useCallback(() => {
@@ -180,13 +194,23 @@ export function TradePanel() {
     }
   }, [clampDesktopWidth]);
 
+  const panelContentKey = useMemo(() => {
+    const idsKey = tradeIds?.join(",") ?? "";
+    const queryKey = query ? JSON.stringify(query) : "";
+    const sortKey = initialSort ? `${initialSort.key}:${initialSort.dir}` : "none";
+    return `${title}|${idsKey}|${queryKey}|${sortKey}`;
+  }, [title, tradeIds, query, initialSort]);
+
   if (!isOpen) return null;
 
   const panelBody = (
     <TradePanelContent
+      key={panelContentKey}
       title={title}
       trades={trades}
       isLoading={isLoading}
+      initialSort={initialSort}
+      preserveInputOrder={Boolean(tradeIds && tradeIds.length > 0)}
       isExpanded={isExpanded}
       canResetToDefaultSize={desktopPanelWidth > DEFAULT_DESKTOP_PANEL_WIDTH_PX}
       onToggleExpanded={() => setIsExpanded((v) => !v)}
