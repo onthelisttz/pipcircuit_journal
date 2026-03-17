@@ -10,6 +10,7 @@ import { ChartControls } from "./ChartControls";
 import { useChartData } from "@ui/hooks/useChartData";
 import type { DrawingToolType, TradeCandlestickChartRef } from "./TradeCandlestickChart";
 import { volumeToLots } from "@lib/pnl-estimate";
+import { hexToRgba } from "@lib/color";
 
 function formatProfit(value: number): string {
     const sign = value >= 0 ? "+" : "-";
@@ -95,6 +96,15 @@ export function TradeChartView({
     const [showRiskRewardLabels, setShowRiskRewardLabels] = useState(true);
     const [internalExpanded, setInternalExpanded] = useState(false);
     const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
+    const [rectangleFillColor, setRectangleFillColor] = useState("#8b5cf6");
+    const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
+    const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
+    const initialLots = useMemo(() => {
+        if (trade.lots != null && Number.isFinite(trade.lots)) return trade.lots;
+        const derived = volumeToLots(trade.volume ?? 0, trade.symbol ?? "");
+        return Number.isFinite(derived) && derived > 0 ? derived : 1;
+    }, [trade.lots, trade.volume, trade.symbol]);
+    const [longShortLots, setLongShortLots] = useState<number>(initialLots);
     const [viewportHeight, setViewportHeight] = useState(900);
     const [visualAreaHeight, setVisualAreaHeight] = useState(0);
     const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -211,6 +221,14 @@ export function TradeChartView({
     const headerPnlClass =
         headerPnl > 0 ? "text-emerald-400" : headerPnl < 0 ? "text-red-400" : "text-muted-foreground";
     const headerDate = trade.closeTime ?? trade.openTime;
+    const drawingFillRgba = useMemo(
+        () => hexToRgba(rectangleFillColor, rectangleFillOpacity),
+        [rectangleFillColor, rectangleFillOpacity]
+    );
+
+    useEffect(() => {
+        setLongShortLots(initialLots);
+    }, [initialLots, trade.id]);
 
     // Reset view - switch to M1, scroll to trade, fit charts, remove all drawing tools (delay to allow M1 data to load)
     const handleResetView = useCallback(() => {
@@ -218,6 +236,7 @@ export function TradeChartView({
             // Remove drawing tools immediately when candlestick chart is visible.
             candlestickChartRef.current?.removeAllDrawingTools();
             setDrawingTool(null);
+            setSelectedDrawingTool(null);
         }
 
         setTimeframe("M1");
@@ -243,6 +262,44 @@ export function TradeChartView({
             document.body.style.overflow = "";
         };
     }, [isExpanded, setExpanded]);
+
+    useEffect(() => {
+        if (!showsCandlestick) return;
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
+            const target = event.target as HTMLElement | null;
+            if (
+                target?.tagName === "INPUT" ||
+                target?.tagName === "TEXTAREA" ||
+                target?.isContentEditable
+            ) {
+                return;
+            }
+            const key = event.key.toLowerCase();
+            const toggleTool = (tool: DrawingToolType) => {
+                setDrawingTool((current) => (current === tool ? null : tool));
+            };
+            if (key === "t") {
+                event.preventDefault();
+                toggleTool("TrendLine");
+            }
+            if (key === "r") {
+                event.preventDefault();
+                toggleTool("Rectangle");
+            }
+            if (key === "p") {
+                event.preventDefault();
+                toggleTool("Path");
+            }
+            if (key === "s" || key === "l") {
+                event.preventDefault();
+                toggleTool("LongShortPosition");
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown, true);
+        return () => window.removeEventListener("keydown", handleKeyDown, true);
+    }, [showsCandlestick]);
 
     useEffect(() => {
         if (!showsCandlestick || !trade || isLoading) return;
@@ -306,6 +363,73 @@ export function TradeChartView({
                         disabled={isLoading}
                     />
                 )}
+                {showsCandlestick && (
+                    <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
+                        {(() => {
+                            const showDrawControls =
+                                drawingTool === "Rectangle" ||
+                                drawingTool === "TrendLine" ||
+                                drawingTool === "Path" ||
+                                selectedDrawingTool === "Rectangle" ||
+                                selectedDrawingTool === "TrendLine" ||
+                                selectedDrawingTool === "Path";
+                            const showLotsControls =
+                                drawingTool === "LongShortPosition" ||
+                                selectedDrawingTool === "LongShortPosition";
+
+                            return (
+                                <>
+                                    <div
+                                        className={`flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-opacity ${
+                                            showDrawControls ? "opacity-100" : "pointer-events-none opacity-0"
+                                        }`}
+                                        aria-hidden={!showDrawControls}
+                                    >
+                                        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                            Draw color
+                                        </span>
+                                        <input
+                                            type="color"
+                                            aria-label="Draw color"
+                                            value={rectangleFillColor}
+                                            onChange={(event) => setRectangleFillColor(event.target.value)}
+                                            className="h-5 w-5 cursor-pointer rounded border border-border bg-transparent p-0"
+                                        />
+                                        <input
+                                            type="range"
+                                            aria-label="Draw opacity"
+                                            min={0}
+                                            max={1}
+                                            step={0.05}
+                                            value={rectangleFillOpacity}
+                                            onChange={(event) => setRectangleFillOpacity(Number(event.target.value))}
+                                            className="h-2 w-20 accent-foreground"
+                                        />
+                                    </div>
+                                    <div
+                                        className={`flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-opacity ${
+                                            showLotsControls ? "opacity-100" : "pointer-events-none opacity-0"
+                                        }`}
+                                        aria-hidden={!showLotsControls}
+                                    >
+                                        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                            Lots
+                                        </span>
+                                        <input
+                                            type="number"
+                                            inputMode="decimal"
+                                            min={0.01}
+                                            step={0.01}
+                                            value={Number.isFinite(longShortLots) ? longShortLots : 1}
+                                            onChange={(event) => setLongShortLots(Number(event.target.value))}
+                                            className="h-6 w-20 rounded border border-border bg-background px-2 text-[11px] text-foreground"
+                                        />
+                                    </div>
+                                </>
+                            );
+                        })()}
+                    </div>
+                )}
                 <ChartControls
                     onResetView={handleResetView}
                     showProfitTimeline={showProfitTimeline}
@@ -333,6 +457,14 @@ export function TradeChartView({
                     disabled={isLoading}
                     drawingTool={drawingTool}
                     onDrawingToolChange={showsCandlestick ? setDrawingTool : undefined}
+                    rectangleFillColor={rectangleFillColor}
+                    rectangleFillOpacity={rectangleFillOpacity}
+                    drawingSelection={selectedDrawingTool}
+                    longShortLots={longShortLots}
+                    onLongShortLotsChange={setLongShortLots}
+                    onRectangleFillColorChange={setRectangleFillColor}
+                    onRectangleFillOpacityChange={setRectangleFillOpacity}
+                    showDrawExtras={false}
                 />
             </div>
             {error && (
@@ -359,6 +491,12 @@ export function TradeChartView({
                         onVisibleRangeChange={handleVisibleRangeChange}
                         isLoading={isLoading}
                         drawingTool={drawingTool}
+                        drawingLineColor={rectangleFillColor}
+                        rectangleFillColor={drawingFillRgba}
+                        rectangleBorderColor={rectangleFillColor}
+                        onDrawingSelectionChange={setSelectedDrawingTool}
+                        longShortLots={longShortLots}
+                        longShortSymbol={trade.symbol ?? ""}
                         showRiskReward={showRiskReward}
                         showRiskRewardLabels={showRiskRewardLabels}
                     />

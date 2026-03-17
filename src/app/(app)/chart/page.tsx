@@ -21,6 +21,7 @@ import { useSyncProgress } from "@ui/hooks/useSyncProgress";
 import { useAccount } from "@ui/hooks/useAccount";
 import { DexieSymbolSyncProgressRepository } from "@infrastructure/db/dexie/repositories";
 import { TokenStorage } from "@infrastructure/auth";
+import { hexToRgba } from "@lib/color";
 
 const CHART_SELECTION_KEY = "chartSelection";
 const CHART_TIMEFRAME_KEY = "chartTimeframe";
@@ -136,6 +137,10 @@ export default function ChartPage() {
     readStoredTimeframe()
   );
   const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
+  const [rectangleFillColor, setRectangleFillColor] = useState("#8b5cf6");
+  const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
+  const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
+  const [longShortLots, setLongShortLots] = useState(1);
   const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -224,6 +229,43 @@ export default function ChartPage() {
       document.body.style.overflow = "";
     };
   }, [isExpanded]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      const toggleTool = (tool: DrawingToolType) => {
+        setDrawingTool((current) => (current === tool ? null : tool));
+      };
+      if (key === "t") {
+        event.preventDefault();
+        toggleTool("TrendLine");
+      }
+      if (key === "r") {
+        event.preventDefault();
+        toggleTool("Rectangle");
+      }
+      if (key === "p") {
+        event.preventDefault();
+        toggleTool("Path");
+      }
+      if (key === "s" || key === "l") {
+        event.preventDefault();
+        toggleTool("LongShortPosition");
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, []);
 
   const selectedProgress = useMemo(() => {
     if (!selection) return null;
@@ -374,9 +416,13 @@ export default function ChartPage() {
   const hasSymbols = symbolProgress.length > 0;
   const selectedStatus = statusMeta(selectedProgress?.status);
   const SelectedStatusIcon = selectedStatus.icon;
+  const drawingFillRgba = useMemo(
+    () => hexToRgba(rectangleFillColor, rectangleFillOpacity),
+    [rectangleFillColor, rectangleFillOpacity]
+  );
 
   const toolbar = (
-    <div className="flex flex-wrap items-center gap-2 border-b border-border pb-3">
+    <div className="flex flex-nowrap items-center gap-2 overflow-x-auto border-b border-border pb-3">
       <div className="relative">
         <button
           ref={symbolButtonRef}
@@ -488,7 +534,7 @@ export default function ChartPage() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-nowrap items-center gap-2">
         {DRAW_TOOLS.map((tool) => (
           <button
             key={tool.id}
@@ -508,6 +554,68 @@ export default function ChartPage() {
             {tool.label}
           </button>
         ))}
+        {(() => {
+          const showDrawControls =
+            drawingTool === "Rectangle" ||
+            drawingTool === "TrendLine" ||
+            drawingTool === "Path" ||
+            selectedDrawingTool === "Rectangle" ||
+            selectedDrawingTool === "TrendLine" ||
+            selectedDrawingTool === "Path";
+          const showLotsControls =
+            drawingTool === "LongShortPosition" ||
+            selectedDrawingTool === "LongShortPosition";
+          return (
+            <>
+              <div
+                className={`flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-opacity ${
+                  showDrawControls ? "opacity-100" : "pointer-events-none opacity-0"
+                }`}
+                aria-hidden={!showDrawControls}
+              >
+                <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Draw color
+                </span>
+                <input
+                  type="color"
+                  aria-label="Rectangle fill color"
+                  value={rectangleFillColor}
+                  onChange={(event) => setRectangleFillColor(event.target.value)}
+                  className="h-5 w-5 cursor-pointer rounded border border-border bg-transparent p-0"
+                />
+                <input
+                  type="range"
+                  aria-label="Rectangle fill opacity"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={rectangleFillOpacity}
+                  onChange={(event) => setRectangleFillOpacity(Number(event.target.value))}
+                  className="h-2 w-20 accent-foreground"
+                />
+              </div>
+              <div
+                className={`flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-opacity ${
+                  showLotsControls ? "opacity-100" : "pointer-events-none opacity-0"
+                }`}
+                aria-hidden={!showLotsControls}
+              >
+                <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Lots
+                </span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0.01}
+                  step={0.01}
+                  value={Number.isFinite(longShortLots) ? longShortLots : 1}
+                  onChange={(event) => setLongShortLots(Number(event.target.value))}
+                  className="h-6 w-20 rounded border border-border bg-background px-2 text-[11px] text-foreground"
+                />
+              </div>
+            </>
+          );
+        })()}
       </div>
       <div className="ml-auto flex items-center gap-2">
         <button
@@ -535,6 +643,7 @@ export default function ChartPage() {
           onClick={() => {
             chartRef.current?.removeAllDrawingTools();
             setDrawingTool(null);
+            setSelectedDrawingTool(null);
           }}
           disabled={!selection}
           className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
@@ -578,6 +687,12 @@ export default function ChartPage() {
           height={isExpanded ? expandedHeight : 520}
           isLoading={isLoading}
           drawingTool={drawingTool}
+          drawingLineColor={rectangleFillColor}
+          rectangleFillColor={drawingFillRgba}
+          rectangleBorderColor={rectangleFillColor}
+          onDrawingSelectionChange={setSelectedDrawingTool}
+          longShortLots={longShortLots}
+          longShortSymbol={selection?.symbol}
           showRiskReward={false}
           onVisibleRangeChange={handleVisibleRangeChange}
           autoScrollOnData={false}

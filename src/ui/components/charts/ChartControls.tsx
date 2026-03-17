@@ -40,6 +40,14 @@ export interface ChartControlsProps {
     disabled?: boolean;
     drawingTool?: DrawingToolType | null;
     onDrawingToolChange?: (tool: DrawingToolType | null) => void;
+    rectangleFillColor?: string;
+    rectangleFillOpacity?: number;
+    drawingSelection?: DrawingToolType | null;
+    longShortLots?: number;
+    onLongShortLotsChange?: (lots: number) => void;
+    onRectangleFillColorChange?: (color: string) => void;
+    onRectangleFillOpacityChange?: (opacity: number) => void;
+    showDrawExtras?: boolean;
 }
 
 export function ChartControls({
@@ -59,6 +67,14 @@ export function ChartControls({
     disabled = false,
     drawingTool = null,
     onDrawingToolChange,
+    rectangleFillColor = "#8b5cf6",
+    rectangleFillOpacity = 0.2,
+    drawingSelection = null,
+    longShortLots = 1,
+    onLongShortLotsChange,
+    onRectangleFillColorChange,
+    onRectangleFillOpacityChange,
+    showDrawExtras = true,
 }: ChartControlsProps) {
     const [menuOpen, setMenuOpen] = useState(false);
     const [drawMenuOpen, setDrawMenuOpen] = useState(false);
@@ -230,6 +246,22 @@ export function ChartControls({
         </div>
     );
 
+    const showRectangleControls =
+        showDrawExtras &&
+        Boolean(onRectangleFillColorChange && onRectangleFillOpacityChange) &&
+        (drawMenuOpen ||
+            drawingTool === "Rectangle" ||
+            drawingTool === "TrendLine" ||
+            drawingTool === "Path" ||
+            drawingSelection === "Rectangle" ||
+            drawingSelection === "TrendLine" ||
+            drawingSelection === "Path");
+
+    const showLongShortControls =
+        showDrawExtras &&
+        Boolean(onLongShortLotsChange) &&
+        (drawMenuOpen || drawingTool === "LongShortPosition" || drawingSelection === "LongShortPosition");
+
     const drawDropdown = drawMenuOpen && onDrawingToolChange && (
         <div
             ref={drawMenuRef}
@@ -248,6 +280,55 @@ export function ChartControls({
                     {label}
                 </button>
             ))}
+            {showRectangleControls && (
+                <>
+                    <div className="my-1 border-t border-border" />
+                    <div className="px-3 py-2">
+                        <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
+                            <span>Draw color</span>
+                            <span>{Math.round(rectangleFillOpacity * 100)}%</span>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                            <input
+                                type="color"
+                                aria-label="Rectangle fill color"
+                                value={rectangleFillColor}
+                                onChange={(event) => onRectangleFillColorChange?.(event.target.value)}
+                                className="h-6 w-6 cursor-pointer rounded border border-border bg-transparent p-0"
+                            />
+                            <input
+                                type="range"
+                                aria-label="Rectangle fill opacity"
+                                min={0}
+                                max={1}
+                                step={0.05}
+                                value={rectangleFillOpacity}
+                                onChange={(event) => onRectangleFillOpacityChange?.(Number(event.target.value))}
+                                className="h-2 flex-1 accent-foreground"
+                            />
+                        </div>
+                    </div>
+                </>
+            )}
+            {showLongShortControls && (
+                <>
+                    <div className="my-1 border-t border-border" />
+                    <div className="px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            Lots
+                        </div>
+                        <input
+                            type="number"
+                            inputMode="decimal"
+                            min={0.01}
+                            step={0.01}
+                            value={Number.isFinite(longShortLots) ? longShortLots : 1}
+                            onChange={(event) => onLongShortLotsChange?.(Number(event.target.value))}
+                            className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-foreground"
+                        />
+                    </div>
+                </>
+            )}
         </div>
     );
 

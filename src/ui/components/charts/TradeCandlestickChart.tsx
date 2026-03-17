@@ -16,7 +16,7 @@ import {
 import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
 import type { ChartBar, Trade } from "@domain/entities";
 import { Direction } from "@domain/enums";
-import { estimateGrossProfit, volumeToLots } from "@lib/pnl-estimate";
+import { estimateGrossProfit, volumeToLots, priceDiffToPips } from "@lib/pnl-estimate";
 import { RiskRewardPlugin } from "./plugins/RiskRewardPlugin";
 import { createLineToolsPlugin } from "lightweight-charts-line-tools-core";
 import { LineToolRectangle } from "lightweight-charts-line-tools-rectangle";
@@ -25,6 +25,7 @@ import { registerPathPlugin } from "lightweight-charts-line-tools-path";
 import { registerLongShortPositionPlugin } from "lightweight-charts-line-tools-long-short-position";
 
 export type DrawingToolType = "Path" | "TrendLine" | "Rectangle" | "LongShortPosition";
+type LineToolsApi = ReturnType<typeof createLineToolsPlugin>;
 
 export interface TradeCandlestickChartProps {
     /** Chart bar data to display */
@@ -43,6 +44,20 @@ export interface TradeCandlestickChartProps {
     isLoading?: boolean;
     /** Active drawing tool - when set, starts interactive drawing mode */
     drawingTool?: DrawingToolType | null;
+    /** Line color for Path/TrendLine tools (e.g., rgba or hex) */
+    drawingLineColor?: string;
+    /** Rectangle tool background color (e.g., rgba or hex) */
+    rectangleFillColor?: string;
+    /** Rectangle tool border color */
+    rectangleBorderColor?: string;
+    /** Lot size for Long/Short tool P&L */
+    longShortLots?: number;
+    /** Symbol for Long/Short tool P&L and pips */
+    longShortSymbol?: string;
+    /** Notify when a drawing tool is selected */
+    onDrawingSelectionChange?: (selectedTool: DrawingToolType | null) => void;
+    /** Notify when a rectangle is selected/deselected */
+    onRectangleSelectionChange?: (selected: boolean) => void;
     /** Show automatic risk/reward zones from trade data */
     showRiskReward?: boolean;
     /** Show risk/reward text labels (e.g. +$7.00 / -$9.00) */
@@ -72,6 +87,13 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     onVisibleRangeChange,
     isLoading = false,
     drawingTool = null,
+    drawingLineColor,
+    rectangleFillColor,
+    rectangleBorderColor,
+    longShortLots = 1,
+    longShortSymbol,
+    onDrawingSelectionChange,
+    onRectangleSelectionChange,
     showRiskReward = true,
     showRiskRewardLabels = true,
     autoScrollOnData = true,
@@ -86,11 +108,171 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const [isChartReady, setIsChartReady] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
     const onVisibleRangeChangeRef = useRef<typeof onVisibleRangeChange>(onVisibleRangeChange);
+    const onDrawingSelectionChangeRef = useRef<typeof onDrawingSelectionChange>(onDrawingSelectionChange);
+    const onRectangleSelectionChangeRef = useRef<typeof onRectangleSelectionChange>(onRectangleSelectionChange);
     const prevBarsRef = useRef<ChartBar[]>([]);
     const suppressVisibleRangeUntilRef = useRef(0);
 
     const riskRewardPluginRef = useRef<RiskRewardPlugin | null>(null);
-    const lineToolsRef = useRef<ReturnType<typeof createLineToolsPlugin> | null>(null);
+    const lineToolsRef = useRef<LineToolsApi | null>(null);
+    const lastSelectedDrawingRef = useRef<{ id: string; toolType: DrawingToolType } | null>(null);
+    const drawingLineColorRef = useRef<string | undefined>(drawingLineColor);
+    const rectangleFillColorRef = useRef<string | undefined>(rectangleFillColor);
+    const rectangleBorderColorRef = useRef<string | undefined>(rectangleBorderColor);
+    const longShortLotsRef = useRef<number>(longShortLots);
+    const longShortSymbolRef = useRef<string | undefined>(longShortSymbol);
+    const heightRef = useRef<number>(height);
+
+    useEffect(() => {
+        drawingLineColorRef.current = drawingLineColor;
+        rectangleFillColorRef.current = rectangleFillColor;
+        rectangleBorderColorRef.current = rectangleBorderColor;
+    }, [drawingLineColor, rectangleFillColor, rectangleBorderColor]);
+
+    useEffect(() => {
+        heightRef.current = height;
+        if (chartRef.current && containerRef.current) {
+            const width = containerRef.current.clientWidth;
+            if (width > 0) {
+                chartRef.current.applyOptions({ width, height });
+            }
+        }
+    }, [height]);
+
+    useEffect(() => {
+        longShortLotsRef.current = longShortLots;
+        longShortSymbolRef.current = longShortSymbol;
+    }, [longShortLots, longShortSymbol]);
+
+    const formatMoney = (value: number) => {
+        const sign = value >= 0 ? "+" : "-";
+        return `${sign}$${Math.abs(value).toFixed(2)}`;
+    };
+
+    const formatPips = (value: number) => {
+        const rounded = Math.round(value * 10) / 10;
+        const sign = rounded >= 0 ? "+" : "";
+        return `${sign}${rounded}p`;
+    };
+
+    const updateLongShortText = useCallback((tool: { id: string; points: Array<{ price: number }> }) => {
+        if (!lineToolsRef.current) return;
+        const symbol = longShortSymbolRef.current ?? "";
+        const lots = longShortLotsRef.current;
+        if (!symbol || !Number.isFinite(lots) || lots <= 0) return;
+        const entry = tool.points?.[0]?.price;
+        const stop = tool.points?.[1]?.price;
+        const target = tool.points?.[2]?.price;
+        if (!Number.isFinite(entry) || !Number.isFinite(stop) || !Number.isFinite(target)) return;
+
+        const isBuy = stop < entry;
+        const direction = isBuy ? "Buy" : "Sell";
+        const riskDiff = isBuy ? stop - entry : entry - stop;
+        const rewardDiff = isBuy ? target - entry : entry - target;
+
+        const riskDollar = estimateGrossProfit(entry, stop, lots, direction, symbol);
+        const rewardDollar = estimateGrossProfit(entry, target, lots, direction, symbol);
+        const riskPips = priceDiffToPips(riskDiff, symbol);
+        const rewardPips = priceDiffToPips(rewardDiff, symbol);
+
+        const riskText = `Risk ${formatMoney(riskDollar)} · ${formatPips(riskPips)}`;
+        const rewardText = `Reward ${formatMoney(rewardDollar)} · ${formatPips(rewardPips)}`;
+
+        const baseTextStyle = {
+            alignment: "left",
+            forceTextAlign: true,
+            padding: 2,
+            font: {
+                color: "rgba(255,255,255,0.92)",
+                size: 13,
+                bold: false,
+                family: "Inter, sans-serif",
+            },
+            box: {
+                alignment: {
+                    vertical: isBuy ? "bottom" : "top",
+                    horizontal: "left",
+                },
+                angle: 0,
+                scale: 1,
+                offset: { x: 0, y: 0 },
+                padding: { x: 5, y: 3 },
+                maxHeight: 0,
+                shadow: { blur: 6, color: "rgba(0,0,0,0.4)", offset: { x: 0, y: 2 } },
+                border: { color: "rgba(148,163,184,0.2)", width: 1, radius: 5, highlight: false, style: LineStyle.Solid },
+                background: { color: "rgba(2,6,23,0.6)", inflation: { x: 0, y: 0 } },
+            },
+        } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]["options"]["entryStopLossText"];
+
+        const rewardBox = {
+            ...baseTextStyle,
+            box: {
+                ...(baseTextStyle.box as NonNullable<typeof baseTextStyle.box>),
+                alignment: {
+                    vertical: isBuy ? "top" : "bottom",
+                    horizontal: "left",
+                },
+            },
+        };
+
+        lineToolsRef.current.applyLineToolOptions({
+            id: tool.id,
+            toolType: "LongShortPosition",
+            options: {
+                showAutoText: true,
+                entryStopLossText: { ...baseTextStyle, value: riskText },
+                entryPtText: { ...rewardBox, value: rewardText },
+            },
+        } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
+    }, []);
+
+    useEffect(() => {
+        onDrawingSelectionChangeRef.current = onDrawingSelectionChange;
+    }, [onDrawingSelectionChange]);
+
+    useEffect(() => {
+        onRectangleSelectionChangeRef.current = onRectangleSelectionChange;
+    }, [onRectangleSelectionChange]);
+
+    const updateDrawingSelection = useCallback(() => {
+        if (!lineToolsRef.current) return;
+        const selectedRaw = lineToolsRef.current.getSelectedLineTools?.();
+        if (!selectedRaw) {
+            onDrawingSelectionChangeRef.current?.(null);
+            onRectangleSelectionChangeRef.current?.(false);
+            return;
+        }
+        try {
+            const selectedTools = JSON.parse(selectedRaw) as Array<{ id: string; toolType: string }>;
+            if (selectedTools.length === 0) {
+                onDrawingSelectionChangeRef.current?.(null);
+                onRectangleSelectionChangeRef.current?.(false);
+                return;
+            }
+            const match = selectedTools.find((tool) =>
+                tool.toolType === "Rectangle" ||
+                tool.toolType === "TrendLine" ||
+                tool.toolType === "Path" ||
+                tool.toolType === "LongShortPosition"
+            ) as { id: string; toolType: DrawingToolType } | undefined;
+            if (!match) {
+                onDrawingSelectionChangeRef.current?.(null);
+                onRectangleSelectionChangeRef.current?.(false);
+                return;
+            }
+            lastSelectedDrawingRef.current = { id: match.id, toolType: match.toolType };
+            onDrawingSelectionChangeRef.current?.(match.toolType);
+            onRectangleSelectionChangeRef.current?.(match.toolType === "Rectangle");
+        } catch {
+            onDrawingSelectionChangeRef.current?.(null);
+            onRectangleSelectionChangeRef.current?.(false);
+        }
+    }, []);
+
+    const queueSelectionUpdate = useCallback(() => {
+        window.setTimeout(() => updateDrawingSelection(), 0);
+        window.setTimeout(() => updateDrawingSelection(), 50);
+    }, [updateDrawingSelection]);
 
     useEffect(() => {
         onVisibleRangeChangeRef.current = onVisibleRangeChange;
@@ -166,7 +348,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         const chart = createChart(containerRef.current, {
             width: Math.max(containerRef.current.clientWidth, 1),
-            height,
+            height: heightRef.current,
             layout: {
                 background: { type: ColorType.Solid, color: "#000000" }, // Pure Black
                 textColor: "#9ca3af",
@@ -267,13 +449,110 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         registerLongShortPositionPlugin(lineTools as Parameters<typeof registerLongShortPositionPlugin>[0]);
         lineToolsRef.current = lineTools;
 
+        const handleAfterEdit = (params: { selectedLineTool?: { id: string; toolType: string }; stage?: string }) => {
+            const toolType = params?.selectedLineTool?.toolType as DrawingToolType | undefined;
+            if (toolType === "Rectangle" || toolType === "TrendLine" || toolType === "Path" || toolType === "LongShortPosition") {
+                const toolId = params?.selectedLineTool?.id;
+                if (toolId) {
+                    lastSelectedDrawingRef.current = { id: toolId, toolType };
+                }
+            }
+
+            if (toolType === "Rectangle" && params.stage === "lineToolFinished") {
+                const rectId = params.selectedLineTool.id;
+                const fill = rectangleFillColorRef.current;
+                const border = rectangleBorderColorRef.current;
+                if (fill || border) {
+                    lineTools.applyLineToolOptions({
+                        id: rectId,
+                        toolType: "Rectangle",
+                        options: {
+                            rectangle: {
+                                ...(fill ? { background: { color: fill } } : {}),
+                                ...(border ? { border: { color: border } } : {}),
+                            },
+                        },
+                    } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
+                }
+            }
+
+            if (
+                (toolType === "TrendLine" && params.stage === "lineToolFinished") ||
+                (toolType === "Path" && (params.stage === "pathFinished" || params.stage === "lineToolFinished"))
+            ) {
+                const toolId = params?.selectedLineTool?.id;
+                const lineColor = drawingLineColorRef.current;
+                if (toolId && lineColor) {
+                    lineTools.applyLineToolOptions({
+                        id: toolId,
+                        toolType,
+                        options: {
+                            line: { color: lineColor },
+                        },
+                    } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
+                }
+            }
+
+            if (toolType === "LongShortPosition" && params.selectedLineTool?.points) {
+                updateLongShortText({
+                    id: params.selectedLineTool.id,
+                    points: params.selectedLineTool.points as Array<{ price: number }>,
+                });
+            }
+
+            queueSelectionUpdate();
+        };
+        const handleDoubleClick = (params: { selectedLineTool?: { id: string; toolType: string } }) => {
+            const toolType = params?.selectedLineTool?.toolType as DrawingToolType | undefined;
+            if (toolType === "Rectangle" || toolType === "TrendLine" || toolType === "Path" || toolType === "LongShortPosition") {
+                const toolId = params?.selectedLineTool?.id;
+                if (toolId) {
+                    lastSelectedDrawingRef.current = { id: toolId, toolType };
+                }
+            }
+            queueSelectionUpdate();
+        };
+        const handleChartClick = () => {
+            window.setTimeout(() => {
+                const selectedRaw = lineTools.getSelectedLineTools?.();
+                if (!selectedRaw) return;
+                try {
+                    const selectedTools = JSON.parse(selectedRaw) as Array<{ id: string; toolType: string }>;
+                    const match = selectedTools.find((tool) =>
+                        tool.toolType === "Rectangle" ||
+                        tool.toolType === "TrendLine" ||
+                        tool.toolType === "Path" ||
+                        tool.toolType === "LongShortPosition"
+                    ) as { id: string; toolType: DrawingToolType } | undefined;
+                    if (match) {
+                        lastSelectedDrawingRef.current = { id: match.id, toolType: match.toolType };
+                    }
+                } catch {
+                    // ignore
+                }
+                queueSelectionUpdate();
+            }, 0);
+        };
+        lineTools.subscribeLineToolsAfterEdit?.(handleAfterEdit);
+        lineTools.subscribeLineToolsDoubleClick?.(handleDoubleClick);
+        chart.subscribeClick(handleChartClick);
+
+        const handlePointerDown = () => {
+            queueSelectionUpdate();
+        };
+        const handlePointerUp = () => {
+            queueSelectionUpdate();
+        };
+        containerRef.current?.addEventListener("pointerdown", handlePointerDown, true);
+        containerRef.current?.addEventListener("pointerup", handlePointerUp, true);
+
         setIsChartReady(true);
 
         const syncChartSize = () => {
             if (containerRef.current) {
                 const width = containerRef.current.clientWidth;
                 if (width > 0) {
-                    chart.applyOptions({ width, height });
+                    chart.applyOptions({ width, height: heightRef.current });
                 }
             }
         };
@@ -309,6 +588,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         return () => {
             lineToolsRef.current?.removeAllLineTools();
+            lineToolsRef.current?.unsubscribeLineToolsAfterEdit?.(handleAfterEdit);
+            lineToolsRef.current?.unsubscribeLineToolsDoubleClick?.(handleDoubleClick);
+            chart.unsubscribeClick(handleChartClick);
+            containerRef.current?.removeEventListener("pointerdown", handlePointerDown, true);
+            containerRef.current?.removeEventListener("pointerup", handlePointerUp, true);
             lineToolsRef.current = null;
             window.removeEventListener("resize", handleResize);
             window.clearTimeout(timeoutId);
@@ -324,20 +608,141 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             seriesRef.current = null;
             setIsChartReady(false);
         };
-    }, [height]);
+    }, []);
 
     useEffect(() => {
         if (!lineToolsRef.current || !drawingTool) return;
         const longShortOptions =
             drawingTool === "LongShortPosition"
                 ? ({
-                      showAutoText: false,
+                      showAutoText: true,
                       showPriceAxisLabels: false,
                       showTimeAxisLabels: false,
-                  } as Parameters<typeof lineToolsRef.current.addLineTool>[2])
+                  } as Parameters<LineToolsApi["addLineTool"]>[2])
                 : undefined;
-        lineToolsRef.current.addLineTool(drawingTool, undefined, longShortOptions);
-    }, [drawingTool]);
+
+        const lineOptions =
+            (drawingTool === "TrendLine" || drawingTool === "Path") && drawingLineColor
+                ? ({
+                      line: { color: drawingLineColor },
+                  } as Parameters<LineToolsApi["addLineTool"]>[2])
+                : undefined;
+
+        const rectangleOptions =
+            drawingTool === "Rectangle" && (rectangleFillColor || rectangleBorderColor)
+                ? ({
+                      rectangle: {
+                          ...(rectangleFillColor ? { background: { color: rectangleFillColor } } : {}),
+                          ...(rectangleBorderColor ? { border: { color: rectangleBorderColor } } : {}),
+                      },
+                  } as Parameters<LineToolsApi["addLineTool"]>[2])
+                : undefined;
+
+        const toolOptions =
+            drawingTool === "Rectangle"
+                ? rectangleOptions
+                : drawingTool === "LongShortPosition"
+                    ? longShortOptions
+                    : lineOptions;
+        lineToolsRef.current.addLineTool(drawingTool, undefined, toolOptions);
+    }, [drawingTool, drawingLineColor, rectangleFillColor, rectangleBorderColor]);
+
+    useEffect(() => {
+        if (!isChartReady || !lineToolsRef.current) return;
+        if (!rectangleFillColor && !rectangleBorderColor && !drawingLineColor) return;
+
+        const selectedRaw = lineToolsRef.current.getSelectedLineTools?.();
+        if (!selectedRaw) return;
+
+        let selectedTools: Array<{ id: string; toolType: string; points?: unknown[] }> = [];
+        try {
+            selectedTools = JSON.parse(selectedRaw) as Array<{ id: string; toolType: string; points?: unknown[] }>;
+        } catch {
+            return;
+        }
+
+        const rectangleOptions: { background?: { color: string }; border?: { color: string } } = {};
+        if (rectangleFillColor) rectangleOptions.background = { color: rectangleFillColor };
+        if (rectangleBorderColor) rectangleOptions.border = { color: rectangleBorderColor };
+
+        const applyToRectangle = (id: string) => {
+            if (!rectangleFillColor && !rectangleBorderColor) return;
+            lineToolsRef.current?.applyLineToolOptions({
+                id,
+                toolType: "Rectangle",
+                options: {
+                    rectangle: rectangleOptions,
+                },
+            } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
+        };
+
+        const applyToLineTool = (id: string, toolType: DrawingToolType) => {
+            if (!drawingLineColor) return;
+            lineToolsRef.current?.applyLineToolOptions({
+                id,
+                toolType,
+                options: {
+                    line: { color: drawingLineColor },
+                },
+            } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
+        };
+
+        const selectedTargets = selectedTools.filter(
+            (tool) => tool.toolType === "Rectangle" || tool.toolType === "TrendLine" || tool.toolType === "Path"
+        );
+
+        if (selectedTargets.length > 0) {
+            selectedTargets.forEach((tool) => {
+                if (tool.toolType === "Rectangle") {
+                    applyToRectangle(tool.id);
+                } else if (tool.toolType === "TrendLine" || tool.toolType === "Path") {
+                    applyToLineTool(tool.id, tool.toolType);
+                }
+            });
+            return;
+        }
+
+        const lastSelected = lastSelectedDrawingRef.current;
+        if (!lastSelected) return;
+
+        if (lastSelected.toolType === "Rectangle") {
+            applyToRectangle(lastSelected.id);
+        } else if (lastSelected.toolType === "TrendLine" || lastSelected.toolType === "Path") {
+            applyToLineTool(lastSelected.id, lastSelected.toolType);
+        }
+    }, [isChartReady, rectangleFillColor, rectangleBorderColor, drawingLineColor]);
+
+    useEffect(() => {
+        if (!isChartReady || !lineToolsRef.current) return;
+        const selectedRaw = lineToolsRef.current.getSelectedLineTools?.();
+        if (selectedRaw) {
+            try {
+                const selectedTools = JSON.parse(selectedRaw) as Array<{ id: string; toolType: string; points?: Array<{ price: number }> }>;
+                const selectedLongShort = selectedTools.find((tool) => tool.toolType === "LongShortPosition");
+                if (selectedLongShort?.id && selectedLongShort.points) {
+                    updateLongShortText({ id: selectedLongShort.id, points: selectedLongShort.points });
+                    return;
+                }
+            } catch {
+                // ignore
+            }
+        }
+
+        const lastSelected = lastSelectedDrawingRef.current;
+        if (lastSelected?.toolType === "LongShortPosition") {
+            const raw = lineToolsRef.current.getLineToolByID?.(lastSelected.id);
+            if (!raw) return;
+            try {
+                const parsed = JSON.parse(raw) as Array<{ id: string; toolType: string; points?: Array<{ price: number }> }>;
+                const tool = parsed[0];
+                if (tool?.id && tool.points) {
+                    updateLongShortText({ id: tool.id, points: tool.points });
+                }
+            } catch {
+                // ignore
+            }
+        }
+    }, [isChartReady, longShortLots, longShortSymbol, updateLongShortText]);
 
     // Handle Delete key to remove selected drawing tools
     useEffect(() => {
