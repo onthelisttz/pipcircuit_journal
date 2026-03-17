@@ -260,6 +260,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 onRectangleSelectionChangeRef.current?.(false);
                 return;
             }
+            lineToolsRef.current.applyLineToolOptions({
+                id: match.id,
+                toolType: match.toolType,
+                options: {
+                    showPriceAxisLabels: false,
+                    showTimeAxisLabels: false,
+                },
+            } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
             lastSelectedDrawingRef.current = { id: match.id, toolType: match.toolType };
             onDrawingSelectionChangeRef.current?.(match.toolType);
             onRectangleSelectionChangeRef.current?.(match.toolType === "Rectangle");
@@ -377,6 +385,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 borderColor: "#374151",
                 scaleMargins: { top: 0.15, bottom: 0.15 },
                 entireTextOnly: false,
+                minimumWidth: 70,
             },
             timeScale: {
                 borderColor: "#374151",
@@ -467,6 +476,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                     queueSelectionUpdate();
                     return;
                 }
+                lineTools.applyLineToolOptions({
+                    id: rectId,
+                    toolType: "Rectangle",
+                    options: {
+                        showPriceAxisLabels: false,
+                        showTimeAxisLabels: false,
+                    },
+                } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
                 const fill = rectangleFillColorRef.current;
                 const border = rectangleBorderColorRef.current;
                 if (fill || border) {
@@ -489,12 +506,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             ) {
                 const toolId = params?.selectedLineTool?.id;
                 const lineColor = drawingLineColorRef.current;
-                if (toolId && lineColor) {
+                if (toolId) {
                     lineTools.applyLineToolOptions({
                         id: toolId,
                         toolType,
                         options: {
-                            line: { color: lineColor },
+                            showPriceAxisLabels: false,
+                            showTimeAxisLabels: false,
+                            ...(lineColor ? { line: { color: lineColor } } : {}),
                         },
                     } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
                 }
@@ -619,6 +638,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
     useEffect(() => {
         if (!lineToolsRef.current || !drawingTool) return;
+        const axisLabelOptions = {
+            showPriceAxisLabels: false,
+            showTimeAxisLabels: false,
+        } as Parameters<LineToolsApi["addLineTool"]>[2];
+
         const longShortOptions =
             drawingTool === "LongShortPosition"
                 ? ({
@@ -631,6 +655,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const lineOptions =
             (drawingTool === "TrendLine" || drawingTool === "Path") && drawingLineColor
                 ? ({
+                      ...axisLabelOptions,
                       line: { color: drawingLineColor },
                   } as Parameters<LineToolsApi["addLineTool"]>[2])
                 : undefined;
@@ -638,6 +663,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const rectangleOptions =
             drawingTool === "Rectangle" && (rectangleFillColor || rectangleBorderColor)
                 ? ({
+                      ...axisLabelOptions,
                       rectangle: {
                           ...(rectangleFillColor ? { background: { color: rectangleFillColor } } : {}),
                           ...(rectangleBorderColor ? { border: { color: rectangleBorderColor } } : {}),
