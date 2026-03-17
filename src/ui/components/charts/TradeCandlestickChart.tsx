@@ -449,7 +449,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         registerLongShortPositionPlugin(lineTools as Parameters<typeof registerLongShortPositionPlugin>[0]);
         lineToolsRef.current = lineTools;
 
-        const handleAfterEdit = (params: { selectedLineTool?: { id: string; toolType: string }; stage?: string }) => {
+        const handleAfterEdit = (params: {
+            selectedLineTool?: { id: string; toolType: string; points?: Array<{ price: number }> };
+            stage?: string;
+        }) => {
             const toolType = params?.selectedLineTool?.toolType as DrawingToolType | undefined;
             if (toolType === "Rectangle" || toolType === "TrendLine" || toolType === "Path" || toolType === "LongShortPosition") {
                 const toolId = params?.selectedLineTool?.id;
@@ -459,7 +462,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }
 
             if (toolType === "Rectangle" && params.stage === "lineToolFinished") {
-                const rectId = params.selectedLineTool.id;
+                const rectId = params.selectedLineTool?.id;
+                if (!rectId) {
+                    queueSelectionUpdate();
+                    return;
+                }
                 const fill = rectangleFillColorRef.current;
                 const border = rectangleBorderColorRef.current;
                 if (fill || border) {
