@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { subDays } from "date-fns";
-import { Plus, Loader2, Pencil, Trash2 } from "lucide-react";
+import { Plus, Loader2, Eye, Pencil, Trash2 } from "lucide-react";
 import { useObservations } from "@ui/hooks/useObservations";
 import { useObservationCategories } from "@ui/hooks/useObservationCategories";
 import { useObservationRepository } from "@ui/hooks/useObservationRepository";
@@ -355,6 +355,15 @@ export function ObservationsPage() {
                       {format(new Date(obs.createdAt), "MMM d, yyyy")}
                     </p>
                     <div className="flex gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => obs.id && openPanel(obs.id, observationIds)}
+                        className="rounded p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        title="View details"
+                        aria-label={`View details for ${obs.title || "observation"}`}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleEdit(obs)}
