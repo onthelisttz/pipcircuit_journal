@@ -26,6 +26,34 @@ import { registerLongShortPositionPlugin } from "lightweight-charts-line-tools-l
 
 export type DrawingToolType = "Path" | "TrendLine" | "Rectangle" | "LongShortPosition";
 type LineToolsApi = ReturnType<typeof createLineToolsPlugin>;
+type DrawingPoint = { timestamp: number; price: number };
+type DrawingToolExport = {
+    id: string;
+    toolType: DrawingToolType;
+    points: DrawingPoint[];
+    options?: Record<string, unknown>;
+};
+type InternalLineTool = {
+    id: () => string;
+    getExportData: () => DrawingToolExport;
+    isSelected: () => boolean;
+    setSelected: (selected: boolean) => void;
+};
+type LineToolsInternalApi = LineToolsApi & {
+    _tools?: Map<string, InternalLineTool>;
+    _interactionManager?: {
+        _currentToolCreating?: InternalLineTool | null;
+        _draggedPointIndex?: number | null;
+        _hitTest?: (point: { x: number; y: number }) => { tool: InternalLineTool } | null;
+        _selectedTool?: InternalLineTool | null;
+        screenPointToLineToolPoint?: (point: { x: number; y: number }) => DrawingPoint | null;
+    };
+    requestUpdate?: () => void;
+};
+
+function isDrawingToolType(toolType: string): toolType is DrawingToolType {
+    return toolType === "Rectangle" || toolType === "TrendLine" || toolType === "Path" || toolType === "LongShortPosition";
+}
 
 export interface TradeCandlestickChartProps {
     /** Chart bar data to display */
@@ -56,6 +84,8 @@ export interface TradeCandlestickChartProps {
     longShortSymbol?: string;
     /** Notify when a drawing tool is selected */
     onDrawingSelectionChange?: (selectedTool: DrawingToolType | null) => void;
+    /** Notify when interactive drawing finishes so parent can exit tool mode */
+    onDrawingToolComplete?: (tool: DrawingToolType) => void;
     /** Notify when a rectangle is selected/deselected */
     onRectangleSelectionChange?: (selected: boolean) => void;
     /** Show automatic risk/reward zones from trade data */
@@ -93,6 +123,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     longShortLots = 1,
     longShortSymbol,
     onDrawingSelectionChange,
+    onDrawingToolComplete,
     onRectangleSelectionChange,
     showRiskReward = true,
     showRiskRewardLabels = true,
@@ -109,6 +140,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const [isHovered, setIsHovered] = useState(false);
     const onVisibleRangeChangeRef = useRef<typeof onVisibleRangeChange>(onVisibleRangeChange);
     const onDrawingSelectionChangeRef = useRef<typeof onDrawingSelectionChange>(onDrawingSelectionChange);
+    const onDrawingToolCompleteRef = useRef<typeof onDrawingToolComplete>(onDrawingToolComplete);
     const onRectangleSelectionChangeRef = useRef<typeof onRectangleSelectionChange>(onRectangleSelectionChange);
     const prevBarsRef = useRef<ChartBar[]>([]);
     const suppressVisibleRangeUntilRef = useRef(0);
@@ -122,6 +154,19 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const longShortLotsRef = useRef<number>(longShortLots);
     const longShortSymbolRef = useRef<string | undefined>(longShortSymbol);
     const heightRef = useRef<number>(height);
+    const selectedDrawingIdsRef = useRef<string[]>([]);
+    const selectionSnapshotRef = useRef<Map<string, DrawingToolExport> | null>(null);
+    const duplicateDragPlanRef = useRef<{
+        selection: Map<string, DrawingToolExport>;
+        primaryId: string;
+    } | null>(null);
+    const pointerGestureRef = useRef<{
+        clientX: number;
+        clientY: number;
+        button: number;
+        ctrlOrMeta: boolean;
+        selectedIds: string[];
+    } | null>(null);
 
     useEffect(() => {
         drawingLineColorRef.current = drawingLineColor;
@@ -231,50 +276,150 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     }, [onDrawingSelectionChange]);
 
     useEffect(() => {
+        onDrawingToolCompleteRef.current = onDrawingToolComplete;
+    }, [onDrawingToolComplete]);
+
+    useEffect(() => {
         onRectangleSelectionChangeRef.current = onRectangleSelectionChange;
     }, [onRectangleSelectionChange]);
 
-    const updateDrawingSelection = useCallback(() => {
-        if (!lineToolsRef.current) return;
-        const selectedRaw = lineToolsRef.current.getSelectedLineTools?.();
-        if (!selectedRaw) {
+    const getLineToolsInternal = useCallback(() => lineToolsRef.current as LineToolsInternalApi | null, []);
+
+    const parseDrawingToolExports = useCallback((raw: string | null | undefined): DrawingToolExport[] => {
+        if (!raw) return [];
+        try {
+            const parsed = JSON.parse(raw) as Array<{
+                id?: string;
+                toolType?: string;
+                points?: Array<{ timestamp?: number; price?: number }>;
+                options?: Record<string, unknown>;
+            }>;
+            return parsed
+                .filter((tool): tool is Required<Pick<DrawingToolExport, "id" | "toolType" | "points">> & { options?: Record<string, unknown> } =>
+                    Boolean(tool.id) &&
+                    typeof tool.toolType === "string" &&
+                    isDrawingToolType(tool.toolType) &&
+                    Array.isArray(tool.points)
+                )
+                .map((tool) => ({
+                    id: tool.id,
+                    toolType: tool.toolType,
+                    points: tool.points
+                        .filter((point): point is DrawingPoint =>
+                            point != null &&
+                            Number.isFinite(point.timestamp) &&
+                            Number.isFinite(point.price)
+                        )
+                        .map((point) => ({
+                            timestamp: point.timestamp,
+                            price: point.price,
+                        })),
+                    options: tool.options,
+                }));
+        } catch {
+            return [];
+        }
+    }, []);
+
+    const commitSelectionState = useCallback((selectedTools: DrawingToolExport[]) => {
+        selectedDrawingIdsRef.current = selectedTools.map((tool) => tool.id);
+        if (selectedTools.length === 0) {
+            lastSelectedDrawingRef.current = null;
             onDrawingSelectionChangeRef.current?.(null);
             onRectangleSelectionChangeRef.current?.(false);
             return;
         }
-        try {
-            const selectedTools = JSON.parse(selectedRaw) as Array<{ id: string; toolType: string }>;
-            if (selectedTools.length === 0) {
-                onDrawingSelectionChangeRef.current?.(null);
-                onRectangleSelectionChangeRef.current?.(false);
-                return;
-            }
-            const match = selectedTools.find((tool) =>
-                tool.toolType === "Rectangle" ||
-                tool.toolType === "TrendLine" ||
-                tool.toolType === "Path" ||
-                tool.toolType === "LongShortPosition"
-            ) as { id: string; toolType: DrawingToolType } | undefined;
-            if (!match) {
-                onDrawingSelectionChangeRef.current?.(null);
-                onRectangleSelectionChangeRef.current?.(false);
-                return;
-            }
-            lineToolsRef.current.applyLineToolOptions({
-                id: match.id,
-                toolType: match.toolType,
-                options: {
-                    showPriceAxisLabels: false,
-                    showTimeAxisLabels: false,
-                },
-            } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
-            lastSelectedDrawingRef.current = { id: match.id, toolType: match.toolType };
-            onDrawingSelectionChangeRef.current?.(match.toolType);
-            onRectangleSelectionChangeRef.current?.(match.toolType === "Rectangle");
-        } catch {
-            onDrawingSelectionChangeRef.current?.(null);
-            onRectangleSelectionChangeRef.current?.(false);
+
+        const lastSelectedId = lastSelectedDrawingRef.current?.id;
+        const primaryTool =
+            selectedTools.find((tool) => tool.id === lastSelectedId) ??
+            selectedTools[selectedTools.length - 1];
+
+        lastSelectedDrawingRef.current = {
+            id: primaryTool.id,
+            toolType: primaryTool.toolType,
+        };
+        onDrawingSelectionChangeRef.current?.(primaryTool.toolType);
+        onRectangleSelectionChangeRef.current?.(selectedTools.some((tool) => tool.toolType === "Rectangle"));
+    }, []);
+
+    const updateDrawingSelection = useCallback(() => {
+        if (!lineToolsRef.current) {
+            commitSelectionState([]);
+            return;
         }
+
+        commitSelectionState(parseDrawingToolExports(lineToolsRef.current.getSelectedLineTools?.()));
+    }, [commitSelectionState, parseDrawingToolExports]);
+
+    const readDrawingToolById = useCallback((id: string): DrawingToolExport | null => {
+        if (!lineToolsRef.current) return null;
+        const matches = parseDrawingToolExports(lineToolsRef.current.getLineToolByID?.(id));
+        return matches[0] ?? null;
+    }, [parseDrawingToolExports]);
+
+    const syncSelectionByIds = useCallback((ids: string[], primaryId?: string | null) => {
+        const lineTools = getLineToolsInternal();
+        const toolsMap = lineTools?._tools;
+        const interactionManager = lineTools?._interactionManager;
+
+        if (!lineTools || !toolsMap || !interactionManager) {
+            updateDrawingSelection();
+            return;
+        }
+
+        const uniqueIds = Array.from(new Set(ids)).filter((id) => toolsMap.has(id));
+        for (const tool of toolsMap.values()) {
+            tool.setSelected(false);
+        }
+
+        let primaryTool: InternalLineTool | null = null;
+        for (const id of uniqueIds) {
+            const tool = toolsMap.get(id);
+            if (!tool) continue;
+            tool.setSelected(true);
+            if (id === (primaryId ?? uniqueIds[uniqueIds.length - 1])) {
+                primaryTool = tool;
+            }
+        }
+
+        interactionManager._selectedTool = primaryTool ?? null;
+        lineTools.requestUpdate?.();
+        updateDrawingSelection();
+    }, [getLineToolsInternal, updateDrawingSelection]);
+
+    const clearAllDrawingSelections = useCallback(() => {
+        syncSelectionByIds([]);
+    }, [syncSelectionByIds]);
+
+    const duplicateDrawings = useCallback((toolsToDuplicate: DrawingToolExport[], offset?: { timestamp: number; price: number }) => {
+        if (toolsToDuplicate.length === 0) return [];
+        const duplicatedIds: string[] = [];
+
+        for (const tool of toolsToDuplicate) {
+            const duplicatedId = lineToolsRef.current?.addLineTool(
+                tool.toolType,
+                tool.points.map((toolPoint) => ({
+                    timestamp: toolPoint.timestamp + (offset?.timestamp ?? 0),
+                    price: toolPoint.price + (offset?.price ?? 0),
+                })),
+                tool.options as Parameters<LineToolsApi["addLineTool"]>[2]
+            );
+            if (duplicatedId) {
+                duplicatedIds.push(duplicatedId);
+            }
+        }
+
+        return duplicatedIds;
+    }, []);
+
+    const getChartPointFromClient = useCallback((clientX: number, clientY: number) => {
+        if (!containerRef.current) return null;
+        const rect = containerRef.current.getBoundingClientRect();
+        return {
+            x: clientX - rect.left,
+            y: clientY - rect.top,
+        };
     }, []);
 
     const queueSelectionUpdate = useCallback(() => {
@@ -353,9 +498,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     // Initialize chart
     useEffect(() => {
         if (!containerRef.current) return;
+        const chartContainer = containerRef.current;
 
-        const chart = createChart(containerRef.current, {
-            width: Math.max(containerRef.current.clientWidth, 1),
+        const chart = createChart(chartContainer, {
+            width: Math.max(chartContainer.clientWidth, 1),
             height: heightRef.current,
             layout: {
                 background: { type: ColorType.Solid, color: "#000000" }, // Pure Black
@@ -459,25 +605,75 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         lineToolsRef.current = lineTools;
 
         const handleAfterEdit = (params: {
-            selectedLineTool?: { id: string; toolType: string; points?: Array<{ price: number }> };
+            selectedLineTool?: { id: string; toolType: string; points?: Array<{ timestamp?: number; price?: number }> };
             stage?: string;
         }) => {
-            const toolType = params?.selectedLineTool?.toolType as DrawingToolType | undefined;
-            if (toolType === "Rectangle" || toolType === "TrendLine" || toolType === "Path" || toolType === "LongShortPosition") {
-                const toolId = params?.selectedLineTool?.id;
-                if (toolId) {
-                    lastSelectedDrawingRef.current = { id: toolId, toolType };
-                }
+            const rawToolType = params?.selectedLineTool?.toolType;
+            if (!rawToolType || !isDrawingToolType(rawToolType)) {
+                queueSelectionUpdate();
+                return;
             }
 
+            const toolType = rawToolType;
+            const toolId = params?.selectedLineTool?.id;
+            if (toolId) {
+                lastSelectedDrawingRef.current = { id: toolId, toolType };
+            }
+
+            const isFinishedStage =
+                params.stage === "lineToolFinished" ||
+                (toolType === "Path" && params.stage === "pathFinished");
+
+            if (params.stage === "lineToolEdited" && toolId) {
+                const draggedPointIndex = getLineToolsInternal()?._interactionManager?._draggedPointIndex ?? null;
+                const nextPoints = (params.selectedLineTool?.points ?? [])
+                    .filter((point): point is DrawingPoint =>
+                        point != null &&
+                        Number.isFinite(point.timestamp) &&
+                        Number.isFinite(point.price)
+                    )
+                    .map((point) => ({
+                        timestamp: point.timestamp,
+                        price: point.price,
+                    }));
+
+                if (selectionSnapshotRef.current && selectionSnapshotRef.current.size > 1) {
+                    const originalTool = selectionSnapshotRef.current.get(toolId);
+                    const selectionIdsToKeep = Array.from(selectionSnapshotRef.current.keys());
+
+                    if (draggedPointIndex == null && originalTool && originalTool.points.length > 0 && nextPoints.length > 0) {
+                        const timestampDelta = nextPoints[0].timestamp - originalTool.points[0].timestamp;
+                        const priceDelta = nextPoints[0].price - originalTool.points[0].price;
+
+                        if (timestampDelta !== 0 || priceDelta !== 0) {
+                            for (const [selectedId, selectedTool] of selectionSnapshotRef.current.entries()) {
+                                if (selectedId === toolId) continue;
+                                lineTools.applyLineToolOptions({
+                                    id: selectedId,
+                                    toolType: selectedTool.toolType,
+                                    points: selectedTool.points.map((point) => ({
+                                        timestamp: point.timestamp + timestampDelta,
+                                        price: point.price + priceDelta,
+                                    })),
+                                } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
+                            }
+
+                            window.setTimeout(() => {
+                                syncSelectionByIds(selectionIdsToKeep, toolId);
+                            }, 0);
+                        }
+                    }
+                }
+            }
+            selectionSnapshotRef.current = null;
+
             if (toolType === "Rectangle" && params.stage === "lineToolFinished") {
-                const rectId = params.selectedLineTool?.id;
-                if (!rectId) {
+                if (!toolId) {
                     queueSelectionUpdate();
                     return;
                 }
                 lineTools.applyLineToolOptions({
-                    id: rectId,
+                    id: toolId,
                     toolType: "Rectangle",
                     options: {
                         showPriceAxisLabels: false,
@@ -488,7 +684,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 const border = rectangleBorderColorRef.current;
                 if (fill || border) {
                     lineTools.applyLineToolOptions({
-                        id: rectId,
+                        id: toolId,
                         toolType: "Rectangle",
                         options: {
                             rectangle: {
@@ -504,7 +700,6 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 (toolType === "TrendLine" && params.stage === "lineToolFinished") ||
                 (toolType === "Path" && (params.stage === "pathFinished" || params.stage === "lineToolFinished"))
             ) {
-                const toolId = params?.selectedLineTool?.id;
                 const lineColor = drawingLineColorRef.current;
                 if (toolId) {
                     lineTools.applyLineToolOptions({
@@ -526,11 +721,24 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 });
             }
 
+            if (isFinishedStage) {
+                window.setTimeout(() => {
+                    if (toolId) {
+                        syncSelectionByIds([toolId], toolId);
+                    } else {
+                        queueSelectionUpdate();
+                    }
+                    onDrawingToolCompleteRef.current?.(toolType);
+                }, 0);
+                return;
+            }
+
             queueSelectionUpdate();
         };
         const handleDoubleClick = (params: { selectedLineTool?: { id: string; toolType: string } }) => {
-            const toolType = params?.selectedLineTool?.toolType as DrawingToolType | undefined;
-            if (toolType === "Rectangle" || toolType === "TrendLine" || toolType === "Path" || toolType === "LongShortPosition") {
+            const rawToolType = params?.selectedLineTool?.toolType;
+            if (rawToolType && isDrawingToolType(rawToolType)) {
+                const toolType = rawToolType;
                 const toolId = params?.selectedLineTool?.id;
                 if (toolId) {
                     lastSelectedDrawingRef.current = { id: toolId, toolType };
@@ -563,14 +771,141 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         lineTools.subscribeLineToolsDoubleClick?.(handleDoubleClick);
         chart.subscribeClick(handleChartClick);
 
-        const handlePointerDown = () => {
+        const handlePointerDown = (event: PointerEvent) => {
+            const point = getChartPointFromClient(event.clientX, event.clientY);
+            const hitToolId = point
+                ? getLineToolsInternal()?._interactionManager?._hitTest?.(point)?.tool?.id()
+                : undefined;
+
+            pointerGestureRef.current = {
+                clientX: event.clientX,
+                clientY: event.clientY,
+                button: event.button,
+                ctrlOrMeta: event.ctrlKey || event.metaKey,
+                selectedIds: [...selectedDrawingIdsRef.current],
+            };
+
+            if (!point || event.button !== 0) {
+                selectionSnapshotRef.current = null;
+                duplicateDragPlanRef.current = null;
+                queueSelectionUpdate();
+                return;
+            }
+
+            if ((event.ctrlKey || event.metaKey) && hitToolId && selectedDrawingIdsRef.current.includes(hitToolId)) {
+                const selectedTools = selectedDrawingIdsRef.current
+                    .map((id) => readDrawingToolById(id))
+                    .filter((tool): tool is DrawingToolExport => tool !== null);
+                const selectionMap = new Map(selectedTools.map((tool) => [tool.id, tool] as const));
+                duplicateDragPlanRef.current =
+                    selectionMap.size > 0
+                        ? {
+                              selection: selectionMap,
+                              primaryId: hitToolId,
+                          }
+                        : null;
+                selectionSnapshotRef.current = null;
+                queueSelectionUpdate();
+                return;
+            }
+
+            duplicateDragPlanRef.current = null;
+            if (selectedDrawingIdsRef.current.length > 1 && hitToolId && selectedDrawingIdsRef.current.includes(hitToolId)) {
+                selectionSnapshotRef.current = new Map(
+                    selectedDrawingIdsRef.current
+                        .map((id) => {
+                            const tool = readDrawingToolById(id);
+                            return tool ? ([id, tool] as const) : null;
+                        })
+                        .filter((entry): entry is readonly [string, DrawingToolExport] => entry !== null)
+                );
+            } else {
+                selectionSnapshotRef.current = null;
+            }
+
             queueSelectionUpdate();
         };
-        const handlePointerUp = () => {
+        const handlePointerUp = (event: PointerEvent) => {
+            const gesture = pointerGestureRef.current;
+            pointerGestureRef.current = null;
+
             queueSelectionUpdate();
+
+            const point = getChartPointFromClient(event.clientX, event.clientY);
+            if (!gesture || !point || gesture.button !== 0) {
+                selectionSnapshotRef.current = null;
+                duplicateDragPlanRef.current = null;
+                return;
+            }
+
+            const dragDistance = Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY);
+            if (dragDistance > 5) {
+                const duplicatePlan = duplicateDragPlanRef.current;
+                if (duplicatePlan) {
+                    window.setTimeout(() => {
+                        const movedTools = Array.from(duplicatePlan.selection.keys())
+                            .map((id) => readDrawingToolById(id))
+                            .filter((tool): tool is DrawingToolExport => tool !== null);
+
+                        for (const originalTool of duplicatePlan.selection.values()) {
+                            lineToolsRef.current?.applyLineToolOptions({
+                                id: originalTool.id,
+                                toolType: originalTool.toolType,
+                                points: originalTool.points,
+                            } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
+                        }
+
+                        const duplicateIds = duplicateDrawings(movedTools);
+                        if (duplicateIds.length > 0) {
+                            const primaryIndex = movedTools.findIndex((tool) => tool.id === duplicatePlan.primaryId);
+                            const duplicatePrimaryId =
+                                primaryIndex >= 0 ? duplicateIds[primaryIndex] : duplicateIds[duplicateIds.length - 1];
+                            syncSelectionByIds(duplicateIds, duplicatePrimaryId);
+                        } else {
+                            syncSelectionByIds(Array.from(duplicatePlan.selection.keys()), duplicatePlan.primaryId);
+                        }
+                    }, 0);
+                }
+                selectionSnapshotRef.current = null;
+                duplicateDragPlanRef.current = null;
+                return;
+            }
+
+            if (getLineToolsInternal()?._interactionManager?._currentToolCreating) {
+                selectionSnapshotRef.current = null;
+                duplicateDragPlanRef.current = null;
+                return;
+            }
+
+            selectionSnapshotRef.current = null;
+            window.setTimeout(() => {
+                const hitToolId = getLineToolsInternal()?._interactionManager?._hitTest?.(point)?.tool?.id();
+                const ctrlOrMeta = event.ctrlKey || event.metaKey || gesture.ctrlOrMeta;
+                duplicateDragPlanRef.current = null;
+
+                if (ctrlOrMeta) {
+                    if (hitToolId) {
+                        const nextSelection = gesture.selectedIds.includes(hitToolId)
+                            ? gesture.selectedIds.filter((id) => id !== hitToolId)
+                            : [...gesture.selectedIds, hitToolId];
+                        syncSelectionByIds(nextSelection, nextSelection[nextSelection.length - 1] ?? null);
+                        return;
+                    }
+                    return;
+                }
+
+                if (hitToolId) {
+                    if (selectedDrawingIdsRef.current.length > 1) {
+                        syncSelectionByIds([hitToolId], hitToolId);
+                    }
+                    return;
+                }
+
+                clearAllDrawingSelections();
+            }, 0);
         };
-        containerRef.current?.addEventListener("pointerdown", handlePointerDown, true);
-        containerRef.current?.addEventListener("pointerup", handlePointerUp, true);
+        chartContainer.addEventListener("pointerdown", handlePointerDown, true);
+        chartContainer.addEventListener("pointerup", handlePointerUp, true);
 
         setIsChartReady(true);
 
@@ -598,8 +933,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             typeof ResizeObserver !== "undefined"
                 ? new ResizeObserver(() => syncChartSize())
                 : null;
-        if (resizeObserver && containerRef.current) {
-            resizeObserver.observe(containerRef.current);
+        if (resizeObserver) {
+            resizeObserver.observe(chartContainer);
         }
 
         const handleVisibleRange = (range: { from: number; to: number } | null) => {
@@ -617,8 +952,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             lineToolsRef.current?.unsubscribeLineToolsAfterEdit?.(handleAfterEdit);
             lineToolsRef.current?.unsubscribeLineToolsDoubleClick?.(handleDoubleClick);
             chart.unsubscribeClick(handleChartClick);
-            containerRef.current?.removeEventListener("pointerdown", handlePointerDown, true);
-            containerRef.current?.removeEventListener("pointerup", handlePointerUp, true);
+            chartContainer.removeEventListener("pointerdown", handlePointerDown, true);
+            chartContainer.removeEventListener("pointerup", handlePointerUp, true);
             lineToolsRef.current = null;
             window.removeEventListener("resize", handleResize);
             window.clearTimeout(timeoutId);
@@ -634,7 +969,16 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             seriesRef.current = null;
             setIsChartReady(false);
         };
-    }, []);
+    }, [
+        clearAllDrawingSelections,
+        duplicateDrawings,
+        getChartPointFromClient,
+        getLineToolsInternal,
+        queueSelectionUpdate,
+        readDrawingToolById,
+        syncSelectionByIds,
+        updateLongShortText,
+    ]);
 
     useEffect(() => {
         if (!lineToolsRef.current || !drawingTool) return;
@@ -684,15 +1028,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         if (!isChartReady || !lineToolsRef.current) return;
         if (!rectangleFillColor && !rectangleBorderColor && !drawingLineColor) return;
 
-        const selectedRaw = lineToolsRef.current.getSelectedLineTools?.();
-        if (!selectedRaw) return;
-
-        let selectedTools: Array<{ id: string; toolType: string; points?: unknown[] }> = [];
-        try {
-            selectedTools = JSON.parse(selectedRaw) as Array<{ id: string; toolType: string; points?: unknown[] }>;
-        } catch {
-            return;
-        }
+        const selectedTools = parseDrawingToolExports(lineToolsRef.current.getSelectedLineTools?.());
+        const selectedIds = selectedTools.map((tool) => tool.id);
 
         const rectangleOptions: { background?: { color: string }; border?: { color: string } } = {};
         if (rectangleFillColor) rectangleOptions.background = { color: rectangleFillColor };
@@ -732,6 +1069,9 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                     applyToLineTool(tool.id, tool.toolType);
                 }
             });
+            window.setTimeout(() => {
+                syncSelectionByIds(selectedIds, lastSelectedDrawingRef.current?.id ?? selectedIds[selectedIds.length - 1] ?? null);
+            }, 0);
             return;
         }
 
@@ -743,7 +1083,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         } else if (lastSelected.toolType === "TrendLine" || lastSelected.toolType === "Path") {
             applyToLineTool(lastSelected.id, lastSelected.toolType);
         }
-    }, [isChartReady, rectangleFillColor, rectangleBorderColor, drawingLineColor]);
+        window.setTimeout(() => {
+            syncSelectionByIds([lastSelected.id], lastSelected.id);
+        }, 0);
+    }, [isChartReady, rectangleFillColor, rectangleBorderColor, drawingLineColor, parseDrawingToolExports, syncSelectionByIds]);
 
     useEffect(() => {
         if (!isChartReady || !lineToolsRef.current) return;
@@ -782,8 +1125,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         if (!isChartReady || !lineToolsRef.current) return;
 
         const handleKeyDown = (e: KeyboardEvent) => {
-            // Delete or Backspace key
-            if ((e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            if (e.key === "Delete" && !e.ctrlKey && !e.metaKey && !e.altKey) {
                 // Only delete if not typing in an input/textarea
                 const target = e.target as HTMLElement;
                 if (
@@ -795,6 +1137,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 }
                 e.preventDefault();
                 lineToolsRef.current?.removeSelectedLineTools();
+                window.setTimeout(() => clearAllDrawingSelections(), 0);
             }
         };
 
@@ -802,7 +1145,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         return () => {
             window.removeEventListener("keydown", handleKeyDown);
         };
-    }, [isChartReady]);
+    }, [clearAllDrawingSelections, isChartReady]);
 
     // Keyboard navigation (scroll/zoom) when chart is hovered
     useEffect(() => {
@@ -906,8 +1249,9 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         scrollToTrade,
         removeAllDrawingTools: () => {
             lineToolsRef.current?.removeAllLineTools();
+            clearAllDrawingSelections();
         },
-    }), [scrollToTrade]);
+    }), [clearAllDrawingSelections, scrollToTrade]);
 
     // Update chart data and auto-scroll to trade
     useEffect(() => {

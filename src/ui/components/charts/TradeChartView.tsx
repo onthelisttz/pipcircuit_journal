@@ -495,6 +495,7 @@ export function TradeChartView({
                         rectangleFillColor={drawingFillRgba}
                         rectangleBorderColor={rectangleFillColor}
                         onDrawingSelectionChange={setSelectedDrawingTool}
+                        onDrawingToolComplete={() => setDrawingTool(null)}
                         longShortLots={longShortLots}
                         longShortSymbol={trade.symbol ?? ""}
                         showRiskReward={showRiskReward}

@@ -691,6 +691,7 @@ export default function ChartPage() {
           rectangleFillColor={drawingFillRgba}
           rectangleBorderColor={rectangleFillColor}
           onDrawingSelectionChange={setSelectedDrawingTool}
+          onDrawingToolComplete={() => setDrawingTool(null)}
           longShortLots={longShortLots}
           longShortSymbol={selection?.symbol}
           showRiskReward={false}
