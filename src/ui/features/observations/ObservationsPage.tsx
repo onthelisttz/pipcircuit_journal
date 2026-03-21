@@ -329,9 +329,16 @@ export function ObservationsPage() {
                   onClick={() => obs.id && openPanel(obs.id, observationIds)}
                   className="flex flex-col rounded-lg border border-border p-4 cursor-pointer hover:bg-accent/30 transition-colors"
                 >
-                  <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-medium text-foreground">{obs.title || "Untitled"}</h3>
+                      <button
+                        type="button"
+                        onClick={() => obs.id && openPanel(obs.id, observationIds)}
+                        className="min-w-0 text-left font-medium text-foreground hover:underline"
+                        title={`Open ${obs.title || "observation"} details`}
+                      >
+                        <span className="block truncate">{obs.title || "Untitled"}</span>
+                      </button>
                       {cat && (
                         <span
                           className="inline-flex items-center rounded-full px-2 py-0.5 text-xs"

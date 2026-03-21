@@ -109,7 +109,6 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
 
   const handleDeleteCategory = useCallback(
     async (id: number) => {
-      // eslint-disable-next-line no-alert
       const confirmed = window.confirm(
         "Delete this category? Existing observations using it will keep their category until you change them."
       );

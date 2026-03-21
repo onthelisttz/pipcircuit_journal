@@ -18,6 +18,7 @@ interface TradePanelDetailTabsProps {
   isPanelExpanded?: boolean;
   onPrevTrade?: () => void;
   onNextTrade?: () => void;
+  onGoToTradePosition?: (position: number) => void;
   canPrevTrade?: boolean;
   canNextTrade?: boolean;
   currentTradePosition?: number;
@@ -39,6 +40,7 @@ export function TradePanelDetailTabs({
   isPanelExpanded = false,
   onPrevTrade,
   onNextTrade,
+  onGoToTradePosition,
   canPrevTrade = false,
   canNextTrade = false,
   currentTradePosition,
@@ -72,6 +74,7 @@ export function TradePanelDetailTabs({
             fillAvailableHeight={isPanelExpanded}
             onPrevTrade={onPrevTrade}
             onNextTrade={onNextTrade}
+            onGoToTradePosition={onGoToTradePosition}
             canPrevTrade={canPrevTrade}
             canNextTrade={canNextTrade}
             currentTradePosition={currentTradePosition}
@@ -95,6 +98,7 @@ export function TradePanelDetailTabs({
           fillAvailableHeight={isPanelExpanded}
           onPrevTrade={onPrevTrade}
           onNextTrade={onNextTrade}
+          onGoToTradePosition={onGoToTradePosition}
           canPrevTrade={canPrevTrade}
           canNextTrade={canNextTrade}
           currentTradePosition={currentTradePosition}

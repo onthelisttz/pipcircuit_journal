@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { type ReactNode } from "react";
 import { AuthProvider, ThemeProvider } from "@ui/providers";
 import { ServiceWorkerRegistration } from "@ui/components/pwa/ServiceWorkerRegistration";
@@ -18,6 +18,14 @@ export const metadata: Metadata = {
     apple: "/icon.svg",
   },
   manifest: "/manifest.webmanifest",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

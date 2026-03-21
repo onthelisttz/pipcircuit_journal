@@ -7,8 +7,16 @@ export function ServiceWorkerRegistration() {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator)) return;
 
+    let hasReloadedForUpdate = false;
+
     const register = async () => {
       try {
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          if (hasReloadedForUpdate) return;
+          hasReloadedForUpdate = true;
+          window.location.reload();
+        });
+
         const registration = await navigator.serviceWorker.register("/sw.js", {
           scope: "/",
         });

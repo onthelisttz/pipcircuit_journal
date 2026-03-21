@@ -24,6 +24,7 @@ import {
 import type { Trade } from "@domain/entities";
 import { useTradePanel, type TradePanelSortState } from "@ui/providers";
 import { TradePanelDetailTabs } from "./TradePanelDetailTabs";
+import { TradePositionInput } from "@ui/components/common/TradePositionInput";
 import { volumeToLots } from "@lib/pnl-estimate";
 
 interface TradePanelContentProps {
@@ -165,6 +166,12 @@ export function TradePanelContent({
       setSelectedTradeId(sortedTrades[selectedIndex + 1].id ?? null);
     }
   }, [selectedIndex, setSelectedTradeId, sortedTrades]);
+
+  const goToTradePosition = useCallback((position: number) => {
+    if (sortedTrades.length === 0) return;
+    const nextIndex = Math.min(sortedTrades.length - 1, Math.max(0, position - 1));
+    setSelectedTradeId(sortedTrades[nextIndex].id ?? null);
+  }, [setSelectedTradeId, sortedTrades]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null): boolean => {
@@ -611,9 +618,18 @@ export function TradePanelContent({
                 >
                   <ChevronLeft className={isChartFocused ? "h-3.5 w-3.5" : "h-4 w-4"} />
                 </button>
-                <span className={isChartFocused ? "text-[11px] text-muted-foreground" : "text-xs text-muted-foreground"}>
-                  {selectedIndex + 1} / {sortedTrades.length}
-                </span>
+                {sortedTrades.length > 0 && selectedIndex >= 0 && (
+                  <TradePositionInput
+                    current={selectedIndex + 1}
+                    total={sortedTrades.length}
+                    onChangePosition={goToTradePosition}
+                    separator="/"
+                    wrapperClassName={isChartFocused ? "text-[11px]" : "text-xs"}
+                    inputClassName={isChartFocused ? "h-5 text-[11px]" : "h-6 text-xs"}
+                    textClassName="text-muted-foreground"
+                    ariaLabel="Go to trade position"
+                  />
+                )}
                 <button
                   onClick={goNext}
                   disabled={selectedIndex >= sortedTrades.length - 1}
@@ -650,6 +666,7 @@ export function TradePanelContent({
                 onNextTrade={goNext}
                 canPrevTrade={selectedIndex > 0}
                 canNextTrade={selectedIndex >= 0 && selectedIndex < sortedTrades.length - 1}
+                onGoToTradePosition={goToTradePosition}
                 isChartExpanded={chartExpanded}
                 onChartExpandedChange={setChartExpanded}
                 fallbackTrade={selectedTrade ?? undefined}
