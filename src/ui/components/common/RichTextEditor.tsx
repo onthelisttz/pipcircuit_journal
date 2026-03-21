@@ -15,6 +15,7 @@ interface RichTextEditorProps {
   placeholder?: string;
   minHeight?: string;
   disabled?: boolean;
+  fillHeight?: boolean;
 }
 
 const ToolbarButton = ({
@@ -44,6 +45,7 @@ export function RichTextEditor({
   placeholder = "Write here…",
   minHeight = "120px",
   disabled = false,
+  fillHeight = false,
 }: RichTextEditorProps) {
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [fontSizePickerOpen, setFontSizePickerOpen] = useState(false);
@@ -144,6 +146,14 @@ export function RichTextEditor({
       return next;
     });
   }, [clampOffset, clampZoom]);
+  const resetImageView = useCallback(() => {
+    activePointersRef.current.clear();
+    pinchStateRef.current = null;
+    panStateRef.current = null;
+    setIsImageGestureActive(false);
+    setImageOffset({ x: 0, y: 0 });
+    setImageZoom(1);
+  }, []);
 
   const fitSize = useMemo(
     () => getFitSize(stageSize, imageNaturalSize),
@@ -286,7 +296,7 @@ export function RichTextEditor({
   if (!editor) return null;
 
   return (
-    <div className="space-y-2">
+    <div className={fillHeight ? "flex min-h-0 flex-1 flex-col space-y-2" : "space-y-2"}>
       {!disabled && (
         <div className="flex flex-wrap items-center gap-1">
           <ToolbarButton
@@ -416,12 +426,12 @@ export function RichTextEditor({
         </div>
       )}
       <div
-        className="rounded-lg border border-border bg-background px-3 py-2 text-sm
+        className={`${fillHeight ? "min-h-0 flex-1" : ""} rounded-lg border border-border bg-background px-3 py-2 text-sm
           [&_.ProseMirror]:outline-none
           [&_.ProseMirror_p]:my-1 [&_.ProseMirror_h1]:text-lg [&_.ProseMirror_h2]:text-base [&_.ProseMirror_h3]:text-sm
           [&_.ProseMirror_img]:cursor-zoom-in [&_.ProseMirror_img]:rounded-lg [&_.ProseMirror_img]:max-w-full
-          [&_.ProseMirror_ul]:list-disc [&_.ProseMirror_ol]:list-decimal [&_.ProseMirror_blockquote]:border-l-2 [&_.ProseMirror_blockquote]:pl-3 [&_.ProseMirror_blockquote]:italic"
-        style={{ minHeight }}
+          [&_.ProseMirror_ul]:list-disc [&_.ProseMirror_ol]:list-decimal [&_.ProseMirror_blockquote]:border-l-2 [&_.ProseMirror_blockquote]:pl-3 [&_.ProseMirror_blockquote]:italic`}
+        style={fillHeight ? { minHeight, height: "100%" } : { minHeight }}
         onClick={(e) => {
           const img = (e.target as HTMLElement).closest("img");
           if (img?.src) {
@@ -445,22 +455,6 @@ export function RichTextEditor({
             updateImageZoom((current) => current + (e.deltaY < 0 ? 0.2 : -0.2));
           }}
         >
-          <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-end p-4 sm:p-6">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                closeZoomedImage();
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              className="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/45 text-white shadow-lg transition hover:bg-black/60"
-              title="Close image"
-              aria-label="Close image"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-
           <div
             ref={stageRef}
             className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-4 py-20 sm:px-8 sm:py-24"
@@ -475,7 +469,7 @@ export function RichTextEditor({
               } else if (e.key === "-") {
                 updateImageZoom((current) => current - 0.25);
               } else if (e.key === "0") {
-                setImageZoom(1);
+                resetImageView();
               }
             }}
             tabIndex={0}
@@ -643,12 +637,22 @@ export function RichTextEditor({
             </div>
           </div>
 
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-4 sm:p-6">
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center p-4 sm:p-6">
             <div
               className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-black/55 px-2 py-2 text-white shadow-lg backdrop-blur"
               onClick={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
             >
+              <button
+                type="button"
+                onClick={closeZoomedImage}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/12"
+                title="Close image"
+                aria-label="Close image"
+              >
+                <X className="h-4 w-4" />
+              </button>
               <button
                 type="button"
                 onClick={() => updateImageZoom((current) => current - 0.25)}
@@ -661,7 +665,7 @@ export function RichTextEditor({
               </button>
               <button
                 type="button"
-                onClick={() => setImageZoom(1)}
+                onClick={resetImageView}
                 onPointerDown={(e) => e.stopPropagation()}
                 className="inline-flex h-9 min-w-20 items-center justify-center rounded-full px-3 text-sm font-medium text-white transition hover:bg-white/12"
                 title="Reset zoom"

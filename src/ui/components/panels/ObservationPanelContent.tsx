@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Expand, Minimize2 } from "lucide-react";
 import { useObservation } from "@ui/hooks";
 import { useObservationCategories } from "@ui/hooks";
 import { useObservationRepository } from "@ui/hooks/useObservationRepository";
@@ -20,9 +20,17 @@ function debouncedSave(repo: { update: (id: number, u: object) => Promise<unknow
 interface ObservationPanelContentProps {
   observationId: number;
   onClose: () => void;
+  isEditorOnlyExpanded?: boolean;
+  onToggleEditorOnlyExpanded?: () => void;
 }
 
-export function ObservationPanelContent({ observationId }: ObservationPanelContentProps) {
+export function ObservationPanelContent({
+  observationId,
+  onClose,
+  isEditorOnlyExpanded = false,
+  onToggleEditorOnlyExpanded,
+}: ObservationPanelContentProps) {
+  void onClose;
   const repo = useObservationRepository();
   const { observation, isLoading, error, refetch } = useObservation(observationId);
   const { categories, refetch: refetchCategories } = useObservationCategories();
@@ -45,7 +53,6 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
   }, [observation]);
 
   useEffect(() => {
-    // Keep local editable names in sync with latest categories
     const map: Record<number, string> = {};
     for (const c of categories) {
       if (c.id != null) {
@@ -115,7 +122,6 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
       if (!confirmed) return;
       try {
         await repo.deleteCategory(id);
-        // If the current observation used this category, clear it
         if (categoryId === id && observation?.id) {
           setCategoryId(null);
           await repo.update(observation.id, { categoryId: null, updatedAt: new Date() });
@@ -147,11 +153,54 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
     );
   }
 
+  const editorSection = (
+    <div className={isEditorOnlyExpanded ? "flex min-h-0 flex-1 flex-col" : ""}>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <label className="block text-xs text-muted-foreground">Description</label>
+        {onToggleEditorOnlyExpanded ? (
+          <button
+            type="button"
+            onClick={onToggleEditorOnlyExpanded}
+            className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label={isEditorOnlyExpanded ? "Exit full page description" : "Expand description to full page"}
+            title={isEditorOnlyExpanded ? "Exit full page description" : "Expand description to full page"}
+          >
+            {isEditorOnlyExpanded ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
+          </button>
+        ) : null}
+      </div>
+      <RichTextEditor
+        value={content}
+        onChange={(html) => {
+          setContent(html);
+          if (observation.id == null) return;
+          debouncedSave(repo, observation.id, html, refetch);
+        }}
+        placeholder="Write your observation..."
+        minHeight={isEditorOnlyExpanded ? "100%" : "180px"}
+        fillHeight={isEditorOnlyExpanded}
+      />
+    </div>
+  );
+
+  if (isEditorOnlyExpanded) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+        {editorSection}
+        {saving && (
+          <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Saving...
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
-      {/* Title - editable */}
       <div>
-        <label className="block text-xs text-muted-foreground mb-1">Title</label>
+        <label className="mb-1 block text-xs text-muted-foreground">Title</label>
         <input
           type="text"
           value={title}
@@ -162,10 +211,9 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
         />
       </div>
 
-      {/* Category - editable */}
       <div>
-        <label className="block text-xs text-muted-foreground mb-1">Category</label>
-        <div className="flex gap-2 flex-wrap">
+        <label className="mb-1 block text-xs text-muted-foreground">Category</label>
+        <div className="flex flex-wrap gap-2">
           <select
             value={categoryId ?? ""}
             onChange={(e) => {
@@ -175,7 +223,7 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
                 repo.update(observation.id!, { categoryId: v, updatedAt: new Date() }).then(() => refetch());
               }
             }}
-            className="rounded-lg border border-border bg-background px-3 py-2 text-sm min-w-[120px]"
+            className="min-w-[120px] rounded-lg border border-border bg-background px-3 py-2 text-sm"
           >
             <option value="">None</option>
             {categories.map((c) => (
@@ -185,13 +233,13 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
             ))}
           </select>
           {showAddCategory ? (
-            <div className="flex gap-2 items-center">
+            <div className="flex items-center gap-2">
               <input
                 type="text"
                 value={newCategoryName}
                 onChange={(e) => setNewCategoryName(e.target.value)}
                 placeholder="New category"
-                className="rounded-lg border border-border bg-background px-3 py-2 text-sm w-32"
+                className="w-32 rounded-lg border border-border bg-background px-3 py-2 text-sm"
                 autoFocus
               />
               <button
@@ -203,7 +251,10 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
               </button>
               <button
                 type="button"
-                onClick={() => { setShowAddCategory(false); setNewCategoryName(""); }}
+                onClick={() => {
+                  setShowAddCategory(false);
+                  setNewCategoryName("");
+                }}
                 className="rounded-lg border border-border px-2 py-1.5 text-xs hover:bg-accent"
               >
                 Cancel
@@ -234,7 +285,7 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
               Rename or delete categories. Deleting does not change existing observations; you can
               reassign them later.
             </p>
-            <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+            <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
               {categories.map((c) =>
                 c.id == null ? null : (
                   <div
@@ -275,33 +326,19 @@ export function ObservationPanelContent({ observationId }: ObservationPanelConte
         )}
       </div>
 
-      {/* Meta - created/updated */}
-      <div className="text-xs text-muted-foreground pt-1 border-t border-border">
+      <div className="border-t border-border pt-1 text-xs text-muted-foreground">
         Created {format(new Date(observation.createdAt), "MMM d, yyyy HH:mm")}
         {observation.updatedAt &&
           String(observation.updatedAt) !== String(observation.createdAt) &&
           ` · Updated ${format(new Date(observation.updatedAt), "MMM d, yyyy HH:mm")}`}
       </div>
 
-      {/* Description - last, with rich editor */}
-      <div>
-        <label className="block text-xs text-muted-foreground mb-1">Description</label>
-        <RichTextEditor
-          value={content}
-          onChange={(html) => {
-            setContent(html);
-            if (observation.id == null) return;
-            debouncedSave(repo, observation.id, html, refetch);
-          }}
-          placeholder="Write your observation…"
-          minHeight="180px"
-        />
-      </div>
+      {editorSection}
 
       {saving && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" />
-          Saving…
+          Saving...
         </div>
       )}
     </div>

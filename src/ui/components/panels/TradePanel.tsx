@@ -25,7 +25,18 @@ export function TradePanel() {
   const { isOpen, title, tradeIds, query, initialSort, closePanel } = useTradePanel();
   const { activeAccount } = useAccount();
   const [isExpanded, setIsExpanded] = useState(false);
-  const [desktopPanelWidth, setDesktopPanelWidth] = useState(DEFAULT_DESKTOP_PANEL_WIDTH_PX);
+  const [desktopPanelWidth, setDesktopPanelWidth] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_DESKTOP_PANEL_WIDTH_PX;
+    const minPanelWidth = DEFAULT_DESKTOP_PANEL_WIDTH_PX;
+    const maxPanelWidth = Math.max(
+      minPanelWidth,
+      Math.floor(window.innerWidth * MAX_DESKTOP_PANEL_WIDTH_RATIO)
+    );
+    const rawStoredWidth = window.localStorage.getItem(PANEL_WIDTH_STORAGE_KEY);
+    const storedWidth = rawStoredWidth ? Number(rawStoredWidth) : DEFAULT_DESKTOP_PANEL_WIDTH_PX;
+    const nextWidth = Number.isFinite(storedWidth) ? storedWidth : DEFAULT_DESKTOP_PANEL_WIDTH_PX;
+    return Math.min(Math.max(nextWidth, minPanelWidth), maxPanelWidth);
+  });
   const [isResizing, setIsResizing] = useState(false);
   const desktopPanelWidthRef = useRef(desktopPanelWidth);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
@@ -47,16 +58,6 @@ export function TradePanel() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const rawStoredWidth = window.localStorage.getItem(PANEL_WIDTH_STORAGE_KEY);
-    if (rawStoredWidth) {
-      const storedWidth = Number(rawStoredWidth);
-      if (Number.isFinite(storedWidth)) {
-        setDesktopPanelWidth(clampDesktopWidth(storedWidth));
-      }
-    } else {
-      setDesktopPanelWidth(clampDesktopWidth(DEFAULT_DESKTOP_PANEL_WIDTH_PX));
-    }
-
     const handleResize = () => {
       setDesktopPanelWidth((prev) => clampDesktopWidth(prev));
     };
@@ -143,7 +144,8 @@ export function TradePanel() {
   useEffect(() => {
     if (isOpen || !isResizing) return;
     resizeCleanupRef.current?.();
-    setIsResizing(false);
+    const timeoutId = window.setTimeout(() => setIsResizing(false), 0);
+    return () => window.clearTimeout(timeoutId);
   }, [isOpen, isResizing]);
 
   const handleResizeStart = useCallback(
@@ -241,7 +243,7 @@ export function TradePanel() {
       aria-labelledby="trade-panel-title"
     >
       <div
-        className="absolute inset-y-0 left-0 hidden w-3 -translate-x-1/2 touch-none items-center justify-center md:flex"
+        className="absolute inset-y-0 left-0 z-10 hidden w-4 cursor-col-resize touch-none items-center justify-center md:flex"
         role="separator"
         aria-label="Resize trade panel"
         aria-orientation="vertical"
