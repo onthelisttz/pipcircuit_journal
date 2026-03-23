@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
-import { getMt5HistoryRoot, listMt5Symbols } from "@infrastructure/mt5/history";
+import {
+  listMt5Symbols,
+  resolveMt5HistoryRoot,
+} from "@infrastructure/mt5/history";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const symbols = await listMt5Symbols();
+    const rootPath = new URL(request.url).searchParams.get("rootPath");
+    const symbols = await listMt5Symbols(rootPath);
     return NextResponse.json({
-      sourcePath: getMt5HistoryRoot(),
+      sourcePath: resolveMt5HistoryRoot(rootPath),
       symbols,
     });
   } catch (error) {
@@ -16,4 +20,3 @@ export async function GET() {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
-

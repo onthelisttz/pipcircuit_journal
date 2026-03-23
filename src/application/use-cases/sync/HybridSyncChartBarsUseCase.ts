@@ -67,7 +67,7 @@ export class HybridSyncChartBarsUseCase {
 
     try {
       // Step 1: Check Dexie first (local)
-      
+      const progress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
       const dexieBars = await this.dexieChartBarRepo.getByWindow(
         symbol,
         "M1",
@@ -77,15 +77,17 @@ export class HybridSyncChartBarsUseCase {
       );
 
       if (dexieBars.length > 0 && !forceFullSync) {
-        
-        
+        // Only short-circuit to Dexie when this symbol already completed a local sync.
+        // Pending/failed/incomplete symbols may have partial bars cached and still need
+        // a full cTrader download to finish the requested range.
+        const isLocallyComplete = progress?.status === "completed";
+
         // Check if we need incremental update (check last sync timestamp)
-        const progress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
         const needsIncrementalUpdate = progress?.lastSyncTime 
           ? new Date(progress.lastSyncTime) < toDate
           : false;
 
-        if (!needsIncrementalUpdate) {
+        if (isLocallyComplete && !needsIncrementalUpdate) {
           
           return {
             success: true,
@@ -96,13 +98,16 @@ export class HybridSyncChartBarsUseCase {
           };
         }
 
-        // Need incremental update - fetch only new data from cTrader
-        
+        // Need incremental update, or local cache is only partial/incomplete.
+        // In both cases continue with cTrader instead of stopping at the cached bars.
         const lastSyncTime = progress?.lastSyncTime ? new Date(progress.lastSyncTime) : fromDate;
         return await this.syncFromCTrader(
           {
             ...params,
-            fromDate: lastSyncTime > fromDate ? lastSyncTime : fromDate,
+            fromDate:
+              isLocallyComplete && lastSyncTime > fromDate
+                ? lastSyncTime
+                : fromDate,
           },
           "ctrader"
         );

@@ -151,10 +151,12 @@ export function SyncedChartWorkspace() {
   const fetchingNextRef = useRef(false);
   const lastVisibleRangeRef = useRef<{ from: number; to: number } | null>(null);
   const chartRef = useRef<TradeCandlestickChartRef | null>(null);
+  const chartAreaRef = useRef<HTMLDivElement>(null);
   const symbolButtonRef = useRef<HTMLButtonElement>(null);
   const symbolMenuRef = useRef<HTMLDivElement>(null);
   const timeframeButtonRef = useRef<HTMLButtonElement>(null);
   const timeframeMenuRef = useRef<HTMLDivElement>(null);
+  const [chartAreaHeight, setChartAreaHeight] = useState(520);
 
   useEffect(() => {
     if (typeof window === "undefined" || !selection) return;
@@ -227,6 +229,29 @@ export function SyncedChartWorkspace() {
       window.removeEventListener("resize", updateHeight);
       window.removeEventListener("keydown", handleKey);
       document.body.style.overflow = "";
+    };
+  }, [isExpanded]);
+
+  useEffect(() => {
+    if (isExpanded) return;
+    const element = chartAreaRef.current;
+    if (!element) return;
+
+    const updateHeight = () => {
+      setChartAreaHeight(Math.max(420, element.clientHeight || 0));
+    };
+
+    updateHeight();
+    const observer =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => updateHeight())
+        : null;
+    observer?.observe(element);
+    window.addEventListener("resize", updateHeight);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateHeight);
     };
   }, [isExpanded]);
 
@@ -666,7 +691,7 @@ export function SyncedChartWorkspace() {
   );
 
   const chartContent = (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       {toolbar}
       {!hasSymbols && (
         <div className="mt-3 rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
@@ -680,11 +705,11 @@ export function SyncedChartWorkspace() {
         </div>
       )}
 
-      <div className="mt-3">
+      <div ref={chartAreaRef} className="mt-3 min-h-[420px] flex-1">
         <TradeCandlestickChart
           ref={chartRef}
           data={data}
-          height={isExpanded ? expandedHeight : 520}
+          height={isExpanded ? expandedHeight : chartAreaHeight}
           isLoading={isLoading}
           drawingTool={drawingTool}
           drawingLineColor={rectangleFillColor}
@@ -699,12 +724,12 @@ export function SyncedChartWorkspace() {
           autoScrollOnData={false}
         />
       </div>
-    </>
+    </div>
   );
   return (
     <>
       <section className="min-w-0 flex-1">
-        <div className="rounded-xl border border-border bg-card p-3 text-foreground">
+        <div className="flex h-full min-h-0 flex-col rounded-xl border border-border bg-card p-3 text-foreground">
           {!isExpanded && chartContent}
         </div>
       </section>

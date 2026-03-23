@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
   const from = Number(searchParams.get("from"));
   const to = Number(searchParams.get("to"));
   const limit = Number(searchParams.get("limit") ?? "10000");
+  const rootPath = searchParams.get("rootPath");
 
   if (!symbol) {
     return NextResponse.json({ error: "Missing symbol." }, { status: 400 });
@@ -41,6 +42,7 @@ export async function GET(request: NextRequest) {
       from,
       to,
       limit: Number.isFinite(limit) ? Math.max(1, Math.min(limit, 50_000)) : 10_000,
+      rootPath,
     });
 
     return NextResponse.json({

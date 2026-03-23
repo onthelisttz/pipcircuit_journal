@@ -30,7 +30,7 @@ export default function ChartPage() {
   }, [mode]);
 
   return (
-    <div className="flex min-h-0 flex-col gap-4">
+    <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Chart</h1>

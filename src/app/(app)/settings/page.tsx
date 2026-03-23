@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChartDataSyncSection } from "@ui/components/settings/ChartDataSyncSection";
 import { DataSyncSection } from "@ui/components/settings/DataSyncSection";
+import { Mt5HistoryPathSection } from "@ui/components/settings/Mt5HistoryPathSection";
 
 export default function SettingsPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -42,6 +43,7 @@ export default function SettingsPage() {
       <div className="space-y-8">
         <DataSyncSection />
         <ChartDataSyncSection />
+        <Mt5HistoryPathSection />
         <section className="rounded-xl border border-border bg-card/80 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>

@@ -22,6 +22,9 @@ import {
 import type { ChartBar, ChartTimeframe, Trade } from "@domain/entities";
 import { Direction, OrderType } from "@domain/enums";
 import { TradeCandlestickChart } from "@ui/components/charts";
+import { createSettingsRepository } from "@infrastructure/db/createDualRepositories";
+import { MT5_HISTORY_ROOT_SETTING_KEY } from "@lib/mt5";
+import { useAuth } from "@ui/hooks/useAuth";
 import type {
   DrawingToolType,
   TradeCandlestickChartRef,
@@ -257,11 +260,7 @@ function SingleDatePopover({
 }: SingleDatePopoverProps) {
   const [tempDate, setTempDate] = useState<Date>(value);
   const [visibleMonth, setVisibleMonth] = useState<Date>(startOfMonth(value));
-
-  useEffect(() => {
-    setTempDate(value);
-    setVisibleMonth(startOfMonth(value));
-  }, [value]);
+  const [isApplyEnabled, setIsApplyEnabled] = useState(true);
 
   const monthDays = useMemo(() => buildMonthDays(visibleMonth), [visibleMonth]);
   const firstWeekday = new Date(visibleMonth).getDay();
@@ -290,7 +289,10 @@ function SingleDatePopover({
       <div className="mb-3 flex items-center justify-between gap-2">
         <button
           type="button"
-          onClick={() => setVisibleMonth((prev) => addMonths(prev, -1))}
+          onClick={() => {
+            setVisibleMonth((prev) => addMonths(prev, -1));
+            setIsApplyEnabled(false);
+          }}
           disabled={!canGoPrev}
           className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="Previous month"
@@ -301,11 +303,12 @@ function SingleDatePopover({
         <div className="flex items-center gap-2">
           <select
             value={visibleMonth.getMonth()}
-            onChange={(event) =>
+            onChange={(event) => {
               setVisibleMonth(
                 new Date(visibleMonth.getFullYear(), Number(event.target.value), 1)
-              )
-            }
+              );
+              setIsApplyEnabled(false);
+            }}
             className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
             aria-label="Select month"
           >
@@ -317,11 +320,12 @@ function SingleDatePopover({
           </select>
           <select
             value={visibleMonth.getFullYear()}
-            onChange={(event) =>
+            onChange={(event) => {
               setVisibleMonth(
                 new Date(Number(event.target.value), visibleMonth.getMonth(), 1)
-              )
-            }
+              );
+              setIsApplyEnabled(false);
+            }}
             className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
             aria-label="Select year"
           >
@@ -338,7 +342,10 @@ function SingleDatePopover({
 
         <button
           type="button"
-          onClick={() => setVisibleMonth((prev) => addMonths(prev, 1))}
+          onClick={() => {
+            setVisibleMonth((prev) => addMonths(prev, 1));
+            setIsApplyEnabled(false);
+          }}
           disabled={!canGoNext}
           className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="Next month"
@@ -372,7 +379,10 @@ function SingleDatePopover({
               key={day.toISOString()}
               type="button"
               disabled={isDisabled}
-              onClick={() => setTempDate(day)}
+              onClick={() => {
+                setTempDate(day);
+                setIsApplyEnabled(true);
+              }}
               className={[
                 "h-8 w-8 rounded-full text-xs transition-colors",
                 isSelected
@@ -400,8 +410,9 @@ function SingleDatePopover({
         </button>
         <button
           type="button"
+          disabled={!isApplyEnabled}
           onClick={() => onApply(tempDate)}
-          className="rounded-lg bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+          className="rounded-lg bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Apply
         </button>
@@ -413,8 +424,10 @@ function SingleDatePopover({
 export function Mt5HistoryWorkspace({
   onAvailabilityTextChange,
 }: Mt5HistoryWorkspaceProps) {
+  const { user } = useAuth();
   const chartRef = useRef<TradeCandlestickChartRef | null>(null);
   const barsRef = useRef<ChartBar[]>([]);
+  const chartAreaRef = useRef<HTMLDivElement>(null);
   const datePickerRef = useRef<HTMLDivElement | null>(null);
   const loadedRangeRef = useRef<LoadedRange | null>(null);
   const requestedRangeRef = useRef<LoadedRange | null>(null);
@@ -433,6 +446,7 @@ export function Mt5HistoryWorkspace({
   const lastRequestedNextRangeKeyRef = useRef("");
 
   const [meta, setMeta] = useState<MetaResponse | null>(null);
+  const [historyRootPath, setHistoryRootPath] = useState("");
   const [metaError, setMetaError] = useState<string | null>(null);
   const [isMetaLoading, setIsMetaLoading] = useState(true);
 
@@ -450,6 +464,7 @@ export function Mt5HistoryWorkspace({
   const [longShortLots, setLongShortLots] = useState(1);
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedHeight, setExpandedHeight] = useState(640);
+  const [chartAreaHeight, setChartAreaHeight] = useState(520);
 
   const [bars, setBars] = useState<ChartBar[]>([]);
   const [loadedRange, setLoadedRange] = useState<LoadedRange | null>(null);
@@ -477,6 +492,29 @@ export function Mt5HistoryWorkspace({
   );
 
   const activeSeriesKey = `${symbol}|${selectedTimeframe?.timeframe ?? ""}`;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRootPath = async () => {
+      try {
+        const repo = createSettingsRepository(user?.id);
+        const record = await repo.get(MT5_HISTORY_ROOT_SETTING_KEY);
+        if (cancelled) return;
+        setHistoryRootPath(typeof record?.value === "string" ? record.value.trim() : "");
+      } catch {
+        if (!cancelled) {
+          setHistoryRootPath("");
+        }
+      }
+    };
+
+    void loadRootPath();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
 
   const viewerTrade = useMemo<Trade>(() => {
     if (!symbol || focusTimestamp == null) return PLACEHOLDER_TRADE;
@@ -535,6 +573,29 @@ export function Mt5HistoryWorkspace({
       window.removeEventListener("resize", updateHeight);
       window.removeEventListener("keydown", handleKey);
       document.body.style.overflow = "";
+    };
+  }, [isExpanded]);
+
+  useEffect(() => {
+    if (isExpanded) return;
+    const element = chartAreaRef.current;
+    if (!element) return;
+
+    const updateHeight = () => {
+      setChartAreaHeight(Math.max(420, element.clientHeight || 0));
+    };
+
+    updateHeight();
+    const observer =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => updateHeight())
+        : null;
+    observer?.observe(element);
+    window.addEventListener("resize", updateHeight);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateHeight);
     };
   }, [isExpanded]);
 
@@ -606,7 +667,14 @@ export function Mt5HistoryWorkspace({
       setIsMetaLoading(true);
       setMetaError(null);
       try {
-        const response = await fetch("/api/mt5/history/meta", { cache: "no-store" });
+        const params = new URLSearchParams();
+        if (historyRootPath) {
+          params.set("rootPath", historyRootPath);
+        }
+        const response = await fetch(
+          `/api/mt5/history/meta${params.toString() ? `?${params.toString()}` : ""}`,
+          { cache: "no-store" }
+        );
         const data = (await response.json()) as MetaResponse;
         if (!response.ok) {
           throw new Error(data.error ?? "Failed to load MT5 history metadata.");
@@ -639,7 +707,7 @@ export function Mt5HistoryWorkspace({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [historyRootPath]);
 
   useEffect(() => {
     if (!selectedSymbol) return;
@@ -659,6 +727,9 @@ export function Mt5HistoryWorkspace({
         to: String(range.to),
         limit: String(LOAD_LIMIT),
       });
+      if (historyRootPath) {
+        params.set("rootPath", historyRootPath);
+      }
 
       const response = await fetch(`/api/mt5/history/bars?${params.toString()}`, {
         cache: "no-store",
@@ -669,7 +740,7 @@ export function Mt5HistoryWorkspace({
       }
       return payload.bars;
     },
-    [selectedTimeframe, symbol]
+    [historyRootPath, selectedTimeframe, symbol]
   );
 
   const loadWindow = useCallback(
@@ -801,7 +872,7 @@ export function Mt5HistoryWorkspace({
     if (!shouldCenterOnNextDataRef.current || bars.length === 0) return;
     shouldCenterOnNextDataRef.current = false;
     window.setTimeout(() => {
-      chartRef.current?.scrollToTrade();
+      chartRef.current?.fitContent();
       lastVisibleRangeRef.current = null;
       suppressEdgeLoadingUntilRef.current = Date.now() + 220;
     }, 80);
@@ -1018,6 +1089,7 @@ export function Mt5HistoryWorkspace({
         </button>
         {isDatePickerOpen && selectedTimeframe && goToDate && (
           <SingleDatePopover
+            key={goToDate}
             value={new Date(`${goToDate}T00:00:00`)}
             min={new Date(selectedTimeframe.from)}
             max={new Date(selectedTimeframe.to)}
@@ -1160,7 +1232,7 @@ export function Mt5HistoryWorkspace({
   );
 
   const chartContent = (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       {toolbar}
 
       {metaError && (
@@ -1175,14 +1247,14 @@ export function Mt5HistoryWorkspace({
         </div>
       )}
 
-      <div className="mt-3">
+      <div ref={chartAreaRef} className="mt-3 min-h-[420px] flex-1">
         <TradeCandlestickChart
           key={chartInstanceKey}
           ref={chartRef}
           data={bars}
           dataUpdateMode={chartUpdateMode}
           trade={viewerTrade}
-          height={isExpanded ? expandedHeight : 520}
+          height={isExpanded ? expandedHeight : chartAreaHeight}
           isLoading={isBarsLoading}
           drawingTool={drawingTool}
           drawingLineColor={rectangleFillColor}
@@ -1200,13 +1272,13 @@ export function Mt5HistoryWorkspace({
           autoScrollOnData={false}
         />
       </div>
-    </>
+    </div>
   );
 
   return (
     <>
       <section className="min-w-0 flex-1">
-        <div className="rounded-xl border border-border bg-card p-3 text-foreground">
+        <div className="flex h-full min-h-0 flex-col rounded-xl border border-border bg-card p-3 text-foreground">
           {!isExpanded && chartContent}
         </div>
       </section>

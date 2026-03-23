@@ -55,6 +55,10 @@ export function getMt5HistoryRoot(): string {
   return process.env.MT5_HISTORY_ROOT?.trim() || DEFAULT_MT5_HISTORY_ROOT;
 }
 
+export function resolveMt5HistoryRoot(overridePath?: string | null): string {
+  return overridePath?.trim() || getMt5HistoryRoot();
+}
+
 function normalizeTimeframe(fileName: string): ChartTimeframe | null {
   const base = path.basename(fileName, path.extname(fileName)).toUpperCase();
   if (base === "DAILY") return "D1";
@@ -202,8 +206,17 @@ async function upperBoundIndex(
   return left;
 }
 
-function buildCacheFilePath(symbol: string, timeframe: ChartTimeframe): string {
-  return path.join(getMt5HistoryRoot(), symbol, "cache", timeframeToCacheFile(timeframe));
+function buildCacheFilePath(
+  symbol: string,
+  timeframe: ChartTimeframe,
+  rootOverride?: string | null
+): string {
+  return path.join(
+    resolveMt5HistoryRoot(rootOverride),
+    symbol,
+    "cache",
+    timeframeToCacheFile(timeframe)
+  );
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -304,8 +317,8 @@ function aggregateBarsToTimeframe(
   return aggregated;
 }
 
-export async function listMt5Symbols(): Promise<Mt5SymbolSummary[]> {
-  const root = getMt5HistoryRoot();
+export async function listMt5Symbols(rootOverride?: string | null): Promise<Mt5SymbolSummary[]> {
+  const root = resolveMt5HistoryRoot(rootOverride);
   const symbolEntries = await fs.readdir(root, { withFileTypes: true });
   const symbols = symbolEntries
     .filter((entry) => entry.isDirectory())
@@ -376,9 +389,10 @@ export async function readMt5Bars(params: {
   from: number;
   to: number;
   limit?: number;
+  rootPath?: string | null;
 }): Promise<ChartBar[]> {
-  const { symbol, timeframe, from, to, limit = 10_000 } = params;
-  const filePath = buildCacheFilePath(symbol, timeframe);
+  const { symbol, timeframe, from, to, limit = 10_000, rootPath } = params;
+  const filePath = buildCacheFilePath(symbol, timeframe, rootPath);
   if (!(await fileExists(filePath)) && timeframe !== "M1") {
     const ratio = Math.max(1, Math.ceil(TIMEFRAME_TO_MS[timeframe] / TIMEFRAME_TO_MS.M1));
     const m1Bars = await readMt5Bars({
@@ -387,6 +401,7 @@ export async function readMt5Bars(params: {
       from,
       to,
       limit: limit * ratio,
+      rootPath,
     });
     return aggregateBarsToTimeframe(m1Bars, timeframe).slice(0, limit);
   }

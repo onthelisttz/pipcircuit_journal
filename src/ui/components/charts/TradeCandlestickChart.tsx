@@ -69,6 +69,7 @@ function formatCrosshairDateTime(time: unknown): string {
     }
 
     return new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
         timeZone: "UTC",
         year: "numeric",
         month: "short",
