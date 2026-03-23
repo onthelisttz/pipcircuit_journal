@@ -55,6 +55,29 @@ function isDrawingToolType(toolType: string): toolType is DrawingToolType {
     return toolType === "Rectangle" || toolType === "TrendLine" || toolType === "Path" || toolType === "LongShortPosition";
 }
 
+function formatCrosshairDateTime(time: unknown): string {
+    let date: Date;
+    if (typeof time === "number") {
+        date = new Date(time * 1000);
+    } else if (typeof time === "string") {
+        date = new Date(time);
+    } else if (time && typeof time === "object" && "year" in time && "month" in time && "day" in time) {
+        const businessDay = time as { year: number; month: number; day: number };
+        date = new Date(Date.UTC(businessDay.year, businessDay.month - 1, businessDay.day));
+    } else {
+        return String(time ?? "");
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+        timeZone: "UTC",
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    }).format(date);
+}
+
 export interface TradeCandlestickChartProps {
     /** Chart bar data to display */
     data: ChartBar[];
@@ -96,6 +119,8 @@ export interface TradeCandlestickChartProps {
     autoScrollOnData?: boolean;
     /** Default zoom-out level used when centering trade */
     zoomOutMultiplier?: number;
+    /** Hint for how incoming data changed so large history updates can stay incremental */
+    dataUpdateMode?: "auto" | "replace" | "append" | "prepend";
 }
 
 export interface TradeCandlestickChartRef {
@@ -129,6 +154,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     showRiskRewardLabels = true,
     autoScrollOnData = true,
     zoomOutMultiplier = 3.2,
+    dataUpdateMode = "auto",
 }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -454,22 +480,65 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             : rightIndex;
     }, []);
 
-    // Convert ChartBar data to Lightweight Charts format (sorted, deduplicated by time)
-    const formatData = useCallback((bars: ChartBar[]): CandlestickData<Time>[] => {
-        const sorted = [...bars].sort((a, b) => a.timestamp - b.timestamp);
-        const byTime = new Map<number, CandlestickData<Time>>();
-        for (const bar of sorted) {
-            const time = (bar.timestamp / 1000) as Time;
-            byTime.set(bar.timestamp, {
-                time,
-                open: bar.open,
-                high: bar.high,
-                low: bar.low,
-                close: bar.close,
-            });
+    const toCandlestickPoint = useCallback((bar: ChartBar): CandlestickData<Time> => ({
+        time: (bar.timestamp / 1000) as Time,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+    }), []);
+
+    const isAppendOnlyUpdate = useCallback((previousBars: ChartBar[], nextBars: ChartBar[]) => {
+        if (previousBars.length === 0 || nextBars.length <= previousBars.length) {
+            return false;
         }
-        return Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number));
+
+        for (let index = 0; index < previousBars.length; index += 1) {
+            const previousBar = previousBars[index];
+            const nextBar = nextBars[index];
+            if (
+                previousBar.timestamp !== nextBar.timestamp ||
+                previousBar.open !== nextBar.open ||
+                previousBar.high !== nextBar.high ||
+                previousBar.low !== nextBar.low ||
+                previousBar.close !== nextBar.close
+            ) {
+                return false;
+            }
+        }
+
+        return nextBars[nextBars.length - 1].timestamp > previousBars[previousBars.length - 1].timestamp;
     }, []);
+
+    const getPrependedBarCount = useCallback((previousBars: ChartBar[], nextBars: ChartBar[]) => {
+        if (previousBars.length === 0 || nextBars.length <= previousBars.length) {
+            return 0;
+        }
+
+        const prependedCount = nextBars.length - previousBars.length;
+        for (let index = 0; index < previousBars.length; index += 1) {
+            const previousBar = previousBars[index];
+            const nextBar = nextBars[index + prependedCount];
+            if (
+                !nextBar ||
+                previousBar.timestamp !== nextBar.timestamp ||
+                previousBar.open !== nextBar.open ||
+                previousBar.high !== nextBar.high ||
+                previousBar.low !== nextBar.low ||
+                previousBar.close !== nextBar.close
+            ) {
+                return 0;
+            }
+        }
+
+        return prependedCount;
+    }, []);
+
+    // Convert ChartBar data to Lightweight Charts format.
+    // Data from MT5 history is already sorted and deduplicated, so skip the expensive sort+Map.
+    const formatData = useCallback((bars: ChartBar[]): CandlestickData<Time>[] => {
+        return bars.map(toCandlestickPoint);
+    }, [toCandlestickPoint]);
 
     // Scroll chart to center on trade timeframe
     const scrollToTrade = useCallback((zoomOutMultiplier = 3.2) => {
@@ -539,25 +608,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 secondsVisible: false,
             },
             localization: {
-                timeFormatter: (time: unknown) => {
-                    let date: Date;
-                    if (typeof time === "number") {
-                        date = new Date(time * 1000);
-                    } else if (typeof time === "string") {
-                        date = new Date(time);
-                    } else if (time && typeof time === "object" && "year" in time && "month" in time && "day" in time) {
-                        const t = time as { year: number; month: number; day: number };
-                        date = new Date(t.year, t.month - 1, t.day);
-                    } else {
-                        return String(time ?? "");
-                    }
-                    return date.toLocaleString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                    });
-                },
+                timeFormatter: formatCrosshairDateTime,
                 priceFormatter: (price: number) => {
                     // Format price with thousand separators
                     // Determine decimal places based on price magnitude and typical trading ranges
@@ -1260,32 +1311,80 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const timeScale = chartRef.current?.timeScale();
         const previousBars = prevBarsRef.current;
         const currentRange = !autoScrollOnData && timeScale ? timeScale.getVisibleLogicalRange() : null;
+        const appendOnlyUpdate =
+            !autoScrollOnData &&
+            (dataUpdateMode === "append" ||
+                (dataUpdateMode === "auto" && isAppendOnlyUpdate(previousBars, data)));
+        const prependedBarCount =
+            !autoScrollOnData
+                ? dataUpdateMode === "prepend"
+                    ? Math.max(0, data.length - previousBars.length)
+                    : dataUpdateMode === "auto"
+                        ? getPrependedBarCount(previousBars, data)
+                        : 0
+                : 0;
 
-        const formattedData = formatData(data);
-        seriesRef.current.setData(formattedData);
+        if (appendOnlyUpdate) {
+            const appendedBars = data.slice(previousBars.length);
+            if (appendedBars.length <= 50) {
+                // Small appends: incremental updates (fast, flicker-free)
+                for (const bar of appendedBars) {
+                    seriesRef.current.update(toCandlestickPoint(bar));
+                }
+            } else {
+                // Large appends: bulk setData (avoids main-thread freeze from 4000+ update calls)
+                const formattedData = formatData(data);
+                seriesRef.current.setData(formattedData);
+                // Restore viewport SYNCHRONOUSLY to prevent flicker —
+                // the browser hasn't painted yet, so there's no visible flash
+                if (timeScale && currentRange && previousBars.length > 0) {
+                    suppressVisibleRangeUntilRef.current = Date.now() + 60;
+                    timeScale.setVisibleLogicalRange(currentRange);
+                }
+            }
+        } else {
+            const formattedData = formatData(data);
+            seriesRef.current.setData(formattedData);
+        }
 
         if (!autoScrollOnData) {
             if (timeScale && currentRange && previousBars.length > 0) {
-                const newIndexByTimestamp = new Map<number, number>();
-                for (let i = 0; i < data.length; i += 1) {
-                    newIndexByTimestamp.set(data[i].timestamp, i);
-                }
+                if (appendOnlyUpdate) {
+                    // Small appends already handled above; large appends already restored viewport.
+                    // Just suppress edge callbacks briefly for stability.
+                    suppressVisibleRangeUntilRef.current = Math.max(
+                        suppressVisibleRangeUntilRef.current,
+                        Date.now() + 30
+                    );
+                } else if (prependedBarCount > 0) {
+                    suppressVisibleRangeUntilRef.current = Date.now() + 60;
+                    timeScale.setVisibleLogicalRange({
+                        from: currentRange.from + prependedBarCount,
+                        to: currentRange.to + prependedBarCount,
+                    });
+                } else {
+                    const newIndexByTimestamp = new Map<number, number>();
+                    for (let i = 0; i < data.length; i += 1) {
+                        newIndexByTimestamp.set(data[i].timestamp, i);
+                    }
 
-                const centerLogical = (currentRange.from + currentRange.to) / 2;
-                const anchorOldIndex = Math.max(0, Math.min(previousBars.length - 1, Math.round(centerLogical)));
-                const anchorTimestamp = previousBars[anchorOldIndex]?.timestamp;
-                if (anchorTimestamp != null) {
-                    const anchorNewIndex =
-                        newIndexByTimestamp.get(anchorTimestamp) ?? findNearestIndexByTimestamp(data, anchorTimestamp);
-                    const delta = anchorNewIndex - anchorOldIndex;
-                    if (delta !== 0 && Math.abs(delta) < data.length) {
-                        suppressVisibleRangeUntilRef.current = Date.now() + 120;
-                        requestAnimationFrame(() => {
+                    const centerLogical = (currentRange.from + currentRange.to) / 2;
+                    const anchorOldIndex = Math.max(0, Math.min(previousBars.length - 1, Math.round(centerLogical)));
+                    const anchorTimestamp = previousBars[anchorOldIndex]?.timestamp;
+                    if (anchorTimestamp != null) {
+                        const anchorNewIndex =
+                            newIndexByTimestamp.get(anchorTimestamp) ?? findNearestIndexByTimestamp(data, anchorTimestamp);
+                        const delta = anchorNewIndex - anchorOldIndex;
+                        if (Math.abs(delta) < data.length) {
+                            suppressVisibleRangeUntilRef.current = Date.now() + 60;
                             timeScale.setVisibleLogicalRange({
                                 from: currentRange.from + delta,
                                 to: currentRange.to + delta,
                             });
-                        });
+                        }
+                    } else {
+                        suppressVisibleRangeUntilRef.current = Date.now() + 60;
+                        timeScale.setVisibleLogicalRange(currentRange);
                     }
                 }
             }
@@ -1305,7 +1404,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             chartRef.current?.timeScale().fitContent();
         }
         prevBarsRef.current = data;
-    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, findNearestIndexByTimestamp, zoomOutMultiplier]);
+    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, dataUpdateMode, findNearestIndexByTimestamp, getPrependedBarCount, isAppendOnlyUpdate, toCandlestickPoint, zoomOutMultiplier]);
 
     // Manage R:R Visualization (Plugin + Price Lines) with Adaptive Scaling
     useEffect(() => {

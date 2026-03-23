@@ -17,6 +17,7 @@ export function ServiceWorkerRegistration() {
           window.location.reload();
         });
 
+        // Temporary cache disable: comment out the line below to stop registering `/sw.js`.
         const registration = await navigator.serviceWorker.register("/sw.js", {
           scope: "/",
         });

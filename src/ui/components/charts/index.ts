@@ -18,3 +18,6 @@ export type { ChartControlsProps } from "./ChartControls";
 
 export { TradeChartView } from "./TradeChartView";
 export type { TradeChartViewProps } from "./TradeChartView";
+
+export { SyncedChartWorkspace } from "./SyncedChartWorkspace";
+export { Mt5HistoryWorkspace } from "./Mt5HistoryWorkspace";
