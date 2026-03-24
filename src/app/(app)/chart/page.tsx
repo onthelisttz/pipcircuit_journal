@@ -1,39 +1,309 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Mt5HistoryWorkspace, SyncedChartWorkspace } from "@ui/components/charts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link2, Link2Off } from "lucide-react";
+import {
+  Mt5HistoryWorkspace,
+  SyncedChartWorkspace,
+  ChartTabBar,
+  ChartLayoutSelector,
+  ChartLayoutGrid,
+  paneCountForLayout,
+} from "@ui/components/charts";
+import type { ChartTab, ChartPane, LayoutType } from "@ui/components/charts";
 
 type ChartMode = "synced" | "history";
 
 const CHART_MODE_KEY = "chartWorkspaceMode";
+const SYNCED_TABS_KEY = "chartTabs_synced";
+const SYNCED_ACTIVE_KEY = "chartActiveTab_synced";
+const HISTORY_TABS_KEY = "chartTabs_history";
+const HISTORY_ACTIVE_KEY = "chartActiveTab_history";
+
+function generateId(): string {
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function makePane(symbol = "", broker?: string): ChartPane {
+  return { id: generateId(), symbol, broker };
+}
+
+function makeTab(symbol = "", broker?: string): ChartTab {
+  return {
+    id: generateId(),
+    layout: "single",
+    panes: [makePane(symbol, broker)],
+    activePaneIndex: 0,
+  };
+}
 
 function readStoredMode(): ChartMode {
   if (typeof window === "undefined") return "synced";
   try {
     const raw = window.localStorage.getItem(CHART_MODE_KEY);
-    if (raw === "synced" || raw === "history") {
-      return raw;
-    }
-  } catch {
-    // ignore
-  }
+    if (raw === "synced" || raw === "history") return raw;
+  } catch { /* ignore */ }
   return "synced";
+}
+
+function readStoredTabs(key: string): ChartTab[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].panes) return parsed;
+  } catch { /* ignore */ }
+  return [];
+}
+
+function readStoredActiveTab(key: string, tabs: ChartTab[]): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const stored = window.localStorage.getItem(key) ?? "";
+    if (stored && tabs.some((t) => t.id === stored)) return stored;
+  } catch { /* ignore */ }
+  return tabs[0]?.id ?? "";
+}
+
+function tabsKeyForMode(m: ChartMode) {
+  return m === "synced" ? SYNCED_TABS_KEY : HISTORY_TABS_KEY;
+}
+function activeKeyForMode(m: ChartMode) {
+  return m === "synced" ? SYNCED_ACTIVE_KEY : HISTORY_ACTIVE_KEY;
 }
 
 export default function ChartPage() {
   const [mode, setMode] = useState<ChartMode>(() => readStoredMode());
   const [historyAvailabilityText, setHistoryAvailabilityText] = useState<string | null>(null);
+  const [syncTimeframes, setSyncTimeframes] = useState(false);
 
+  // Per-mode tab state — compute once so tab IDs match between tabs and activeId
+  const syncedInitRef = useRef<{ tabs: ChartTab[]; activeId: string } | null>(null);
+  if (!syncedInitRef.current) {
+    const t = readStoredTabs(tabsKeyForMode("synced"));
+    const tabs = t.length > 0 ? t : [makeTab()];
+    syncedInitRef.current = { tabs, activeId: readStoredActiveTab(activeKeyForMode("synced"), tabs) };
+  }
+  const historyInitRef = useRef<{ tabs: ChartTab[]; activeId: string } | null>(null);
+  if (!historyInitRef.current) {
+    const t = readStoredTabs(tabsKeyForMode("history"));
+    const tabs = t.length > 0 ? t : [makeTab()];
+    historyInitRef.current = { tabs, activeId: readStoredActiveTab(activeKeyForMode("history"), tabs) };
+  }
+
+  const [syncedTabs, setSyncedTabs] = useState<ChartTab[]>(syncedInitRef.current.tabs);
+  const [syncedActiveId, setSyncedActiveId] = useState<string>(syncedInitRef.current.activeId);
+  const [historyTabs, setHistoryTabs] = useState<ChartTab[]>(historyInitRef.current.tabs);
+  const [historyActiveId, setHistoryActiveId] = useState<string>(historyInitRef.current.activeId);
+
+  // Derived: current mode's tabs/active
+  const tabs = mode === "synced" ? syncedTabs : historyTabs;
+  const activeTabId = mode === "synced" ? syncedActiveId : historyActiveId;
+
+  // Refs that always point to the current mode's setters (avoids stale closures)
+  const setTabsRef = useRef(mode === "synced" ? setSyncedTabs : setHistoryTabs);
+  const setActiveTabIdRef = useRef(mode === "synced" ? setSyncedActiveId : setHistoryActiveId);
+  setTabsRef.current = mode === "synced" ? setSyncedTabs : setHistoryTabs;
+  setActiveTabIdRef.current = mode === "synced" ? setSyncedActiveId : setHistoryActiveId;
+
+  const activeTab = useMemo(
+    () => tabs.find((t) => t.id === activeTabId) ?? tabs[0],
+    [tabs, activeTabId]
+  );
+
+  const isMultiPane = (activeTab?.layout ?? "single") !== "single";
+
+  // --- Persist ---
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(CHART_MODE_KEY, mode);
   }, [mode]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SYNCED_TABS_KEY, JSON.stringify(syncedTabs));
+  }, [syncedTabs]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SYNCED_ACTIVE_KEY, syncedActiveId);
+  }, [syncedActiveId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(HISTORY_TABS_KEY, JSON.stringify(historyTabs));
+  }, [historyTabs]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(HISTORY_ACTIVE_KEY, historyActiveId);
+  }, [historyActiveId]);
+
+  // --- Tab operations ---
+  const handleTabSelect = useCallback((tabId: string) => {
+    setActiveTabIdRef.current(tabId);
+  }, []);
+
+  const handleTabClose = useCallback(
+    (tabId: string) => {
+      setTabsRef.current((prev) => {
+        if (prev.length <= 1) return prev;
+        const next = prev.filter((t) => t.id !== tabId);
+        if (activeTabId === tabId) {
+          const closedIndex = prev.findIndex((t) => t.id === tabId);
+          const newActive = next[Math.min(closedIndex, next.length - 1)];
+          setActiveTabIdRef.current(newActive.id);
+        }
+        return next;
+      });
+    },
+    [activeTabId]
+  );
+
+  const handleTabAdd = useCallback(() => {
+    const newTab = makeTab();
+    setTabsRef.current((prev) => [...prev, newTab]);
+    setActiveTabIdRef.current(newTab.id);
+  }, []);
+
+  const handleTabDuplicate = useCallback(
+    (tabId: string) => {
+      setTabsRef.current((prev) => {
+        const source = prev.find((t) => t.id === tabId);
+        if (!source) return prev;
+        const dup: ChartTab = {
+          ...source,
+          id: generateId(),
+          panes: source.panes.map((p) => ({ ...p, id: generateId() })),
+        };
+        const idx = prev.findIndex((t) => t.id === tabId);
+        const next = [...prev];
+        next.splice(idx + 1, 0, dup);
+        setActiveTabIdRef.current(dup.id);
+        return next;
+      });
+    },
+    []
+  );
+
+  const handleTabReorder = useCallback((reordered: ChartTab[]) => {
+    setTabsRef.current(reordered);
+  }, []);
+
+  // --- Layout ---
+  const handleLayoutChange = useCallback(
+    (layout: LayoutType) => {
+      setTabsRef.current((prev) =>
+        prev.map((t) => {
+          if (t.id !== activeTabId) return t;
+          const needed = paneCountForLayout(layout);
+          let panes = [...t.panes];
+          while (panes.length < needed) panes.push(makePane());
+          if (panes.length > needed) panes = panes.slice(0, needed);
+          return { ...t, layout, panes, activePaneIndex: Math.min(t.activePaneIndex, needed - 1) };
+        })
+      );
+    },
+    [activeTabId]
+  );
+
+  const handleActivePaneChange = useCallback(
+    (index: number) => {
+      setTabsRef.current((prev) =>
+        prev.map((t) => (t.id === activeTabId ? { ...t, activePaneIndex: index } : t))
+      );
+    },
+    [activeTabId]
+  );
+
+  // --- Pane data updates ---
+  const updatePaneField = useCallback(
+    (paneIndex: number, fields: Partial<ChartPane>) => {
+      setTabsRef.current((prev) =>
+        prev.map((t) => {
+          if (t.id !== activeTabId) return t;
+          const panes = t.panes.map((p, i) =>
+            i === paneIndex ? { ...p, ...fields } : p
+          );
+          return { ...t, panes };
+        })
+      );
+    },
+    [activeTabId]
+  );
+
+  // Sync timeframes across panes when toggled
+  const handleTimeframeChangeForPane = useCallback(
+    (paneIndex: number, timeframe: string) => {
+      if (syncTimeframes) {
+        setTabsRef.current((prev) =>
+          prev.map((t) => {
+            if (t.id !== activeTabId) return t;
+            const panes = t.panes.map((p) => ({ ...p, timeframe }));
+            return { ...t, panes };
+          })
+        );
+      } else {
+        updatePaneField(paneIndex, { timeframe });
+      }
+    },
+    [activeTabId, syncTimeframes, updatePaneField]
+  );
+
+  // Creates per-pane callbacks
+  const makePaneCallbacks = useCallback(
+    (paneIndex: number) => ({
+      onSyncedSymbolChange: (symbol: string, broker: string) => {
+        updatePaneField(paneIndex, { symbol, broker });
+      },
+      onMt5SymbolChange: (symbol: string) => {
+        updatePaneField(paneIndex, { symbol });
+      },
+      onTimeframeChange: (timeframe: string) => {
+        handleTimeframeChangeForPane(paneIndex, timeframe);
+      },
+    }),
+    [updatePaneField, handleTimeframeChangeForPane]
+  );
+
+  // --- Render pane ---
+  const renderPane = useCallback(
+    (pane: ChartPane, index: number, _isActive: boolean) => {
+      const cbs = makePaneCallbacks(index);
+
+      if (mode === "synced") {
+        return (
+          <SyncedChartWorkspace
+            key={pane.id}
+            initialSymbol={pane.symbol || undefined}
+            initialBroker={pane.broker || undefined}
+            onSymbolChange={cbs.onSyncedSymbolChange}
+            onTimeframeChange={cbs.onTimeframeChange}
+            compact={isMultiPane}
+          />
+        );
+      }
+      return (
+        <Mt5HistoryWorkspace
+          key={pane.id}
+          onAvailabilityTextChange={index === 0 ? setHistoryAvailabilityText : undefined}
+          initialSymbol={pane.symbol || undefined}
+          onSymbolChange={cbs.onMt5SymbolChange}
+          onTimeframeChange={cbs.onTimeframeChange}
+          compact={isMultiPane}
+        />
+      );
+    },
+    [mode, makePaneCallbacks, isMultiPane]
+  );
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">Chart</h1>
+          <h1 className="text-2xl font-semibold text-foreground">Charts</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {mode === "synced"
               ? "One workspace for both your synced journal chart and the MT5 history viewer."
@@ -42,6 +312,7 @@ export default function ChartPage() {
         </div>
       </div>
 
+      {/* Mode toggles */}
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -67,10 +338,56 @@ export default function ChartPage() {
         </button>
       </div>
 
-      {mode === "synced" ? (
-        <SyncedChartWorkspace />
-      ) : (
-        <Mt5HistoryWorkspace onAvailabilityTextChange={setHistoryAvailabilityText} />
+      {/* Tab bar + layout selector + sync toggle in one row */}
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <ChartTabBar
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onTabSelect={handleTabSelect}
+            onTabClose={handleTabClose}
+            onTabAdd={handleTabAdd}
+            onTabDuplicate={handleTabDuplicate}
+            onTabReorder={handleTabReorder}
+          />
+        </div>
+
+        {/* Sync timeframes toggle (only visible in multi-pane) */}
+        {isMultiPane && (
+          <button
+            type="button"
+            onClick={() => setSyncTimeframes((prev) => !prev)}
+            className={`flex h-7 items-center gap-1.5 rounded border px-2 text-xs font-medium transition-colors ${
+              syncTimeframes
+                ? "border-primary/60 bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:bg-muted"
+            }`}
+            title={syncTimeframes ? "Timeframes synced across panes" : "Sync timeframes across panes"}
+          >
+            {syncTimeframes ? (
+              <Link2 className="h-3.5 w-3.5" />
+            ) : (
+              <Link2Off className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden sm:inline">Sync TF</span>
+          </button>
+        )}
+
+        <ChartLayoutSelector
+          value={activeTab?.layout ?? "single"}
+          onChange={handleLayoutChange}
+        />
+      </div>
+
+      {/* Chart grid */}
+      {activeTab && (
+        <ChartLayoutGrid
+          layout={activeTab.layout}
+          panes={activeTab.panes}
+          activePaneIndex={activeTab.activePaneIndex}
+          onActivePaneChange={handleActivePaneChange}
+          renderPane={renderPane}
+        />
       )}
     </div>
   );

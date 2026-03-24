@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -11,6 +11,8 @@ import {
   Circle,
   Maximize2,
   Minimize2,
+  Pencil,
+  MoreVertical,
 } from "lucide-react";
 import type { ChartTimeframe, Trade } from "@domain/entities";
 import { Direction, OrderType } from "@domain/enums";
@@ -106,7 +108,22 @@ function statusMeta(status?: string) {
   }
 }
 
-export function SyncedChartWorkspace() {
+interface SyncedChartWorkspaceProps {
+  initialSymbol?: string;
+  initialBroker?: string;
+  onSymbolChange?: (symbol: string, broker: string) => void;
+  onTimeframeChange?: (timeframe: string) => void;
+  /** Hide drawing tools & action buttons for compact multi-pane layouts */
+  compact?: boolean;
+}
+
+export function SyncedChartWorkspace({
+  initialSymbol,
+  initialBroker,
+  onSymbolChange,
+  onTimeframeChange,
+  compact = false,
+}: SyncedChartWorkspaceProps = {}) {
   const { activeAccount, accounts } = useAccount();
   const progressRepo = useMemo(() => new DexieSymbolSyncProgressRepository(), []);
 
@@ -116,9 +133,12 @@ export function SyncedChartWorkspace() {
     subscribe: true,
   });
 
-  const [storedSelection, setStoredSelection] = useState<ChartSelection | null>(() =>
-    readStoredSelection()
-  );
+  const [storedSelection, setStoredSelection] = useState<ChartSelection | null>(() => {
+    if (initialSymbol && initialBroker) {
+      return { broker: initialBroker, symbol: initialSymbol };
+    }
+    return readStoredSelection();
+  });
   const selection = useMemo<ChartSelection | null>(() => {
     if (symbolProgress.length === 0) return storedSelection;
     if (
@@ -157,6 +177,10 @@ export function SyncedChartWorkspace() {
   const timeframeButtonRef = useRef<HTMLButtonElement>(null);
   const timeframeMenuRef = useRef<HTMLDivElement>(null);
   const [chartAreaHeight, setChartAreaHeight] = useState(520);
+  const [compactDrawOpen, setCompactDrawOpen] = useState(false);
+  const [compactActionsOpen, setCompactActionsOpen] = useState(false);
+  const compactDrawRef = useRef<HTMLDivElement>(null);
+  const compactActionsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (typeof window === "undefined" || !selection) return;
@@ -166,6 +190,17 @@ export function SyncedChartWorkspace() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(CHART_TIMEFRAME_KEY, timeframe);
+  }, [timeframe]);
+
+  // Report initial values to parent so tab labels are correct on mount
+  useEffect(() => {
+    if (selection) onSymbolChange?.(selection.symbol, selection.broker);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection?.symbol, selection?.broker]);
+
+  useEffect(() => {
+    onTimeframeChange?.(timeframe);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeframe]);
 
   useEffect(() => {
@@ -447,7 +482,7 @@ export function SyncedChartWorkspace() {
   );
 
   const toolbar = (
-    <div className="relative z-20 flex flex-wrap items-center gap-2 border-b border-border pb-3">
+    <div className={`relative z-20 flex flex-wrap items-center gap-2 border-b border-border ${compact ? 'pb-1.5' : 'pb-3'}`}>
       <div className="relative">
         <button
           ref={symbolButtonRef}
@@ -496,6 +531,7 @@ export function SyncedChartWorkspace() {
                           broker: broker.broker,
                           symbol: symbol.symbol,
                         });
+                        onSymbolChange?.(symbol.symbol, broker.broker);
                         setSymbolMenuOpen(false);
                       }}
                       className={`flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors ${
@@ -541,6 +577,7 @@ export function SyncedChartWorkspace() {
                 type="button"
                 onClick={() => {
                   setTimeframe(tf);
+                  onTimeframeChange?.(tf);
                   setTimeframeMenuOpen(false);
                 }}
                 className={`flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors ${
@@ -559,75 +596,170 @@ export function SyncedChartWorkspace() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {DRAW_TOOLS.map((tool) => (
+      {!compact ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {DRAW_TOOLS.map((tool) => (
+            <button
+              key={tool.id}
+              type="button"
+              onClick={() =>
+                setDrawingTool((current) =>
+                  current === tool.id ? null : tool.id
+                )
+              }
+              disabled={!selection}
+              className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
+                drawingTool === tool.id
+                  ? "border-primary/60 bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              {tool.label}
+            </button>
+          ))}
+          {(() => {
+            const showDrawControls =
+              drawingTool === "Rectangle" ||
+              drawingTool === "TrendLine" ||
+              drawingTool === "Path" ||
+              selectedDrawingTool === "Rectangle" ||
+              selectedDrawingTool === "TrendLine" ||
+              selectedDrawingTool === "Path";
+            const showLotsControls =
+              drawingTool === "LongShortPosition" ||
+              selectedDrawingTool === "LongShortPosition";
+            return (
+              <>
+                <div
+                  className={`flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-opacity ${
+                    showDrawControls ? "opacity-100" : "pointer-events-none opacity-0"
+                  }`}
+                  aria-hidden={!showDrawControls}
+                >
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Draw color
+                  </span>
+                  <input
+                    type="color"
+                    aria-label="Rectangle fill color"
+                    value={rectangleFillColor}
+                    onChange={(event) => setRectangleFillColor(event.target.value)}
+                    className="h-5 w-5 cursor-pointer rounded border border-border bg-transparent p-0"
+                  />
+                  <input
+                    type="range"
+                    aria-label="Rectangle fill opacity"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={rectangleFillOpacity}
+                    onChange={(event) => setRectangleFillOpacity(Number(event.target.value))}
+                    className="h-2 w-20 accent-foreground"
+                  />
+                </div>
+                <div
+                  className={`flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-opacity ${
+                    showLotsControls ? "opacity-100" : "pointer-events-none opacity-0"
+                  }`}
+                  aria-hidden={!showLotsControls}
+                >
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Lots
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={0.01}
+                    step={0.01}
+                    value={Number.isFinite(longShortLots) ? longShortLots : 1}
+                    onChange={(event) => setLongShortLots(Number(event.target.value))}
+                    className="h-6 w-20 rounded border border-border bg-background px-2 text-[11px] text-foreground"
+                  />
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      ) : (
+        /* Compact mode: drawing tools in a popover */
+        <div className="relative" ref={compactDrawRef}>
           <button
-            key={tool.id}
             type="button"
-            onClick={() =>
-              setDrawingTool((current) =>
-                current === tool.id ? null : tool.id
-              )
-            }
+            onClick={() => { setCompactDrawOpen((o) => !o); setCompactActionsOpen(false); }}
             disabled={!selection}
-            className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
-              drawingTool === tool.id
+            className={`flex h-7 w-7 items-center justify-center rounded border transition-colors ${
+              compactDrawOpen || drawingTool
                 ? "border-primary/60 bg-primary/10 text-primary"
                 : "border-border text-muted-foreground hover:bg-muted"
             }`}
+            title="Drawing tools"
           >
-            {tool.label}
+            <Pencil className="h-3.5 w-3.5" />
           </button>
-        ))}
-        {(() => {
-          const showDrawControls =
-            drawingTool === "Rectangle" ||
-            drawingTool === "TrendLine" ||
-            drawingTool === "Path" ||
-            selectedDrawingTool === "Rectangle" ||
-            selectedDrawingTool === "TrendLine" ||
-            selectedDrawingTool === "Path";
-          const showLotsControls =
-            drawingTool === "LongShortPosition" ||
-            selectedDrawingTool === "LongShortPosition";
-          return (
-            <>
-              <div
-                className={`flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-opacity ${
-                  showDrawControls ? "opacity-100" : "pointer-events-none opacity-0"
-                }`}
-                aria-hidden={!showDrawControls}
-              >
-                <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Draw color
-                </span>
+          {compactDrawOpen && (
+            <div className="absolute left-0 top-full z-50 mt-1 rounded-md border border-border bg-popover p-2 shadow-xl">
+              <div className="flex flex-col gap-1">
+                {DRAW_TOOLS.map((tool) => (
+                  <button
+                    key={tool.id}
+                    type="button"
+                    onClick={() => {
+                      setDrawingTool((current) => current === tool.id ? null : tool.id);
+                      setCompactDrawOpen(false);
+                    }}
+                    className={`rounded-md px-3 py-1.5 text-left text-[11px] font-medium transition-colors ${
+                      drawingTool === tool.id
+                        ? "bg-primary/10 text-primary"
+                        : "text-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {tool.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Color / lots controls — always visible when active, in both compact and non-compact */}
+      {compact && (() => {
+        const showDrawControls =
+          drawingTool === "Rectangle" ||
+          drawingTool === "TrendLine" ||
+          drawingTool === "Path" ||
+          selectedDrawingTool === "Rectangle" ||
+          selectedDrawingTool === "TrendLine" ||
+          selectedDrawingTool === "Path";
+        const showLotsControls =
+          drawingTool === "LongShortPosition" ||
+          selectedDrawingTool === "LongShortPosition";
+        return (
+          <>
+            {showDrawControls && (
+              <div className="flex items-center gap-2 rounded-md border border-border px-2 py-0.5">
                 <input
                   type="color"
-                  aria-label="Rectangle fill color"
+                  aria-label="Draw color"
                   value={rectangleFillColor}
                   onChange={(event) => setRectangleFillColor(event.target.value)}
-                  className="h-5 w-5 cursor-pointer rounded border border-border bg-transparent p-0"
+                  className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0"
                 />
                 <input
                   type="range"
-                  aria-label="Rectangle fill opacity"
+                  aria-label="Draw opacity"
                   min={0}
                   max={1}
                   step={0.05}
                   value={rectangleFillOpacity}
                   onChange={(event) => setRectangleFillOpacity(Number(event.target.value))}
-                  className="h-2 w-20 accent-foreground"
+                  className="h-2 w-14 accent-foreground"
                 />
               </div>
-              <div
-                className={`flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-opacity ${
-                  showLotsControls ? "opacity-100" : "pointer-events-none opacity-0"
-                }`}
-                aria-hidden={!showLotsControls}
-              >
-                <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Lots
-                </span>
+            )}
+            {showLotsControls && (
+              <div className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5">
+                <span className="text-[9px] font-medium uppercase text-muted-foreground">Lots</span>
                 <input
                   type="number"
                   inputMode="decimal"
@@ -635,58 +767,116 @@ export function SyncedChartWorkspace() {
                   step={0.01}
                   value={Number.isFinite(longShortLots) ? longShortLots : 1}
                   onChange={(event) => setLongShortLots(Number(event.target.value))}
-                  className="h-6 w-20 rounded border border-border bg-background px-2 text-[11px] text-foreground"
+                  className="h-5 w-16 rounded border border-border bg-background px-1 text-[10px] text-foreground"
                 />
               </div>
-            </>
-          );
-        })()}
-      </div>
-      <div className="ml-auto flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setIsExpanded((prev) => !prev)}
-          className="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
-          title={isExpanded ? "Exit full screen" : "Full screen"}
-        >
-          {isExpanded ? (
-            <Minimize2 className="h-3.5 w-3.5" />
-          ) : (
-            <Maximize2 className="h-3.5 w-3.5" />
+            )}
+          </>
+        );
+      })()}
+
+      {!compact ? (
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsExpanded((prev) => !prev)}
+            className="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
+            title={isExpanded ? "Exit full screen" : "Full screen"}
+          >
+            {isExpanded ? (
+              <Minimize2 className="h-3.5 w-3.5" />
+            ) : (
+              <Maximize2 className="h-3.5 w-3.5" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => chartRef.current?.fitContent()}
+            disabled={!selection}
+            className="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
+          >
+            Fit
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              chartRef.current?.removeAllDrawingTools();
+              setDrawingTool(null);
+              setSelectedDrawingTool(null);
+            }}
+            disabled={!selection}
+            className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
+            title="Clear drawings"
+          >
+            <Eraser className="h-3.5 w-3.5" />
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={!selection || isLoading}
+            className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
+      ) : (
+        /* Compact mode: actions in a popover */
+        <div className="relative ml-auto" ref={compactActionsRef}>
+          <button
+            type="button"
+            onClick={() => { setCompactActionsOpen((o) => !o); setCompactDrawOpen(false); }}
+            className={`flex h-7 w-7 items-center justify-center rounded border transition-colors ${
+              compactActionsOpen
+                ? "border-primary/60 bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:bg-muted"
+            }`}
+            title="More actions"
+          >
+            <MoreVertical className="h-3.5 w-3.5" />
+          </button>
+          {compactActionsOpen && (
+            <div className="absolute right-0 top-full z-50 mt-1 min-w-[120px] rounded-md border border-border bg-popover py-1 shadow-xl">
+              <button
+                type="button"
+                onClick={() => { setIsExpanded((prev) => !prev); setCompactActionsOpen(false); }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent"
+              >
+                {isExpanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+                {isExpanded ? "Exit Full Screen" : "Full Screen"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { chartRef.current?.fitContent(); setCompactActionsOpen(false); }}
+                disabled={!selection}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+              >
+                <Maximize2 className="h-3 w-3" />
+                Fit
+              </button>
+              <button
+                type="button"
+                onClick={() => { chartRef.current?.removeAllDrawingTools(); setDrawingTool(null); setSelectedDrawingTool(null); setCompactActionsOpen(false); }}
+                disabled={!selection}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+              >
+                <Eraser className="h-3 w-3" />
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => { refetch(); setCompactActionsOpen(false); }}
+                disabled={!selection || isLoading}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3 w-3 ${isLoading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            </div>
           )}
-        </button>
-        <button
-          type="button"
-          onClick={() => chartRef.current?.fitContent()}
-          disabled={!selection}
-          className="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
-        >
-          Fit
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            chartRef.current?.removeAllDrawingTools();
-            setDrawingTool(null);
-            setSelectedDrawingTool(null);
-          }}
-          disabled={!selection}
-          className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
-          title="Clear drawings"
-        >
-          <Eraser className="h-3.5 w-3.5" />
-          Clear
-        </button>
-        <button
-          type="button"
-          onClick={() => refetch()}
-          disabled={!selection || isLoading}
-          className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-60"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
-      </div>
+        </div>
+      )}
     </div>
   );
 
