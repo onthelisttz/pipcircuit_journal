@@ -31,6 +31,7 @@ import type {
   DrawingToolType,
   TradeCandlestickChartRef,
 } from "@ui/components/charts/TradeCandlestickChart";
+type DrawingToolExport = ReturnType<TradeCandlestickChartRef["exportAllDrawings"]>[number];
 import { hexToRgba } from "@lib/color";
 
 type TimeframeSummary = {
@@ -480,12 +481,29 @@ export function Mt5HistoryWorkspace({
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
   const compactDrawRef = useRef<HTMLDivElement>(null);
   const compactActionsRef = useRef<HTMLDivElement>(null);
+  const pendingRestoreRef = useRef<{ drawings: DrawingToolExport[]; centerTimestamp: number | null } | null>(null);
 
   const [bars, setBars] = useState<ChartBar[]>([]);
   const [loadedRange, setLoadedRange] = useState<LoadedRange | null>(null);
   const [barsError, setBarsError] = useState<string | null>(null);
   const [isBarsLoading, setIsBarsLoading] = useState(false);
   const [isEdgeLoading, setIsEdgeLoading] = useState(false);
+
+  // Restore drawings and viewport after timeframe data loads
+  useEffect(() => {
+    const pending = pendingRestoreRef.current;
+    if (!pending || bars.length === 0 || isBarsLoading) return;
+    pendingRestoreRef.current = null;
+    const timer = window.setTimeout(() => {
+      if (pending.drawings.length > 0) {
+        chartRef.current?.importDrawings(pending.drawings);
+      }
+      if (pending.centerTimestamp != null) {
+        chartRef.current?.scrollToTimestamp(pending.centerTimestamp);
+      }
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [bars, isBarsLoading]);
 
   const selectedSymbol = useMemo(
     () => meta?.symbols.find((item) => item.symbol === symbol) ?? null,
@@ -1099,6 +1117,11 @@ export function Mt5HistoryWorkspace({
         value={timeframe}
         onChange={(event) => {
           const tf = event.target.value as ChartTimeframe;
+          // Save drawings and viewport before timeframe change
+          pendingRestoreRef.current = {
+            drawings: chartRef.current?.exportAllDrawings() ?? [],
+            centerTimestamp: chartRef.current?.getViewportCenterTimestamp() ?? null,
+          };
           setTimeframe(tf);
           onTimeframeChange?.(tf);
         }}

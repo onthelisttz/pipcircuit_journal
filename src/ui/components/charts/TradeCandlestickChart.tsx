@@ -128,6 +128,10 @@ export interface TradeCandlestickChartRef {
     fitContent: () => void;
     scrollToTrade: (zoomOutMultiplier?: number) => void;
     removeAllDrawingTools: () => void;
+    exportAllDrawings: () => DrawingToolExport[];
+    importDrawings: (drawings: DrawingToolExport[]) => void;
+    getViewportCenterTimestamp: () => number | null;
+    scrollToTimestamp: (timestamp: number, windowSeconds?: number) => void;
 }
 
 /**
@@ -1303,7 +1307,57 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             lineToolsRef.current?.removeAllLineTools();
             clearAllDrawingSelections();
         },
-    }), [clearAllDrawingSelections, scrollToTrade]);
+        exportAllDrawings: (): DrawingToolExport[] => {
+            const lineTools = getLineToolsInternal();
+            const toolsMap = lineTools?._tools;
+            if (!toolsMap || toolsMap.size === 0) return [];
+            const exports: DrawingToolExport[] = [];
+            for (const tool of toolsMap.values()) {
+                try {
+                    const exp = tool.getExportData();
+                    if (exp && exp.toolType && exp.points?.length > 0) {
+                        exports.push(exp);
+                    }
+                } catch { /* skip corrupt tools */ }
+            }
+            return exports;
+        },
+        importDrawings: (drawings: DrawingToolExport[]) => {
+            if (!lineToolsRef.current || drawings.length === 0) return;
+            for (const drawing of drawings) {
+                try {
+                    lineToolsRef.current.addLineTool(
+                        drawing.toolType,
+                        drawing.points,
+                        drawing.options as Parameters<LineToolsApi["addLineTool"]>[2]
+                    );
+                } catch { /* skip invalid */ }
+            }
+        },
+        getViewportCenterTimestamp: (): number | null => {
+            const timeScale = chartRef.current?.timeScale();
+            if (!timeScale) return null;
+            const range = timeScale.getVisibleRange();
+            if (!range) return null;
+            const centerSec = ((range.from as number) + (range.to as number)) / 2;
+            return centerSec * 1000;
+        },
+        scrollToTimestamp: (timestamp: number, windowSeconds?: number) => {
+            const timeScale = chartRef.current?.timeScale();
+            if (!timeScale) return;
+            const range = timeScale.getVisibleRange();
+            const halfWindow = windowSeconds
+                ? windowSeconds / 2
+                : range
+                    ? ((range.to as number) - (range.from as number)) / 2
+                    : 3600;
+            const centerSec = timestamp / 1000;
+            timeScale.setVisibleRange({
+                from: (centerSec - halfWindow) as Time,
+                to: (centerSec + halfWindow) as Time,
+            });
+        },
+    }), [clearAllDrawingSelections, scrollToTrade, getLineToolsInternal]);
 
     // Update chart data and auto-scroll to trade
     useEffect(() => {

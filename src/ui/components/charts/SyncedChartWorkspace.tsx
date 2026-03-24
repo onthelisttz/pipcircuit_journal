@@ -18,6 +18,7 @@ import type { ChartTimeframe, Trade } from "@domain/entities";
 import { Direction, OrderType } from "@domain/enums";
 import { TradeCandlestickChart } from "@ui/components/charts";
 import type { DrawingToolType, TradeCandlestickChartRef } from "@ui/components/charts/TradeCandlestickChart";
+type DrawingToolExport = ReturnType<TradeCandlestickChartRef["exportAllDrawings"]>[number];
 import { useChartData } from "@ui/hooks/useChartData";
 import { useSyncProgress } from "@ui/hooks/useSyncProgress";
 import { useAccount } from "@ui/hooks/useAccount";
@@ -181,6 +182,7 @@ export function SyncedChartWorkspace({
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
   const compactDrawRef = useRef<HTMLDivElement>(null);
   const compactActionsRef = useRef<HTMLDivElement>(null);
+  const pendingRestoreRef = useRef<{ drawings: DrawingToolExport[]; centerTimestamp: number | null } | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined" || !selection) return;
@@ -396,6 +398,23 @@ export function SyncedChartWorkspace({
     enabled: chartEnabled,
   });
 
+  // Restore drawings and viewport after timeframe data loads
+  useEffect(() => {
+    const pending = pendingRestoreRef.current;
+    if (!pending || data.length === 0 || isLoading) return;
+    pendingRestoreRef.current = null;
+    // Small delay so chart processes the new data first
+    const timer = window.setTimeout(() => {
+      if (pending.drawings.length > 0) {
+        chartRef.current?.importDrawings(pending.drawings);
+      }
+      if (pending.centerTimestamp != null) {
+        chartRef.current?.scrollToTimestamp(pending.centerTimestamp);
+      }
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [data, isLoading]);
+
   const handleVisibleRangeChange = useCallback(
     (from: number, to: number) => {
       if (data.length === 0) return;
@@ -576,6 +595,11 @@ export function SyncedChartWorkspace({
                 key={tf}
                 type="button"
                 onClick={() => {
+                  // Save drawings and viewport before timeframe change
+                  pendingRestoreRef.current = {
+                    drawings: chartRef.current?.exportAllDrawings() ?? [],
+                    centerTimestamp: chartRef.current?.getViewportCenterTimestamp() ?? null,
+                  };
                   setTimeframe(tf);
                   onTimeframeChange?.(tf);
                   setTimeframeMenuOpen(false);
