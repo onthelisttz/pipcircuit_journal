@@ -209,20 +209,20 @@ export default function ChartPage() {
   );
 
   const handleActivePaneChange = useCallback(
-    (index: number) => {
+    (tabId: string, index: number) => {
       setTabsRef.current((prev) =>
-        prev.map((t) => (t.id === activeTabId ? { ...t, activePaneIndex: index } : t))
+        prev.map((t) => (t.id === tabId ? { ...t, activePaneIndex: index } : t))
       );
     },
-    [activeTabId]
+    []
   );
 
-  // --- Pane data updates ---
+  // --- Pane data updates (tab-aware) ---
   const updatePaneField = useCallback(
-    (paneIndex: number, fields: Partial<ChartPane>) => {
+    (tabId: string, paneIndex: number, fields: Partial<ChartPane>) => {
       setTabsRef.current((prev) =>
         prev.map((t) => {
-          if (t.id !== activeTabId) return t;
+          if (t.id !== tabId) return t;
           const panes = t.panes.map((p, i) =>
             i === paneIndex ? { ...p, ...fields } : p
           );
@@ -230,47 +230,38 @@ export default function ChartPage() {
         })
       );
     },
-    [activeTabId]
+    []
   );
 
-  // Sync timeframes across panes when toggled
   const handleTimeframeChangeForPane = useCallback(
-    (paneIndex: number, timeframe: string) => {
+    (tabId: string, paneIndex: number, timeframe: string) => {
       if (syncTimeframes) {
         setTabsRef.current((prev) =>
           prev.map((t) => {
-            if (t.id !== activeTabId) return t;
+            if (t.id !== tabId) return t;
             const panes = t.panes.map((p) => ({ ...p, timeframe }));
             return { ...t, panes };
           })
         );
       } else {
-        updatePaneField(paneIndex, { timeframe });
+        updatePaneField(tabId, paneIndex, { timeframe });
       }
     },
-    [activeTabId, syncTimeframes, updatePaneField]
+    [syncTimeframes, updatePaneField]
   );
 
-  // Creates per-pane callbacks
-  const makePaneCallbacks = useCallback(
-    (paneIndex: number) => ({
-      onSyncedSymbolChange: (symbol: string, broker: string) => {
-        updatePaneField(paneIndex, { symbol, broker });
-      },
-      onMt5SymbolChange: (symbol: string) => {
-        updatePaneField(paneIndex, { symbol });
-      },
-      onTimeframeChange: (timeframe: string) => {
-        handleTimeframeChangeForPane(paneIndex, timeframe);
-      },
-    }),
-    [updatePaneField, handleTimeframeChangeForPane]
-  );
-
-  // --- Render pane ---
-  const renderPane = useCallback(
-    (pane: ChartPane, index: number, _isActive: boolean) => {
-      const cbs = makePaneCallbacks(index);
+  // --- Render pane for a specific tab ---
+  const renderPaneForTab = useCallback(
+    (tabId: string, isMulti: boolean, pane: ChartPane, index: number, _isActive: boolean) => {
+      const onSyncedSymbolChange = (symbol: string, broker: string) => {
+        updatePaneField(tabId, index, { symbol, broker });
+      };
+      const onMt5SymbolChange = (symbol: string) => {
+        updatePaneField(tabId, index, { symbol });
+      };
+      const onTimeframeChange = (timeframe: string) => {
+        handleTimeframeChangeForPane(tabId, index, timeframe);
+      };
 
       if (mode === "synced") {
         return (
@@ -278,9 +269,9 @@ export default function ChartPage() {
             key={pane.id}
             initialSymbol={pane.symbol || undefined}
             initialBroker={pane.broker || undefined}
-            onSymbolChange={cbs.onSyncedSymbolChange}
-            onTimeframeChange={cbs.onTimeframeChange}
-            compact={isMultiPane}
+            onSymbolChange={onSyncedSymbolChange}
+            onTimeframeChange={onTimeframeChange}
+            compact={isMulti}
           />
         );
       }
@@ -289,13 +280,13 @@ export default function ChartPage() {
           key={pane.id}
           onAvailabilityTextChange={index === 0 ? setHistoryAvailabilityText : undefined}
           initialSymbol={pane.symbol || undefined}
-          onSymbolChange={cbs.onMt5SymbolChange}
-          onTimeframeChange={cbs.onTimeframeChange}
-          compact={isMultiPane}
+          onSymbolChange={onMt5SymbolChange}
+          onTimeframeChange={onTimeframeChange}
+          compact={isMulti}
         />
       );
     },
-    [mode, makePaneCallbacks, isMultiPane]
+    [mode, updatePaneField, handleTimeframeChangeForPane]
   );
 
   return (
@@ -303,7 +294,7 @@ export default function ChartPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">Charts</h1>
+          <h1 className="text-2xl font-semibold text-foreground">Chart</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {mode === "synced"
               ? "One workspace for both your synced journal chart and the MT5 history viewer."
@@ -379,16 +370,28 @@ export default function ChartPage() {
         />
       </div>
 
-      {/* Chart grid */}
-      {activeTab && (
-        <ChartLayoutGrid
-          layout={activeTab.layout}
-          panes={activeTab.panes}
-          activePaneIndex={activeTab.activePaneIndex}
-          onActivePaneChange={handleActivePaneChange}
-          renderPane={renderPane}
-        />
-      )}
+      {/* All tabs rendered — inactive hidden via CSS to preserve state */}
+      {tabs.map((tab) => {
+        const isVisible = tab.id === activeTabId;
+        const isMulti = tab.layout !== "single";
+        return (
+          <div
+            key={tab.id}
+            className={`min-h-0 flex-1 flex-col ${isVisible ? "flex" : "hidden"}`}
+          >
+            <ChartLayoutGrid
+              layout={tab.layout}
+              panes={tab.panes}
+              activePaneIndex={tab.activePaneIndex}
+              onActivePaneChange={(index) => handleActivePaneChange(tab.id, index)}
+              renderPane={(pane, index, paneIsActive) =>
+                renderPaneForTab(tab.id, isMulti, pane, index, paneIsActive)
+              }
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }
+
