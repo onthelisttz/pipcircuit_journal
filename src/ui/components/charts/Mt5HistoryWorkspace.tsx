@@ -25,7 +25,13 @@ import type { ChartBar, ChartTimeframe, Trade } from "@domain/entities";
 import { Direction, OrderType } from "@domain/enums";
 import { TradeCandlestickChart } from "@ui/components/charts";
 import { createSettingsRepository } from "@infrastructure/db/createDualRepositories";
-import { MT5_HISTORY_ROOT_SETTING_KEY } from "@lib/mt5";
+import {
+  buildMt5ServiceEndpoint,
+  DEFAULT_MT5_LOCAL_SERVICE_URL,
+  MT5_HISTORY_ROOT_SETTING_KEY,
+  MT5_LOCAL_SERVICE_URL_SETTING_KEY,
+  normalizeMt5ServiceUrl,
+} from "@lib/mt5";
 import { useAuth } from "@ui/hooks/useAuth";
 import type {
   DrawingToolType,
@@ -465,6 +471,7 @@ export function Mt5HistoryWorkspace({
 
   const [meta, setMeta] = useState<MetaResponse | null>(null);
   const [historyRootPath, setHistoryRootPath] = useState("");
+  const [mt5ServiceUrl, setMt5ServiceUrl] = useState("");
   const [metaError, setMetaError] = useState<string | null>(null);
   const [isMetaLoading, setIsMetaLoading] = useState(true);
 
@@ -534,6 +541,16 @@ export function Mt5HistoryWorkspace({
   );
 
   const activeSeriesKey = `${symbol}|${selectedTimeframe?.timeframe ?? ""}`;
+  const resolvedMt5ServiceUrl = useMemo(() => {
+    const configured = normalizeMt5ServiceUrl(mt5ServiceUrl);
+    if (configured) return configured;
+    if (typeof window === "undefined") return "";
+    const hostname = window.location.hostname;
+    if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+      return DEFAULT_MT5_LOCAL_SERVICE_URL;
+    }
+    return "";
+  }, [mt5ServiceUrl]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -546,12 +563,21 @@ export function Mt5HistoryWorkspace({
     const loadRootPath = async () => {
       try {
         const repo = createSettingsRepository(user?.id);
-        const record = await repo.get(MT5_HISTORY_ROOT_SETTING_KEY);
+        const [rootRecord, serviceRecord] = await Promise.all([
+          repo.get(MT5_HISTORY_ROOT_SETTING_KEY),
+          repo.get(MT5_LOCAL_SERVICE_URL_SETTING_KEY),
+        ]);
         if (cancelled) return;
-        setHistoryRootPath(typeof record?.value === "string" ? record.value.trim() : "");
+        setHistoryRootPath(
+          typeof rootRecord?.value === "string" ? rootRecord.value.trim() : ""
+        );
+        setMt5ServiceUrl(
+          typeof serviceRecord?.value === "string" ? serviceRecord.value.trim() : ""
+        );
       } catch {
         if (!cancelled) {
           setHistoryRootPath("");
+          setMt5ServiceUrl("");
         }
       }
     };
@@ -718,8 +744,12 @@ export function Mt5HistoryWorkspace({
         if (historyRootPath) {
           params.set("rootPath", historyRootPath);
         }
+        const endpoint = buildMt5ServiceEndpoint(
+          "/api/mt5/history/meta",
+          resolvedMt5ServiceUrl
+        );
         const response = await fetch(
-          `/api/mt5/history/meta${params.toString() ? `?${params.toString()}` : ""}`,
+          `${endpoint}${params.toString() ? `?${params.toString()}` : ""}`,
           { cache: "no-store" }
         );
         const data = (await response.json()) as MetaResponse;
@@ -741,8 +771,12 @@ export function Mt5HistoryWorkspace({
         }
       } catch (error) {
         if (!cancelled) {
+          const fallbackMessage =
+            resolvedMt5ServiceUrl && error instanceof TypeError
+              ? `Could not reach the local MT5 service at ${resolvedMt5ServiceUrl}. Start it with \`npm run mt5:service\` on this computer.`
+              : "Failed to load MT5 metadata.";
           setMetaError(
-            error instanceof Error ? error.message : "Failed to load MT5 metadata."
+            error instanceof TypeError ? fallbackMessage : error instanceof Error ? error.message : fallbackMessage
           );
         }
       } finally {
@@ -757,7 +791,7 @@ export function Mt5HistoryWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [historyRootPath]);
+  }, [historyRootPath, initialSymbol, resolvedMt5ServiceUrl]);
 
   useEffect(() => {
     if (!selectedSymbol) return;
@@ -792,7 +826,11 @@ export function Mt5HistoryWorkspace({
         params.set("rootPath", historyRootPath);
       }
 
-      const response = await fetch(`/api/mt5/history/bars?${params.toString()}`, {
+      const endpoint = buildMt5ServiceEndpoint(
+        "/api/mt5/history/bars",
+        resolvedMt5ServiceUrl
+      );
+      const response = await fetch(`${endpoint}?${params.toString()}`, {
         cache: "no-store",
       });
       const payload = (await response.json()) as BarsResponse;
@@ -801,7 +839,7 @@ export function Mt5HistoryWorkspace({
       }
       return payload.bars;
     },
-    [historyRootPath, selectedTimeframe, symbol]
+    [historyRootPath, resolvedMt5ServiceUrl, selectedTimeframe, symbol]
   );
 
   const loadWindow = useCallback(
@@ -890,7 +928,13 @@ export function Mt5HistoryWorkspace({
           setBars([]);
           setLoadedRange(null);
         }
-        setBarsError(error instanceof Error ? error.message : "Failed to load MT5 bars.");
+        const fallbackMessage =
+          resolvedMt5ServiceUrl && error instanceof TypeError
+            ? `Could not reach the local MT5 service at ${resolvedMt5ServiceUrl}. Start it with \`npm run mt5:service\` on this computer.`
+            : "Failed to load MT5 bars.";
+        setBarsError(
+          error instanceof TypeError ? fallbackMessage : error instanceof Error ? error.message : fallbackMessage
+        );
       } finally {
         if (
           activeSeriesKeyRef.current === requestKey &&
