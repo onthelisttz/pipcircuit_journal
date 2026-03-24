@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "bun run build:line-tools && next build",
     "build:line-tools": "node scripts/build-line-tools.mjs",
+    "mt5:bridge:build": "node scripts/build-mt5-bridge.mjs",
     "mt5:service": "node local-services/mt5-history-service/history-reader.mjs --serve",
     "postinstall": "patch-package",
     "start": "next start",

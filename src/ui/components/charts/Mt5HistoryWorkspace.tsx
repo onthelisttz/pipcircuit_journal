@@ -51,7 +51,7 @@ type TimeframeSummary = {
   barCount: number;
   from: number;
   to: number;
-  source?: "cache" | "derived";
+  source?: "cache" | "derived" | "live";
 };
 
 type SymbolSummary = {
@@ -135,6 +135,37 @@ function sortTimeframes(timeframes: TimeframeSummary[]): TimeframeSummary[] {
   return [...timeframes].sort(
     (a, b) => order.indexOf(a.timeframe) - order.indexOf(b.timeframe)
   );
+}
+
+function resolvePreferredSelection(
+  symbols: SymbolSummary[],
+  preferredSymbol: string,
+  preferredTimeframe: ChartTimeframe,
+  initialSymbol?: string
+): { symbol: string; timeframe: ChartTimeframe; summary: TimeframeSummary } | null {
+  const initialCandidate =
+    initialSymbol && symbols.some((item) => item.symbol === initialSymbol)
+      ? initialSymbol
+      : "";
+  const symbolCandidate =
+    preferredSymbol && symbols.some((item) => item.symbol === preferredSymbol)
+      ? preferredSymbol
+      : initialCandidate;
+  const resolvedSymbol = symbolCandidate || symbols[0]?.symbol || "";
+  const symbolEntry = symbols.find((item) => item.symbol === resolvedSymbol);
+  if (!symbolEntry) return null;
+
+  const sortedTimeframes = sortTimeframes(symbolEntry.timeframes);
+  const summary =
+    sortedTimeframes.find((item) => item.timeframe === preferredTimeframe) ??
+    sortedTimeframes[0];
+  if (!summary) return null;
+
+  return {
+    symbol: resolvedSymbol,
+    timeframe: summary.timeframe,
+    summary,
+  };
 }
 
 function normalizeBars(bars: ChartBar[]): ChartBar[] {
@@ -552,6 +583,43 @@ export function Mt5HistoryWorkspace({
     return "";
   }, [mt5ServiceUrl]);
 
+  const loadMeta = useCallback(
+    async (options?: {
+      preferredSymbol?: string;
+      preferredTimeframe?: ChartTimeframe;
+    }): Promise<{
+      data: MetaResponse;
+      selection: { symbol: string; timeframe: ChartTimeframe; summary: TimeframeSummary } | null;
+    }> => {
+      const params = new URLSearchParams();
+      if (historyRootPath) {
+        params.set("rootPath", historyRootPath);
+      }
+      const endpoint = buildMt5ServiceEndpoint(
+        "/api/mt5/history/meta",
+        resolvedMt5ServiceUrl
+      );
+      const response = await fetch(
+        `${endpoint}${params.toString() ? `?${params.toString()}` : ""}`,
+        { cache: "no-store" }
+      );
+      const data = (await response.json()) as MetaResponse;
+      if (!response.ok) {
+        throw new Error(data.error ?? "Failed to load MT5 history metadata.");
+      }
+
+      const selection = resolvePreferredSelection(
+        data.symbols,
+        options?.preferredSymbol ?? symbol,
+        options?.preferredTimeframe ?? timeframe,
+        initialSymbol
+      );
+
+      return { data, selection };
+    },
+    [historyRootPath, initialSymbol, resolvedMt5ServiceUrl, symbol, timeframe]
+  );
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(HISTORY_TIME_GUIDES_KEY, JSON.stringify(timeGuides));
@@ -736,38 +804,17 @@ export function Mt5HistoryWorkspace({
   useEffect(() => {
     let cancelled = false;
 
-    const loadMeta = async () => {
+    const hydrateMeta = async () => {
       setIsMetaLoading(true);
       setMetaError(null);
       try {
-        const params = new URLSearchParams();
-        if (historyRootPath) {
-          params.set("rootPath", historyRootPath);
-        }
-        const endpoint = buildMt5ServiceEndpoint(
-          "/api/mt5/history/meta",
-          resolvedMt5ServiceUrl
-        );
-        const response = await fetch(
-          `${endpoint}${params.toString() ? `?${params.toString()}` : ""}`,
-          { cache: "no-store" }
-        );
-        const data = (await response.json()) as MetaResponse;
-        if (!response.ok) {
-          throw new Error(data.error ?? "Failed to load MT5 history metadata.");
-        }
+        const { data, selection } = await loadMeta();
         if (cancelled) return;
 
         setMeta(data);
-
-        const firstSymbol = data.symbols[0];
-        const firstTimeframe = firstSymbol ? sortTimeframes(firstSymbol.timeframes)[0] : null;
-        if (firstSymbol && firstTimeframe) {
-          const sym = initialSymbol && data.symbols.some((s) => s.symbol === initialSymbol)
-            ? initialSymbol
-            : firstSymbol.symbol;
-          setSymbol(sym);
-          setTimeframe(firstTimeframe.timeframe);
+        if (selection) {
+          setSymbol(selection.symbol);
+          setTimeframe(selection.timeframe);
         }
       } catch (error) {
         if (!cancelled) {
@@ -786,12 +833,12 @@ export function Mt5HistoryWorkspace({
       }
     };
 
-    void loadMeta();
+    void hydrateMeta();
 
     return () => {
       cancelled = true;
     };
-  }, [historyRootPath, initialSymbol, resolvedMt5ServiceUrl]);
+  }, [loadMeta, resolvedMt5ServiceUrl]);
 
   useEffect(() => {
     if (!selectedSymbol) return;
@@ -1130,9 +1177,62 @@ export function Mt5HistoryWorkspace({
 
   const refreshCurrentView = useCallback(() => {
     if (!selectedTimeframe) return;
-    const target = focusTimestamp ?? selectedTimeframe.to;
-    void goToTimestamp(target);
-  }, [focusTimestamp, goToTimestamp, selectedTimeframe]);
+
+    void (async () => {
+      const previousLatestTimestamp = selectedTimeframe.to;
+      setIsMetaLoading(true);
+      setMetaError(null);
+      try {
+        const { data, selection } = await loadMeta({
+          preferredSymbol: symbol,
+          preferredTimeframe: timeframe,
+        });
+        setMeta(data);
+        if (selection) {
+          setSymbol(selection.symbol);
+          setTimeframe(selection.timeframe);
+          const target =
+            selection.summary.to > previousLatestTimestamp
+              ? selection.summary.to
+              : focusTimestamp ?? selection.summary.to;
+          const clampedTarget = Math.max(
+            selection.summary.from,
+            Math.min(selection.summary.to, target)
+          );
+          const range = buildCenteredRange(selection.summary, clampedTarget);
+          shouldCenterOnNextDataRef.current = true;
+          setFocusTimestamp(clampedTarget);
+          setGoToDate(toDateInputValue(clampedTarget));
+          await loadWindow(range, "replace");
+          return;
+        }
+        await goToTimestamp(focusTimestamp ?? previousLatestTimestamp);
+      } catch (error) {
+        const fallbackMessage =
+          resolvedMt5ServiceUrl && error instanceof TypeError
+            ? `Could not reach the local MT5 service at ${resolvedMt5ServiceUrl}. Start it with \`npm run mt5:service\` on this computer.`
+            : "Failed to load MT5 metadata.";
+        setMetaError(
+          error instanceof TypeError
+            ? fallbackMessage
+            : error instanceof Error
+              ? error.message
+              : fallbackMessage
+        );
+      } finally {
+        setIsMetaLoading(false);
+      }
+    })();
+  }, [
+    focusTimestamp,
+    goToTimestamp,
+    loadWindow,
+    loadMeta,
+    resolvedMt5ServiceUrl,
+    selectedTimeframe,
+    symbol,
+    timeframe,
+  ]);
 
   /* Pending-fetch retry is now handled via queueMicrotask inside fetchPrevious/fetchNext */
 

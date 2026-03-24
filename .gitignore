@@ -19,6 +19,9 @@
 
 # production
 /build
+local-services/mt5-history-service/bin/
+local-services/mt5-history-service/.pyinstaller-build/
+local-services/mt5-history-service/.pyinstaller-spec/
 
 # misc
 .DS_Store

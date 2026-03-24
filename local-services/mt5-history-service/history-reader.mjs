@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import http from "node:http";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { URL, fileURLToPath } from "node:url";
 
@@ -22,6 +23,11 @@ const TIMEFRAME_TO_MS = {
   H4: 4 * 60 * 60_000,
   D1: 24 * 60 * 60_000,
 };
+const SERVICE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const BUNDLED_BRIDGE_DIR = path.join(SERVICE_DIR, "bin");
+const BUNDLED_BRIDGE_NAME =
+  process.platform === "win32" ? "request_mt5_bars.exe" : "request_mt5_bars";
+const liveMt5State = new Map();
 
 function normalizeTimeframe(fileName) {
   const base = path.basename(fileName, path.extname(fileName)).toUpperCase();
@@ -31,6 +37,45 @@ function normalizeTimeframe(fileName) {
 
 function timeframeToCacheFile(timeframe) {
   return timeframe === "D1" ? "Daily.hc" : `${timeframe}.hc`;
+}
+
+function buildLiveStateKey(symbol, timeframe) {
+  return `${symbol.toUpperCase()}:${timeframe.toUpperCase()}`;
+}
+
+function getLiveMt5State(symbol, timeframe) {
+  return liveMt5State.get(buildLiveStateKey(symbol, timeframe));
+}
+
+function updateLiveMt5State(symbol, timeframe, snapshot) {
+  if (!snapshot || !snapshot.lastTimestamp) return;
+  liveMt5State.set(buildLiveStateKey(symbol, timeframe), {
+    ...snapshot,
+    updatedAt: snapshot.updatedAt ?? Date.now(),
+  });
+}
+
+function applyLiveSummaryOverlay(summary, symbol) {
+  if (!summary) return summary;
+
+  const liveState = getLiveMt5State(symbol, summary.timeframe);
+  if (!liveState) return summary;
+  if ((liveState.lastTimestamp ?? 0) <= (summary.to ?? 0)) return summary;
+
+  const intervalMs = TIMEFRAME_TO_MS[summary.timeframe] ?? TIMEFRAME_TO_MS.M1;
+  const canAddCount =
+    Number.isFinite(liveState.firstTimestamp) &&
+    liveState.firstTimestamp >= summary.to + intervalMs;
+
+  return {
+    ...summary,
+    to: liveState.lastTimestamp,
+    updatedAt: Math.max(summary.updatedAt ?? 0, liveState.updatedAt ?? 0),
+    barCount: canAddCount
+      ? summary.barCount + Math.max(0, liveState.count ?? 0)
+      : summary.barCount,
+    source: "live",
+  };
 }
 
 function bufferToUInt64(buffer, offset = 0) {
@@ -182,10 +227,11 @@ function buildDerivedTimeframes(baseSummary, existing) {
         Math.floor(
           baseSummary.barCount /
             Math.max(1, TIMEFRAME_TO_MS[timeframe] / TIMEFRAME_TO_MS.M1)
-        )
+      )
       ),
       from: baseSummary.from,
       to: baseSummary.to,
+      updatedAt: baseSummary.updatedAt,
       source: "derived",
     };
   });
@@ -239,6 +285,19 @@ function aggregateBarsToTimeframe(bars, timeframe) {
   return aggregated;
 }
 
+function mergeBarsByTimestamp(primaryBars, secondaryBars, limit) {
+  const merged = new Map();
+  for (const bar of primaryBars) {
+    merged.set(bar.timestamp, bar);
+  }
+  for (const bar of secondaryBars) {
+    merged.set(bar.timestamp, bar);
+  }
+  return [...merged.values()]
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(0, limit);
+}
+
 export function resolveMt5HistoryRoot(overridePath) {
   return overridePath?.trim() || DEFAULT_MT5_HISTORY_ROOT;
 }
@@ -269,7 +328,10 @@ export async function listMt5Symbols(rootOverride) {
             if (!timeframe) return null;
 
             const filePath = path.join(cacheDir, entry.name);
-            const metadata = await readCacheMetadata(filePath);
+            const [metadata, stats] = await Promise.all([
+              readCacheMetadata(filePath),
+              fs.stat(filePath),
+            ]);
             if (metadata.count === 0) return null;
 
             return {
@@ -278,6 +340,7 @@ export async function listMt5Symbols(rootOverride) {
               barCount: metadata.count,
               from: metadata.firstTimestamp,
               to: metadata.lastTimestamp,
+              updatedAt: stats.mtimeMs,
               source: "cache",
             };
           })
@@ -286,13 +349,16 @@ export async function listMt5Symbols(rootOverride) {
       const timeframes = rawTimeframes.filter(Boolean);
       if (timeframes.length === 0) return null;
 
+      const overlayTimeframes = timeframes.map((timeframeSummary) =>
+        applyLiveSummaryOverlay(timeframeSummary, symbol)
+      );
       const timeframeMap = new Map(
-        timeframes.map((timeframeSummary) => [timeframeSummary.timeframe, timeframeSummary])
+        overlayTimeframes.map((timeframeSummary) => [timeframeSummary.timeframe, timeframeSummary])
       );
       const m1Summary = timeframeMap.get("M1");
       const finalTimeframes = m1Summary
         ? buildDerivedTimeframes(m1Summary, timeframeMap)
-        : sortTimeframeSummaries(timeframes).filter((item) =>
+        : sortTimeframeSummaries(overlayTimeframes).filter((item) =>
             STANDARD_TIMEFRAMES.includes(item.timeframe)
           );
 
@@ -309,33 +375,84 @@ export async function listMt5Symbols(rootOverride) {
 export async function readMt5Bars(params) {
   const { symbol, timeframe, from, to, limit = 10_000, rootPath } = params;
   const filePath = buildCacheFilePath(symbol, timeframe, rootPath);
+  const normalizedFrom = Math.min(from, to);
+  const normalizedTo = Math.max(from, to);
 
   if (!(await fileExists(filePath)) && timeframe !== "M1") {
     const ratio = Math.max(1, Math.ceil(TIMEFRAME_TO_MS[timeframe] / TIMEFRAME_TO_MS.M1));
     const m1Bars = await readMt5Bars({
       symbol,
       timeframe: "M1",
-      from,
-      to,
+      from: normalizedFrom,
+      to: normalizedTo,
       limit: limit * ratio,
       rootPath,
     });
     return aggregateBarsToTimeframe(m1Bars, timeframe).slice(0, limit);
   }
 
+  if (!(await fileExists(filePath)) && timeframe === "M1") {
+    const liveBars = await requestMt5BarsData({
+      symbol,
+      timeframe,
+      from: normalizedFrom,
+      to: normalizedTo,
+      historyRoot: rootPath,
+    });
+    return liveBars.slice(0, limit);
+  }
+
   const handle = await fs.open(filePath, "r");
   try {
-    const header = await readExactly(handle, TIME_SECTION_OFFSET, 0);
+    const header = await readExactly(handle, TIME_SECTION_OFFSET + 8, 0);
     const count = header.readUInt32LE(HEADER_COUNT_OFFSET);
-    if (count <= 0) return [];
+    if (count <= 0) {
+      if (timeframe === "M1") {
+        const liveBars = await requestMt5BarsData({
+          symbol,
+          timeframe,
+          from: normalizedFrom,
+          to: normalizedTo,
+          historyRoot: rootPath,
+        });
+        return liveBars.slice(0, limit);
+      }
+      return [];
+    }
 
-    const normalizedFrom = Math.min(from, to);
-    const normalizedTo = Math.max(from, to);
+    const cacheMetadata =
+      timeframe === "M1"
+        ? {
+            count,
+            firstTimestamp: bufferToUInt64(header, TIME_SECTION_OFFSET) * 1000,
+            lastTimestamp: bufferToUInt64(
+              await readExactly(
+                handle,
+                INT64_BYTES,
+                TIME_SECTION_OFFSET + (count - 1) * INT64_BYTES
+              )
+            ) * 1000,
+          }
+        : null;
+
     const startIndex = await lowerBoundIndex(handle, count, normalizedFrom);
     const endIndexExclusive = await upperBoundIndex(handle, count, normalizedTo);
     const totalRequested = Math.max(0, endIndexExclusive - startIndex);
     const sliceCount = Math.min(totalRequested, Math.max(1, limit));
-    if (sliceCount === 0) return [];
+    if (sliceCount === 0) {
+      if (timeframe === "M1" && cacheMetadata && normalizedTo > cacheMetadata.lastTimestamp) {
+        const liveFrom = Math.max(normalizedFrom, cacheMetadata.lastTimestamp + TIMEFRAME_TO_MS.M1);
+        const liveBars = await requestMt5BarsData({
+          symbol,
+          timeframe,
+          from: liveFrom,
+          to: normalizedTo,
+          historyRoot: rootPath,
+        });
+        return liveBars.slice(0, limit);
+      }
+      return [];
+    }
 
     const timeBuffer = await readExactly(
       handle,
@@ -382,16 +499,211 @@ export async function readMt5Bars(params) {
       });
     }
 
-    return bars;
+    if (timeframe !== "M1") {
+      return bars;
+    }
+
+    if (!cacheMetadata || normalizedTo <= cacheMetadata.lastTimestamp) {
+      return bars;
+    }
+
+    const liveFrom = Math.max(normalizedFrom, cacheMetadata.lastTimestamp + TIMEFRAME_TO_MS.M1);
+    const liveBars = await requestMt5BarsData({
+      symbol,
+      timeframe,
+      from: liveFrom,
+      to: normalizedTo,
+      historyRoot: rootPath,
+    });
+
+    return mergeBarsByTimestamp(bars, liveBars, limit);
   } finally {
     await handle.close();
   }
 }
 
+function runProcess(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: SERVICE_DIR,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      reject(new Error(stderr.trim() || stdout.trim() || `${command} exited with code ${code}`));
+    });
+  });
+}
+
+async function fileExistsQuietly(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveMt5BridgeCommand() {
+  const bundledPath = path.join(BUNDLED_BRIDGE_DIR, BUNDLED_BRIDGE_NAME);
+  if (await fileExistsQuietly(bundledPath)) {
+    return {
+      mode: "bundled",
+      command: bundledPath,
+      argsPrefix: [],
+    };
+  }
+
+  const scriptPath = path.join(SERVICE_DIR, "request_mt5_bars.py");
+  const pythonAttempts = [
+    { command: "python", argsPrefix: [scriptPath] },
+    { command: "py", argsPrefix: ["-3", scriptPath] },
+  ];
+
+  for (const attempt of pythonAttempts) {
+    try {
+      const probeArgs =
+        attempt.command === "python" ? ["--version"] : ["-3", "--version"];
+      await runProcess(attempt.command, probeArgs);
+      return {
+        mode: "python",
+        command: attempt.command,
+        argsPrefix: attempt.argsPrefix,
+      };
+    } catch (error) {
+      if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
+        continue;
+      }
+    }
+  }
+
+  throw new Error(
+    "No MT5 bridge was found. Build the bundled bridge with `npm run mt5:bridge:build`, or install Python and the MetaTrader5 package for development."
+  );
+}
+
+export async function requestMt5BarsDownload(params) {
+  const {
+    symbol,
+    timeframe,
+    from,
+    to,
+    historyRoot,
+  } = params;
+  const intervalMs = TIMEFRAME_TO_MS[timeframe] ?? TIMEFRAME_TO_MS.M1;
+  const normalizedFrom = Math.min(from, to);
+  const normalizedToCandidate = Math.max(from, to);
+  const normalizedTo =
+    normalizedToCandidate === normalizedFrom
+      ? normalizedToCandidate + intervalMs
+      : normalizedToCandidate;
+
+  const bridge = await resolveMt5BridgeCommand();
+  const baseArgs = [
+    "--symbol",
+    symbol,
+    "--timeframe",
+    timeframe,
+    "--from",
+    new Date(normalizedFrom).toISOString(),
+    "--to",
+    new Date(normalizedTo).toISOString(),
+  ];
+
+  if (historyRoot?.trim()) {
+    baseArgs.push("--history-root", historyRoot.trim());
+  }
+
+  const result = await runProcess(bridge.command, [...bridge.argsPrefix, ...baseArgs]);
+  const parsed = JSON.parse(result.stdout);
+  updateLiveMt5State(symbol, timeframe, {
+    count: parsed.count ?? 0,
+    firstTimestamp: parsed.firstTimestamp ?? null,
+    lastTimestamp: parsed.lastTimestamp ?? null,
+    updatedAt: Date.now(),
+  });
+  return {
+    ...parsed,
+    bridgeMode: bridge.mode,
+  };
+}
+
+async function requestMt5BarsData(params) {
+  const {
+    symbol,
+    timeframe,
+    from,
+    to,
+    historyRoot,
+  } = params;
+  const intervalMs = TIMEFRAME_TO_MS[timeframe] ?? TIMEFRAME_TO_MS.M1;
+  const normalizedFrom = Math.min(from, to);
+  const normalizedToCandidate = Math.max(from, to);
+  const normalizedTo =
+    normalizedToCandidate === normalizedFrom
+      ? normalizedToCandidate + intervalMs
+      : normalizedToCandidate;
+
+  const bridge = await resolveMt5BridgeCommand();
+  const baseArgs = [
+    "--symbol",
+    symbol,
+    "--timeframe",
+    timeframe,
+    "--from",
+    new Date(normalizedFrom).toISOString(),
+    "--to",
+    new Date(normalizedTo).toISOString(),
+    "--return-bars",
+  ];
+
+  if (historyRoot?.trim()) {
+    baseArgs.push("--history-root", historyRoot.trim());
+  }
+
+  const result = await runProcess(bridge.command, [...bridge.argsPrefix, ...baseArgs]);
+  const parsed = JSON.parse(result.stdout);
+  updateLiveMt5State(symbol, timeframe, {
+    count: parsed.count ?? 0,
+    firstTimestamp: parsed.firstTimestamp ?? null,
+    lastTimestamp: parsed.lastTimestamp ?? null,
+    updatedAt: Date.now(),
+  });
+  return Array.isArray(parsed.bars)
+    ? parsed.bars.map((bar) => ({
+        symbol,
+        timeframe,
+        timestamp: Number(bar.timestamp),
+        open: Number(bar.open),
+        high: Number(bar.high),
+        low: Number(bar.low),
+        close: Number(bar.close),
+        volume: Number(bar.volume),
+      }))
+    : [];
+}
+
 function buildCorsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
-    "Access-Control-Allow-Methods": "GET,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     Vary: "Origin",
   };
@@ -408,6 +720,34 @@ function writeJson(response, statusCode, payload, origin) {
 function parseLimit(raw) {
   const limit = Number(raw ?? "10000");
   return Number.isFinite(limit) ? Math.max(1, Math.min(limit, 50_000)) : 10_000;
+}
+
+function readJsonBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+
+    request.on("data", (chunk) => {
+      body += chunk.toString();
+      if (body.length > 1_000_000) {
+        reject(new Error("Request body too large."));
+        request.destroy();
+      }
+    });
+
+    request.on("end", () => {
+      if (!body.trim()) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(body));
+      } catch {
+        reject(new Error("Invalid JSON body."));
+      }
+    });
+
+    request.on("error", reject);
+  });
 }
 
 export function startMt5LocalService(options = {}) {
@@ -430,7 +770,7 @@ export function startMt5LocalService(options = {}) {
       return;
     }
 
-    if (request.method !== "GET") {
+    if (request.method !== "GET" && request.method !== "POST") {
       writeJson(response, 405, { error: "Method not allowed." }, origin);
       return;
     }
@@ -508,6 +848,50 @@ export function startMt5LocalService(options = {}) {
             from,
             to,
             bars,
+          },
+          origin
+        );
+        return;
+      }
+
+      if (pathname === "/api/mt5/history/request-bars" && request.method === "POST") {
+        const body = await readJsonBody(request);
+        const symbol = typeof body.symbol === "string" ? body.symbol.trim() : "";
+        const timeframe = typeof body.timeframe === "string" ? body.timeframe.trim() : "";
+        const from = Number(body.from);
+        const to = Number(body.to);
+        const historyRoot =
+          typeof body.historyRoot === "string" ? body.historyRoot.trim() : "";
+
+        if (!symbol) {
+          writeJson(response, 400, { error: "Missing symbol." }, origin);
+          return;
+        }
+
+        if (!STANDARD_TIMEFRAMES.includes(timeframe)) {
+          writeJson(response, 400, { error: "Invalid timeframe." }, origin);
+          return;
+        }
+
+        if (!Number.isFinite(from) || !Number.isFinite(to)) {
+          writeJson(response, 400, { error: "Invalid from/to range." }, origin);
+          return;
+        }
+
+        const result = await requestMt5BarsDownload({
+          symbol,
+          timeframe,
+          from,
+          to,
+          historyRoot,
+        });
+
+        writeJson(
+          response,
+          200,
+          {
+            ok: true,
+            ...result,
           },
           origin
         );
