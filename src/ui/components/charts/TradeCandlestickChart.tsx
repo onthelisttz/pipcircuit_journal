@@ -13,8 +13,8 @@ import {
     CandlestickSeries,
     CrosshairMode,
 } from "lightweight-charts";
-import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
-import type { ChartBar, Trade } from "@domain/entities";
+import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle, useMemo } from "react";
+import type { ChartBar, ChartTimeframe, Trade } from "@domain/entities";
 import { Direction } from "@domain/enums";
 import { estimateGrossProfit, volumeToLots, priceDiffToPips } from "@lib/pnl-estimate";
 import { RiskRewardPlugin } from "./plugins/RiskRewardPlugin";
@@ -23,6 +23,10 @@ import { LineToolRectangle } from "lightweight-charts-line-tools-rectangle";
 import { registerLinesPlugin } from "lightweight-charts-line-tools-lines";
 import { registerPathPlugin } from "lightweight-charts-line-tools-path";
 import { registerLongShortPositionPlugin } from "lightweight-charts-line-tools-long-short-position";
+import {
+    buildTimeGuides,
+    type TimeGuideSettings,
+} from "./timeGuides";
 
 export type DrawingToolType = "Path" | "TrendLine" | "Rectangle" | "LongShortPosition";
 type LineToolsApi = ReturnType<typeof createLineToolsPlugin>;
@@ -55,33 +59,75 @@ function isDrawingToolType(toolType: string): toolType is DrawingToolType {
     return toolType === "Rectangle" || toolType === "TrendLine" || toolType === "Path" || toolType === "LongShortPosition";
 }
 
-function formatCrosshairDateTime(time: unknown): string {
-    let date: Date;
+function timeToDate(time: unknown): Date | null {
     if (typeof time === "number") {
-        date = new Date(time * 1000);
-    } else if (typeof time === "string") {
-        date = new Date(time);
-    } else if (time && typeof time === "object" && "year" in time && "month" in time && "day" in time) {
+        return new Date(time * 1000);
+    }
+    if (typeof time === "string") {
+        return new Date(time);
+    }
+    if (time && typeof time === "object" && "year" in time && "month" in time && "day" in time) {
         const businessDay = time as { year: number; month: number; day: number };
-        date = new Date(Date.UTC(businessDay.year, businessDay.month - 1, businessDay.day));
-    } else {
+        return new Date(Date.UTC(businessDay.year, businessDay.month - 1, businessDay.day));
+    }
+    return null;
+}
+
+function formatInChartTimezone(
+    date: Date,
+    options: Intl.DateTimeFormatOptions
+): string {
+    return new Intl.DateTimeFormat("en-GB", {
+        timeZone: "UTC",
+        hour12: false,
+        ...options,
+    }).format(date);
+}
+
+function formatCrosshairDateTime(time: unknown): string {
+    const date = timeToDate(time);
+    if (!date) {
         return String(time ?? "");
     }
 
-    return new Intl.DateTimeFormat(undefined, {
+    return formatInChartTimezone(date, {
         weekday: "short",
-        timeZone: "UTC",
         year: "numeric",
         month: "short",
         day: "numeric",
         hour: "2-digit",
         minute: "2-digit",
-    }).format(date);
+    });
+}
+
+function sameTimeGuideOverlay(
+    left: {
+        verticalLines: Array<{ id: string; kind: "daily" | "session"; x: number }>;
+    },
+    right: {
+        verticalLines: Array<{ id: string; kind: "daily" | "session"; x: number }>;
+    }
+): boolean {
+    if (left.verticalLines.length !== right.verticalLines.length) return false;
+
+    for (let index = 0; index < left.verticalLines.length; index += 1) {
+        const a = left.verticalLines[index];
+        const b = right.verticalLines[index];
+        if (a.id !== b.id || a.kind !== b.kind || Math.abs(a.x - b.x) > 0.5) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 export interface TradeCandlestickChartProps {
     /** Chart bar data to display */
     data: ChartBar[];
+    /** Timeframe of the current bar set */
+    timeframe?: ChartTimeframe;
+    /** Optional time-based guide settings */
+    timeGuides?: TimeGuideSettings;
     /** Trade for context visualization */
     trade?: Trade;
     /** Height of the chart container */
@@ -142,6 +188,8 @@ export interface TradeCandlestickChartRef {
  */
 export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeCandlestickChartProps>(function TradeCandlestickChart({
     data,
+    timeframe,
+    timeGuides,
     trade,
     height = 400,
     onVisibleRangeChange,
@@ -169,6 +217,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const exitLineRef = useRef<IPriceLine | null>(null);
     const [isChartReady, setIsChartReady] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
+    const [timeGuideOverlay, setTimeGuideOverlay] = useState<{
+        verticalLines: Array<{ id: string; kind: "daily" | "session"; x: number }>;
+    }>({
+        verticalLines: [],
+    });
     const onVisibleRangeChangeRef = useRef<typeof onVisibleRangeChange>(onVisibleRangeChange);
     const onDrawingSelectionChangeRef = useRef<typeof onDrawingSelectionChange>(onDrawingSelectionChange);
     const onDrawingToolCompleteRef = useRef<typeof onDrawingToolComplete>(onDrawingToolComplete);
@@ -185,6 +238,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const longShortLotsRef = useRef<number>(longShortLots);
     const longShortSymbolRef = useRef<string | undefined>(longShortSymbol);
     const heightRef = useRef<number>(height);
+    const overlayFrameRef = useRef<number | null>(null);
+    const scheduleTimeGuideOverlayRefreshRef = useRef<() => void>(() => {});
     const selectedDrawingIdsRef = useRef<string[]>([]);
     const selectionSnapshotRef = useRef<Map<string, DrawingToolExport> | null>(null);
     const duplicateDragPlanRef = useRef<{
@@ -219,6 +274,68 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         longShortLotsRef.current = longShortLots;
         longShortSymbolRef.current = longShortSymbol;
     }, [longShortLots, longShortSymbol]);
+
+    const computedTimeGuides = useMemo(
+        () => buildTimeGuides(data, timeframe, timeGuides),
+        [data, timeframe, timeGuides]
+    );
+
+    const refreshTimeGuideOverlay = useCallback(() => {
+        const chart = chartRef.current;
+
+        if (!chart) {
+            setTimeGuideOverlay((current) =>
+                current.verticalLines.length === 0
+                    ? current
+                    : { verticalLines: [] }
+            );
+            return;
+        }
+
+        if (computedTimeGuides.verticalLines.length === 0) {
+            setTimeGuideOverlay((current) =>
+                current.verticalLines.length === 0
+                    ? current
+                    : { verticalLines: [] }
+            );
+            return;
+        }
+
+        const timeScale = chart.timeScale();
+        const nextVerticalLines: Array<{ id: string; kind: "daily" | "session"; x: number }> = [];
+
+        for (const line of computedTimeGuides.verticalLines) {
+            const x = timeScale.timeToCoordinate((line.timestamp / 1000) as Time);
+            if (x == null || !Number.isFinite(x)) continue;
+            nextVerticalLines.push({
+                id: line.id,
+                kind: line.kind,
+                x,
+            });
+        }
+
+        const nextOverlay = {
+            verticalLines: nextVerticalLines,
+        };
+
+        setTimeGuideOverlay((current) =>
+            sameTimeGuideOverlay(current, nextOverlay) ? current : nextOverlay
+        );
+    }, [computedTimeGuides]);
+
+    const scheduleTimeGuideOverlayRefresh = useCallback(() => {
+        if (overlayFrameRef.current != null) {
+            cancelAnimationFrame(overlayFrameRef.current);
+        }
+        overlayFrameRef.current = requestAnimationFrame(() => {
+            overlayFrameRef.current = null;
+            refreshTimeGuideOverlay();
+        });
+    }, [refreshTimeGuideOverlay]);
+
+    useEffect(() => {
+        scheduleTimeGuideOverlayRefreshRef.current = scheduleTimeGuideOverlayRefresh;
+    }, [scheduleTimeGuideOverlayRefresh]);
 
     const formatMoney = (value: number) => {
         const sign = value >= 0 ? "+" : "-";
@@ -981,19 +1098,24 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         const handleResize = () => {
             syncChartSize();
+            scheduleTimeGuideOverlayRefreshRef.current();
         };
 
         window.addEventListener("resize", handleResize);
 
         const resizeObserver =
             typeof ResizeObserver !== "undefined"
-                ? new ResizeObserver(() => syncChartSize())
+                ? new ResizeObserver(() => {
+                    syncChartSize();
+                    scheduleTimeGuideOverlayRefreshRef.current();
+                })
                 : null;
         if (resizeObserver) {
             resizeObserver.observe(chartContainer);
         }
 
         const handleVisibleRange = (range: { from: number; to: number } | null) => {
+            scheduleTimeGuideOverlayRefreshRef.current();
             if (Date.now() < suppressVisibleRangeUntilRef.current) return;
             const callback = onVisibleRangeChangeRef.current;
             if (!callback) return;
@@ -1014,6 +1136,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             window.removeEventListener("resize", handleResize);
             window.clearTimeout(timeoutId);
             cancelAnimationFrame(rafId);
+            if (overlayFrameRef.current != null) {
+                cancelAnimationFrame(overlayFrameRef.current);
+                overlayFrameRef.current = null;
+            }
             resizeObserver?.disconnect();
             chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRange);
             entryLineRef.current = null;
@@ -1035,6 +1161,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         syncSelectionByIds,
         updateLongShortText,
     ]);
+
+    useEffect(() => {
+        if (!isChartReady) {
+            setTimeGuideOverlay({ verticalLines: [] });
+            return;
+        }
+        scheduleTimeGuideOverlayRefresh();
+    }, [isChartReady, scheduleTimeGuideOverlayRefresh, computedTimeGuides, height]);
 
     useEffect(() => {
         if (!lineToolsRef.current || !drawingTool) return;
@@ -1707,6 +1841,24 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 className="w-full rounded-lg bg-gray-900/50"
                 style={{ height }}
             />
+
+            {timeGuideOverlay.verticalLines.length > 0 && (
+                <div className="pointer-events-none absolute inset-0 z-[1] overflow-hidden rounded-lg">
+                    {timeGuideOverlay.verticalLines.map((line) => (
+                        <div
+                            key={line.id}
+                            className="absolute bottom-0 top-0"
+                            style={{
+                                left: `${line.x}px`,
+                                borderLeft:
+                                    line.kind === "daily"
+                                        ? "1px dashed rgba(148, 163, 184, 0.55)"
+                                        : "1px dashed rgba(250, 204, 21, 0.85)",
+                            }}
+                        />
+                    ))}
+                </div>
+            )}
         </div>
     );
 });

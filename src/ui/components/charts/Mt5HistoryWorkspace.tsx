@@ -33,6 +33,11 @@ import type {
 } from "@ui/components/charts/TradeCandlestickChart";
 type DrawingToolExport = ReturnType<TradeCandlestickChartRef["exportAllDrawings"]>[number];
 import { hexToRgba } from "@lib/color";
+import { TimeGuidesControls } from "./TimeGuidesControls";
+import {
+  readStoredTimeGuideSettings,
+  type TimeGuideSettings,
+} from "./timeGuides";
 
 type TimeframeSummary = {
   timeframe: ChartTimeframe;
@@ -69,6 +74,7 @@ type HistoryChartUpdateMode = "replace" | "append" | "prepend";
 const LOAD_LIMIT = 20_000;
 const EDGE_FETCH_THRESHOLD = 10;
 const FETCH_THROTTLE_MS = 160;
+const HISTORY_TIME_GUIDES_KEY = "chartTimeGuides_history";
 const MAX_RENDERED_BARS: Record<ChartTimeframe, number> = {
   M1: 15_000,
   M5: 30_000,
@@ -474,6 +480,9 @@ export function Mt5HistoryWorkspace({
   const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
   const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
   const [longShortLots, setLongShortLots] = useState(1);
+  const [timeGuides, setTimeGuides] = useState<TimeGuideSettings>(() =>
+    readStoredTimeGuideSettings(HISTORY_TIME_GUIDES_KEY)
+  );
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedHeight, setExpandedHeight] = useState(640);
   const [chartAreaHeight, setChartAreaHeight] = useState(520);
@@ -525,6 +534,11 @@ export function Mt5HistoryWorkspace({
   );
 
   const activeSeriesKey = `${symbol}|${selectedTimeframe?.timeframe ?? ""}`;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(HISTORY_TIME_GUIDES_KEY, JSON.stringify(timeGuides));
+  }, [timeGuides]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1158,6 +1172,13 @@ export function Mt5HistoryWorkspace({
         )}
       </div>
 
+      <TimeGuidesControls
+        value={timeGuides}
+        onChange={setTimeGuides}
+        compact={compact}
+        disabled={!selectedTimeframe}
+      />
+
       {!compact ? (
         <div className="flex flex-wrap items-center gap-2">
           {DRAW_TOOLS.map((tool) => (
@@ -1309,6 +1330,8 @@ export function Mt5HistoryWorkspace({
           key={chartInstanceKey}
           ref={chartRef}
           data={bars}
+          timeframe={timeframe}
+          timeGuides={timeGuides}
           dataUpdateMode={chartUpdateMode}
           trade={viewerTrade}
           height={isExpanded ? expandedHeight : chartAreaHeight}

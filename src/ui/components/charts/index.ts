@@ -6,6 +6,7 @@
 
 export { TradeCandlestickChart } from "./TradeCandlestickChart";
 export type { TradeCandlestickChartProps } from "./TradeCandlestickChart";
+export { TimeGuidesControls } from "./TimeGuidesControls";
 
 export { ProfitTimelineChart } from "./ProfitTimelineChart";
 export type { ProfitTimelineChartProps } from "./ProfitTimelineChart";

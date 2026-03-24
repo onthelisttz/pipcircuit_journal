@@ -111,8 +111,8 @@ export function TradePanelContent({
         }
         case "date":
         default: {
-          const tA = new Date(a.closeTime ?? a.openTime ?? 0).getTime();
-          const tB = new Date(b.closeTime ?? b.openTime ?? 0).getTime();
+          const tA = new Date(a.openTime ?? a.closeTime ?? 0).getTime();
+          const tB = new Date(b.openTime ?? b.closeTime ?? 0).getTime();
           cmp = tA - tB;
           break;
         }
@@ -518,7 +518,7 @@ export function TradePanelContent({
                       (t.lots != null && Number.isFinite(t.lots))
                         ? t.lots
                         : volumeToLots(t.volume ?? 0, t.symbol ?? "");
-                    const dateVal = t.closeTime ?? t.openTime;
+                    const dateVal = t.openTime ?? t.closeTime;
                     return (
                       <tr
                         key={t.id ?? t.ticketId ?? t.openTime?.toString()}

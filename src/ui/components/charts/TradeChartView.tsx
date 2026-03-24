@@ -12,6 +12,14 @@ import type { DrawingToolType, TradeCandlestickChartRef } from "./TradeCandlesti
 import { TradePositionInput } from "@ui/components/common/TradePositionInput";
 import { volumeToLots } from "@lib/pnl-estimate";
 import { hexToRgba } from "@lib/color";
+import { TimeGuidesControls } from "./TimeGuidesControls";
+import {
+    readStoredTimeGuideSettings,
+    type TimeGuideSettings,
+} from "./timeGuides";
+
+const TRADE_CHART_TIME_GUIDES_KEY = "tradeChartTimeGuides";
+const CTRADER_CHART_DISPLAY_OFFSET_MS = 3 * 60 * 60 * 1000;
 
 function formatProfit(value: number): string {
     const sign = value >= 0 ? "+" : "-";
@@ -22,11 +30,12 @@ function formatHeaderDate(value: Date | number | string | undefined): string {
     if (!value) return "-";
     const date = value instanceof Date ? value : new Date(value);
     if (Number.isNaN(date.getTime())) return "-";
-    return new Intl.DateTimeFormat(undefined, {
+    return new Intl.DateTimeFormat("en-GB", {
         month: "short",
         day: "numeric",
         hour: "2-digit",
         minute: "2-digit",
+        hour12: false,
     }).format(date);
 }
 
@@ -103,6 +112,9 @@ export function TradeChartView({
     const [rectangleFillColor, setRectangleFillColor] = useState("#8b5cf6");
     const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
     const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
+    const [timeGuides, setTimeGuides] = useState<TimeGuideSettings>(() =>
+        readStoredTimeGuideSettings(TRADE_CHART_TIME_GUIDES_KEY)
+    );
     const initialLots = useMemo(() => {
         if (trade.lots != null && Number.isFinite(trade.lots)) return trade.lots;
         const derived = volumeToLots(trade.volume ?? 0, trade.symbol ?? "");
@@ -135,6 +147,28 @@ export function TradeChartView({
         accessToken,
         broker,
     });
+    const displayData = useMemo(
+        () =>
+            data.map((bar) => ({
+                ...bar,
+                timestamp: bar.timestamp + CTRADER_CHART_DISPLAY_OFFSET_MS,
+            })),
+        [data]
+    );
+    const displayTrade = useMemo<Trade>(() => ({
+        ...trade,
+        openTime: new Date(
+            (trade.openTime instanceof Date ? trade.openTime.getTime() : new Date(trade.openTime).getTime()) +
+                CTRADER_CHART_DISPLAY_OFFSET_MS
+        ),
+        closeTime: trade.closeTime
+            ? new Date(
+                (trade.closeTime instanceof Date
+                    ? trade.closeTime.getTime()
+                    : new Date(trade.closeTime).getTime()) + CTRADER_CHART_DISPLAY_OFFSET_MS
+            )
+            : null,
+    }), [trade]);
 
     // Handle timeframe change
     const handleTimeframeChange = useCallback((newTimeframe: ChartTimeframe) => {
@@ -224,7 +258,7 @@ export function TradeChartView({
     const headerPnl = trade.netProfit ?? trade.grossProfit ?? 0;
     const headerPnlClass =
         headerPnl > 0 ? "text-emerald-400" : headerPnl < 0 ? "text-red-400" : "text-muted-foreground";
-    const headerDate = trade.closeTime ?? trade.openTime;
+    const headerDate = trade.openTime;
     const drawingFillRgba = useMemo(
         () => hexToRgba(rectangleFillColor, rectangleFillOpacity),
         [rectangleFillColor, rectangleFillOpacity]
@@ -233,6 +267,11 @@ export function TradeChartView({
     useEffect(() => {
         setLongShortLots(initialLots);
     }, [initialLots, trade.id]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        window.localStorage.setItem(TRADE_CHART_TIME_GUIDES_KEY, JSON.stringify(timeGuides));
+    }, [timeGuides]);
 
     // Reset view - switch to M1, scroll to trade, fit charts, remove all drawing tools (delay to allow M1 data to load)
     const handleResetView = useCallback(() => {
@@ -330,7 +369,7 @@ export function TradeChartView({
         trade.id,
         trade.openTime,
         trade.closeTime,
-        data.length,
+        displayData.length,
     ]);
 
     // Handle visible range change for lazy loading
@@ -356,19 +395,27 @@ export function TradeChartView({
     const chartContent = (hideTimeframeInToolbar = false) => (
         <div className="flex min-h-0 flex-1 flex-col">
             <div
-                className={`sticky top-0 z-10 -mx-2 -mt-2 flex flex-nowrap items-center gap-2 overflow-x-auto border-b border-border/70 bg-card/95 px-2 py-1.5 backdrop-blur ${
+                className={`sticky top-0 z-30 -mx-2 -mt-2 flex flex-nowrap items-center gap-2 overflow-visible border-b border-border/70 bg-card/95 px-2 py-1.5 backdrop-blur ${
                     hideTimeframeInToolbar ? "justify-end" : "justify-between"
                 }`}
             >
                 {!hideTimeframeInToolbar && (
-                    <TimeframeSelector
-                        value={timeframe}
-                        onChange={handleTimeframeChange}
-                        disabled={isLoading}
-                    />
+                    <div className="flex items-center gap-2">
+                        <TimeframeSelector
+                            value={timeframe}
+                            onChange={handleTimeframeChange}
+                            disabled={isLoading}
+                        />
+                    </div>
                 )}
                 {showsCandlestick && (
                     <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
+                        <TimeGuidesControls
+                            value={timeGuides}
+                            onChange={setTimeGuides}
+                            disabled={isLoading}
+                            compact
+                        />
                         {(() => {
                             const showDrawControls =
                                 drawingTool === "Rectangle" ||
@@ -486,8 +533,10 @@ export function TradeChartView({
                 {showsCandlestick && (
                     <TradeCandlestickChart
                         ref={candlestickChartRef}
-                        data={data}
-                        trade={trade}
+                        data={displayData}
+                        timeframe={timeframe}
+                        timeGuides={timeGuides}
+                        trade={displayTrade}
                         height={resolvedChartHeight}
                         zoomOutMultiplier={activeZoomOutMultiplier}
                         showEntryMarker={true}
@@ -509,8 +558,8 @@ export function TradeChartView({
                 {showProfitTimeline && (
                     <ProfitTimelineChart
                         ref={profitChartRef}
-                        data={data}
-                        trade={trade}
+                        data={displayData}
+                        trade={displayTrade}
                         height={resolvedTimelineHeight}
                         visible={showProfitTimeline}
                         showMAE={showMAE}

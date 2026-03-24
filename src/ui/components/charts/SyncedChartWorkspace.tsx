@@ -25,9 +25,16 @@ import { useAccount } from "@ui/hooks/useAccount";
 import { DexieSymbolSyncProgressRepository } from "@infrastructure/db/dexie/repositories";
 import { TokenStorage } from "@infrastructure/auth";
 import { hexToRgba } from "@lib/color";
+import { TimeGuidesControls } from "./TimeGuidesControls";
+import {
+  readStoredTimeGuideSettings,
+  type TimeGuideSettings,
+} from "./timeGuides";
 
 const CHART_SELECTION_KEY = "chartSelection";
 const CHART_TIMEFRAME_KEY = "chartTimeframe";
+const CHART_TIME_GUIDES_KEY = "chartTimeGuides_synced";
+const SYNCED_CHART_DISPLAY_OFFSET_MS = 3 * 60 * 60 * 1000;
 type ChartSelection = { broker: string; symbol: string };
 
 const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
@@ -162,6 +169,9 @@ export function SyncedChartWorkspace({
   const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
   const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
   const [longShortLots, setLongShortLots] = useState(1);
+  const [timeGuides, setTimeGuides] = useState<TimeGuideSettings>(() =>
+    readStoredTimeGuideSettings(CHART_TIME_GUIDES_KEY)
+  );
   const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -193,6 +203,11 @@ export function SyncedChartWorkspace({
     if (typeof window === "undefined") return;
     window.localStorage.setItem(CHART_TIMEFRAME_KEY, timeframe);
   }, [timeframe]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CHART_TIME_GUIDES_KEY, JSON.stringify(timeGuides));
+  }, [timeGuides]);
 
   // Report initial values to parent so tab labels are correct on mount
   useEffect(() => {
@@ -397,6 +412,15 @@ export function SyncedChartWorkspace({
     windowDays,
     enabled: chartEnabled,
   });
+  const displayData = useMemo(
+    () =>
+      data.map((bar) => ({
+        ...bar,
+        // cTrader bars arrive 3 hours behind the MT5 chart session the user expects.
+        timestamp: bar.timestamp + SYNCED_CHART_DISPLAY_OFFSET_MS,
+      })),
+    [data]
+  );
 
   // Restore drawings and viewport after timeframe data loads
   useEffect(() => {
@@ -418,6 +442,8 @@ export function SyncedChartWorkspace({
   const handleVisibleRangeChange = useCallback(
     (from: number, to: number) => {
       if (data.length === 0) return;
+      const visibleBarsLength = displayData.length;
+      if (visibleBarsLength === 0) return;
 
       const previousRange = lastVisibleRangeRef.current;
       const currentCenter = (from + to) / 2;
@@ -428,7 +454,7 @@ export function SyncedChartWorkspace({
       const leftIndex = Math.floor(from);
       const rightIndex = Math.ceil(to);
       const nearLeft = leftIndex <= EDGE_FETCH_THRESHOLD;
-      const nearRight = rightIndex >= data.length - EDGE_FETCH_THRESHOLD;
+      const nearRight = rightIndex >= visibleBarsLength - EDGE_FETCH_THRESHOLD;
 
       let shouldFetchPrev = nearLeft;
       let shouldFetchNext = nearRight;
@@ -467,7 +493,7 @@ export function SyncedChartWorkspace({
         }
       }
     },
-    [data.length, fetchNext, fetchPrevious]
+    [displayData.length, fetchNext, fetchPrevious]
   );
 
   useEffect(() => {
@@ -619,6 +645,13 @@ export function SyncedChartWorkspace({
           </div>
         )}
       </div>
+
+      <TimeGuidesControls
+        value={timeGuides}
+        onChange={setTimeGuides}
+        compact={compact}
+        disabled={!selection}
+      />
 
       {!compact ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -922,7 +955,9 @@ export function SyncedChartWorkspace({
       <div ref={chartAreaRef} className="mt-3 min-h-[420px] flex-1">
         <TradeCandlestickChart
           ref={chartRef}
-          data={data}
+          data={displayData}
+          timeframe={timeframe}
+          timeGuides={timeGuides}
           height={isExpanded ? expandedHeight : chartAreaHeight}
           isLoading={isLoading}
           drawingTool={drawingTool}
