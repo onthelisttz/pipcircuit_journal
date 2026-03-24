@@ -14,6 +14,63 @@ Default URL:
 http://127.0.0.1:47831
 ```
 
+## Start automatically on Windows
+
+Build and install the packaged helper, then register a scheduled task that starts it when you sign in:
+
+```bash
+npm run mt5:service:install
+```
+
+Build the packaged helper without installing it:
+
+```bash
+npm run mt5:service:build
+```
+
+Create a distributable bundle for another PC:
+
+```bash
+npm run mt5:service:bundle
+```
+
+That creates:
+
+```text
+local-services/mt5-history-service/release/mt5-history-service-windows-x64/
+local-services/mt5-history-service/release/mt5-history-service-windows-x64.zip
+```
+
+On another Windows PC, extract the zip and run:
+
+```text
+install-mt5-service.cmd
+```
+
+Remove it later if needed:
+
+```bash
+npm run mt5:service:uninstall
+```
+
+The install command copies these files into:
+
+```text
+%LOCALAPPDATA%\Pipcircuit\mt5-history-service\
+```
+
+The scheduled task runs this installed launcher:
+
+```text
+%LOCALAPPDATA%\Pipcircuit\mt5-history-service\start-mt5-service.cmd
+```
+
+The helper still writes logs to:
+
+```text
+%LOCALAPPDATA%\Pipcircuit\logs\mt5-history-service.log
+```
+
 ## What it serves
 
 - `GET /health`
@@ -43,8 +100,8 @@ That creates a bundled bridge binary in:
 local-services/mt5-history-service/bin/
 ```
 
-When that binary exists, the helper uses it automatically.
-That means users only need to run the service, not install Python themselves.
+When that binary exists, the packaged MT5 service installer copies it into the installed service directory automatically.
+That means users do not need to install Python themselves.
 
 ## Optional env vars
 

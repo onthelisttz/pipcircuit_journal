@@ -1,1 +1,5 @@
 local-services/mt5-history-service/
+scripts/build-mt5-service.mjs
+scripts/build-mt5-service-bundle.mjs
+scripts/register-mt5-service-task.ps1
+scripts/unregister-mt5-service-task.ps1

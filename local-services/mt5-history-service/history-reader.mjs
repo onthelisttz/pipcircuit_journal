@@ -26,7 +26,9 @@ const TIMEFRAME_TO_MS = {
   H4: 4 * 60 * 60_000,
   D1: 24 * 60 * 60_000,
 };
-const SERVICE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const SERVICE_DIR =
+  process.env.PIPCIRCUIT_MT5_SERVICE_DIR?.trim() ||
+  path.dirname(fileURLToPath(import.meta.url));
 const BUNDLED_BRIDGE_DIR = path.join(SERVICE_DIR, "bin");
 const BUNDLED_BRIDGE_NAME =
   process.platform === "win32" ? "request_mt5_bars.exe" : "request_mt5_bars";
@@ -1324,10 +1326,7 @@ export function startMt5LocalService(options = {}) {
   return server;
 }
 
-const isEntrypoint =
-  process.argv.includes("--serve") &&
-  process.argv[1] &&
-  fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+const isEntrypoint = process.argv.includes("--serve");
 
 if (isEntrypoint) {
   startMt5LocalService();
