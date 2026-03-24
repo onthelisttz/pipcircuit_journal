@@ -574,13 +574,7 @@ export function Mt5HistoryWorkspace({
   const activeSeriesKey = `${symbol}|${selectedTimeframe?.timeframe ?? ""}`;
   const resolvedMt5ServiceUrl = useMemo(() => {
     const configured = normalizeMt5ServiceUrl(mt5ServiceUrl);
-    if (configured) return configured;
-    if (typeof window === "undefined") return "";
-    const hostname = window.location.hostname;
-    if (hostname !== "localhost" && hostname !== "127.0.0.1") {
-      return DEFAULT_MT5_LOCAL_SERVICE_URL;
-    }
-    return "";
+    return configured || DEFAULT_MT5_LOCAL_SERVICE_URL;
   }, [mt5ServiceUrl]);
 
   const loadMeta = useCallback(
