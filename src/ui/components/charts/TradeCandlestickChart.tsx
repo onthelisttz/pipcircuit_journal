@@ -102,12 +102,17 @@ function formatCrosshairDateTime(time: unknown): string {
 
 function sameTimeGuideOverlay(
     left: {
+        width: number | null;
+        height: number | null;
         verticalLines: Array<{ id: string; kind: "daily" | "session"; x: number }>;
     },
     right: {
+        width: number | null;
+        height: number | null;
         verticalLines: Array<{ id: string; kind: "daily" | "session"; x: number }>;
     }
 ): boolean {
+    if (left.width !== right.width || left.height !== right.height) return false;
     if (left.verticalLines.length !== right.verticalLines.length) return false;
 
     for (let index = 0; index < left.verticalLines.length; index += 1) {
@@ -168,6 +173,8 @@ export interface TradeCandlestickChartProps {
     zoomOutMultiplier?: number;
     /** Hint for how incoming data changed so large history updates can stay incremental */
     dataUpdateMode?: "auto" | "replace" | "append" | "prepend";
+    /** Restrict HTML time-guide overlays to the pane so they don't cover the price scale */
+    clipTimeGuideOverlayToPane?: boolean;
 }
 
 export interface TradeCandlestickChartRef {
@@ -208,6 +215,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     autoScrollOnData = true,
     zoomOutMultiplier = 3.2,
     dataUpdateMode = "auto",
+    clipTimeGuideOverlayToPane = false,
 }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -218,8 +226,12 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const [isChartReady, setIsChartReady] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
     const [timeGuideOverlay, setTimeGuideOverlay] = useState<{
+        width: number | null;
+        height: number | null;
         verticalLines: Array<{ id: string; kind: "daily" | "session"; x: number }>;
     }>({
+        width: null,
+        height: null,
         verticalLines: [],
     });
     const onVisibleRangeChangeRef = useRef<typeof onVisibleRangeChange>(onVisibleRangeChange);
@@ -285,28 +297,34 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         if (!chart) {
             setTimeGuideOverlay((current) =>
+                current.width === null &&
+                current.height === null &&
                 current.verticalLines.length === 0
                     ? current
-                    : { verticalLines: [] }
+                    : { width: null, height: null, verticalLines: [] }
             );
             return;
         }
 
         if (computedTimeGuides.verticalLines.length === 0) {
             setTimeGuideOverlay((current) =>
+                current.width === null &&
+                current.height === null &&
                 current.verticalLines.length === 0
                     ? current
-                    : { verticalLines: [] }
+                    : { width: null, height: null, verticalLines: [] }
             );
             return;
         }
 
         const timeScale = chart.timeScale();
+        const paneSize = chart.paneSize();
         const nextVerticalLines: Array<{ id: string; kind: "daily" | "session"; x: number }> = [];
 
         for (const line of computedTimeGuides.verticalLines) {
             const x = timeScale.timeToCoordinate((line.timestamp / 1000) as Time);
             if (x == null || !Number.isFinite(x)) continue;
+            if (clipTimeGuideOverlayToPane && (x < 0 || x > paneSize.width)) continue;
             nextVerticalLines.push({
                 id: line.id,
                 kind: line.kind,
@@ -315,13 +333,15 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         }
 
         const nextOverlay = {
+            width: clipTimeGuideOverlayToPane ? paneSize.width : null,
+            height: clipTimeGuideOverlayToPane ? paneSize.height : null,
             verticalLines: nextVerticalLines,
         };
 
         setTimeGuideOverlay((current) =>
             sameTimeGuideOverlay(current, nextOverlay) ? current : nextOverlay
         );
-    }, [computedTimeGuides]);
+    }, [clipTimeGuideOverlayToPane, computedTimeGuides]);
 
     const scheduleTimeGuideOverlayRefresh = useCallback(() => {
         if (overlayFrameRef.current != null) {
@@ -1164,7 +1184,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
     useEffect(() => {
         if (!isChartReady) {
-            setTimeGuideOverlay({ verticalLines: [] });
+            setTimeGuideOverlay({ width: null, height: null, verticalLines: [] });
             return;
         }
         scheduleTimeGuideOverlayRefresh();
@@ -1843,7 +1863,21 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             />
 
             {timeGuideOverlay.verticalLines.length > 0 && (
-                <div className="pointer-events-none absolute inset-0 z-[1] overflow-hidden rounded-lg">
+                <div
+                    className={`pointer-events-none absolute z-[1] overflow-hidden ${
+                        clipTimeGuideOverlayToPane ? "left-0 top-0" : "inset-0 rounded-lg"
+                    }`}
+                    style={
+                        clipTimeGuideOverlayToPane &&
+                        timeGuideOverlay.width != null &&
+                        timeGuideOverlay.height != null
+                            ? {
+                                width: `${timeGuideOverlay.width}px`,
+                                height: `${timeGuideOverlay.height}px`,
+                            }
+                            : undefined
+                    }
+                >
                     {timeGuideOverlay.verticalLines.map((line) => (
                         <div
                             key={line.id}

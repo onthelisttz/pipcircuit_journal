@@ -536,6 +536,7 @@ export function TradeChartView({
                         data={displayData}
                         timeframe={timeframe}
                         timeGuides={timeGuides}
+                        clipTimeGuideOverlayToPane
                         trade={displayTrade}
                         height={resolvedChartHeight}
                         zoomOutMultiplier={activeZoomOutMultiplier}

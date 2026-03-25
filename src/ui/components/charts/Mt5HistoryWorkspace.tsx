@@ -115,8 +115,18 @@ function toDateInputValue(timestamp: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+function parseDateInputValue(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+
+  const parsed = new Date(`${value}T00:00:00`);
+  if (!Number.isFinite(parsed.getTime())) return null;
+  if (toDateInputValue(parsed.getTime()) !== value) return null;
+
+  return parsed;
+}
+
 function fromDateInputValue(value: string): number {
-  return new Date(`${value}T00:00:00`).getTime();
+  return parseDateInputValue(value)?.getTime() ?? Number.NaN;
 }
 
 function formatShortDate(timestamp: number): string {
@@ -311,15 +321,33 @@ function SingleDatePopover({
 }: SingleDatePopoverProps) {
   const [tempDate, setTempDate] = useState<Date>(value);
   const [visibleMonth, setVisibleMonth] = useState<Date>(startOfMonth(value));
+  const [inputValue, setInputValue] = useState(() => toDateInputValue(value.getTime()));
   const [isApplyEnabled, setIsApplyEnabled] = useState(true);
 
   const monthDays = useMemo(() => buildMonthDays(visibleMonth), [visibleMonth]);
   const firstWeekday = new Date(visibleMonth).getDay();
   const minMonth = startOfMonth(min);
   const maxMonth = startOfMonth(max);
+  const minDateValue = toDateInputValue(min.getTime());
+  const maxDateValue = toDateInputValue(max.getTime());
   const canGoPrev = visibleMonth.getTime() > minMonth.getTime();
   const canGoNext = visibleMonth.getTime() < maxMonth.getTime();
   const today = new Date();
+  const dateInputError =
+    inputValue.length === 0
+      ? "Enter a date."
+      : parseDateInputValue(inputValue) === null
+        ? "Use YYYY-MM-DD."
+        : inputValue < minDateValue || inputValue > maxDateValue
+          ? `Date must be between ${minDateValue} and ${maxDateValue}.`
+          : null;
+
+  const updateSelectedDate = (nextDate: Date) => {
+    setTempDate(nextDate);
+    setVisibleMonth(startOfMonth(nextDate));
+    setInputValue(toDateInputValue(nextDate.getTime()));
+    setIsApplyEnabled(true);
+  };
 
   return (
     <div className="fixed inset-x-2 bottom-2 top-16 z-30 overflow-y-auto rounded-xl border border-border bg-popover p-3 shadow-2xl animate-in fade-in-0 zoom-in-95 sm:absolute sm:inset-auto sm:left-0 sm:top-full sm:mt-2 sm:w-[320px] sm:max-w-[calc(100vw-2rem)] sm:p-4">
@@ -335,6 +363,59 @@ function SingleDatePopover({
         >
           <X className="h-3.5 w-3.5" />
         </button>
+      </div>
+
+      <div className="mb-3">
+        <label
+          htmlFor="mt5-history-go-to-date-input"
+          className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+        >
+          Go to date
+        </label>
+        <input
+          id="mt5-history-go-to-date-input"
+          type="text"
+          value={inputValue}
+          onChange={(event) => {
+            const nextValue = event.target.value.trim();
+            setInputValue(nextValue);
+
+            const parsedDate = parseDateInputValue(nextValue);
+            if (
+              parsedDate === null ||
+              nextValue < minDateValue ||
+              nextValue > maxDateValue
+            ) {
+              setIsApplyEnabled(false);
+              return;
+            }
+
+            setTempDate(parsedDate);
+            setVisibleMonth(startOfMonth(parsedDate));
+            setIsApplyEnabled(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") return;
+
+            event.preventDefault();
+            if (!isApplyEnabled || dateInputError) return;
+            onApply(tempDate);
+          }}
+          placeholder="YYYY-MM-DD"
+          autoComplete="off"
+          spellCheck={false}
+          className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60"
+          aria-invalid={dateInputError ? "true" : "false"}
+          aria-describedby="mt5-history-go-to-date-help"
+        />
+        <p
+          id="mt5-history-go-to-date-help"
+          className={`mt-1 text-[10px] ${
+            dateInputError ? "text-destructive" : "text-muted-foreground"
+          }`}
+        >
+          {dateInputError ?? ""}
+        </p>
       </div>
 
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -430,10 +511,7 @@ function SingleDatePopover({
               key={day.toISOString()}
               type="button"
               disabled={isDisabled}
-              onClick={() => {
-                setTempDate(day);
-                setIsApplyEnabled(true);
-              }}
+              onClick={() => updateSelectedDate(day)}
               className={[
                 "h-8 w-8 rounded-full text-xs transition-colors",
                 isSelected
@@ -461,7 +539,7 @@ function SingleDatePopover({
         </button>
         <button
           type="button"
-          disabled={!isApplyEnabled}
+          disabled={!isApplyEnabled || Boolean(dateInputError)}
           onClick={() => onApply(tempDate)}
           className="rounded-lg bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -989,7 +1067,7 @@ export function Mt5HistoryWorkspace({
         }
       }
     },
-    [requestBars, selectedTimeframe, symbol]
+    [requestBars, resolvedMt5ServiceUrl, selectedTimeframe, symbol]
   );
 
   const goToTimestamp = useCallback(
@@ -1160,13 +1238,23 @@ export function Mt5HistoryWorkspace({
 
   const applyGoToDate = useCallback(
     (date: Date) => {
+      if (!selectedTimeframe) return;
+
       const targetTimestamp = fromDateInputValue(toDateInputValue(date.getTime()));
       if (!Number.isFinite(targetTimestamp)) return;
-      setGoToDate(toDateInputValue(targetTimestamp));
+
+      const minTimestamp = fromDateInputValue(toDateInputValue(selectedTimeframe.from));
+      const maxTimestamp = fromDateInputValue(toDateInputValue(selectedTimeframe.to));
+      const clampedTarget = Math.max(
+        minTimestamp,
+        Math.min(maxTimestamp, targetTimestamp)
+      );
+
+      setGoToDate(toDateInputValue(clampedTarget));
       setIsDatePickerOpen(false);
-      void goToTimestamp(targetTimestamp);
+      void goToTimestamp(clampedTarget);
     },
-    [goToTimestamp]
+    [goToTimestamp, selectedTimeframe]
   );
 
   const refreshCurrentView = useCallback(() => {
@@ -1470,6 +1558,7 @@ export function Mt5HistoryWorkspace({
           data={bars}
           timeframe={timeframe}
           timeGuides={timeGuides}
+          clipTimeGuideOverlayToPane
           dataUpdateMode={chartUpdateMode}
           trade={viewerTrade}
           height={isExpanded ? expandedHeight : chartAreaHeight}

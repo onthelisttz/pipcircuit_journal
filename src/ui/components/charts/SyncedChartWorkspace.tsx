@@ -493,7 +493,7 @@ export function SyncedChartWorkspace({
         }
       }
     },
-    [displayData.length, fetchNext, fetchPrevious]
+    [data.length, displayData.length, fetchNext, fetchPrevious]
   );
 
   useEffect(() => {
@@ -958,6 +958,7 @@ export function SyncedChartWorkspace({
           data={displayData}
           timeframe={timeframe}
           timeGuides={timeGuides}
+          clipTimeGuideOverlayToPane
           height={isExpanded ? expandedHeight : chartAreaHeight}
           isLoading={isLoading}
           drawingTool={drawingTool}
