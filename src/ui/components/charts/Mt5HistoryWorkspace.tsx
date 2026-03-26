@@ -815,7 +815,10 @@ export function Mt5HistoryWorkspace({
   }, [isExpanded]);
 
   useEffect(() => {
+    if (!isActive) return;
+
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isActive) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (
@@ -849,7 +852,7 @@ export function Mt5HistoryWorkspace({
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, []);
+  }, [isActive]);
 
   useEffect(() => {
     if (!isDatePickerOpen) return;
