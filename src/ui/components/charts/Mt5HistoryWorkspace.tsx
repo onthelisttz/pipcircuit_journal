@@ -308,6 +308,7 @@ interface Mt5HistoryWorkspaceProps {
   initialSymbol?: string;
   onSymbolChange?: (symbol: string) => void;
   onTimeframeChange?: (timeframe: string) => void;
+  isActive?: boolean;
   /** Hide drawing tools & action buttons for compact multi-pane layouts */
   compact?: boolean;
 }
@@ -555,6 +556,7 @@ export function Mt5HistoryWorkspace({
   initialSymbol,
   onSymbolChange,
   onTimeframeChange,
+  isActive = true,
   compact = false,
 }: Mt5HistoryWorkspaceProps) {
   const { user } = useAuth();
@@ -1334,6 +1336,15 @@ export function Mt5HistoryWorkspace({
       onAvailabilityTextChange?.(null);
     };
   }, [onAvailabilityTextChange]);
+
+  useEffect(() => {
+    if (isActive) return;
+
+    chartRef.current?.cancelActiveDrawing();
+    setDrawingTool(null);
+    setSelectedDrawingTool(null);
+    setCompactDrawOpen(false);
+  }, [isActive]);
 
   const toolbar = (
     <div className={`relative z-20 flex flex-wrap items-center gap-2 border-b border-border ${compact ? 'pb-1.5' : 'pb-3'}`}>

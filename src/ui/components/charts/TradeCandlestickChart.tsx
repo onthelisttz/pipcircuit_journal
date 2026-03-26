@@ -51,6 +51,8 @@ type LineToolsInternalApi = LineToolsApi & {
         _hitTest?: (point: { x: number; y: number }) => { tool: InternalLineTool } | null;
         _selectedTool?: InternalLineTool | null;
         screenPointToLineToolPoint?: (point: { x: number; y: number }) => DrawingPoint | null;
+        setCurrentToolCreating?: (tool: InternalLineTool | null) => void;
+        deselectAllTools?: () => void;
     };
     requestUpdate?: () => void;
 };
@@ -181,6 +183,7 @@ export interface TradeCandlestickChartRef {
     fitContent: () => void;
     scrollToTrade: (zoomOutMultiplier?: number) => void;
     removeAllDrawingTools: () => void;
+    cancelActiveDrawing: () => void;
     exportAllDrawings: () => DrawingToolExport[];
     importDrawings: (drawings: DrawingToolExport[]) => void;
     getViewportCenterTimestamp: () => number | null;
@@ -452,6 +455,20 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     }, [onRectangleSelectionChange]);
 
     const getLineToolsInternal = useCallback(() => lineToolsRef.current as LineToolsInternalApi | null, []);
+
+    const cancelActiveDrawing = useCallback(() => {
+        const lineTools = getLineToolsInternal();
+        const interactionManager = lineTools?._interactionManager;
+        const currentToolId = interactionManager?._currentToolCreating?.id();
+
+        if (currentToolId) {
+            lineTools?.removeLineToolsById([currentToolId]);
+        }
+
+        interactionManager?.setCurrentToolCreating?.(null);
+        interactionManager?.deselectAllTools?.();
+        lineTools?.requestUpdate?.();
+    }, [getLineToolsInternal]);
 
     const parseDrawingToolExports = useCallback((raw: string | null | undefined): DrawingToolExport[] => {
         if (!raw) return [];
@@ -1235,6 +1252,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     }, [drawingTool, drawingLineColor, rectangleFillColor, rectangleBorderColor]);
 
     useEffect(() => {
+        if (drawingTool !== null) return;
+        cancelActiveDrawing();
+    }, [cancelActiveDrawing, drawingTool]);
+
+    useEffect(() => {
         if (!isChartReady || !lineToolsRef.current) return;
         if (!rectangleFillColor && !rectangleBorderColor && !drawingLineColor) return;
 
@@ -1461,6 +1483,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             lineToolsRef.current?.removeAllLineTools();
             clearAllDrawingSelections();
         },
+        cancelActiveDrawing,
         exportAllDrawings: (): DrawingToolExport[] => {
             const lineTools = getLineToolsInternal();
             const toolsMap = lineTools?._tools;
@@ -1511,7 +1534,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 to: (centerSec + halfWindow) as Time,
             });
         },
-    }), [clearAllDrawingSelections, scrollToTrade, getLineToolsInternal]);
+    }), [cancelActiveDrawing, clearAllDrawingSelections, scrollToTrade, getLineToolsInternal]);
 
     // Update chart data and auto-scroll to trade
     useEffect(() => {

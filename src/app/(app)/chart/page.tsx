@@ -252,7 +252,14 @@ export default function ChartPage() {
 
   // --- Render pane for a specific tab ---
   const renderPaneForTab = useCallback(
-    (tabId: string, isMulti: boolean, pane: ChartPane, index: number, _isActive: boolean) => {
+    (
+      tabId: string,
+      isMulti: boolean,
+      tabIsVisible: boolean,
+      pane: ChartPane,
+      index: number,
+      paneIsActive: boolean
+    ) => {
       const onSyncedSymbolChange = (symbol: string, broker: string) => {
         updatePaneField(tabId, index, { symbol, broker });
       };
@@ -282,6 +289,7 @@ export default function ChartPage() {
           initialSymbol={pane.symbol || undefined}
           onSymbolChange={onMt5SymbolChange}
           onTimeframeChange={onTimeframeChange}
+          isActive={tabIsVisible && (!isMulti || paneIsActive)}
           compact={isMulti}
         />
       );
@@ -385,7 +393,7 @@ export default function ChartPage() {
               activePaneIndex={tab.activePaneIndex}
               onActivePaneChange={(index) => handleActivePaneChange(tab.id, index)}
               renderPane={(pane, index, paneIsActive) =>
-                renderPaneForTab(tab.id, isMulti, pane, index, paneIsActive)
+                renderPaneForTab(tab.id, isMulti, isVisible, pane, index, paneIsActive)
               }
             />
           </div>
@@ -394,4 +402,3 @@ export default function ChartPage() {
     </div>
   );
 }
-
