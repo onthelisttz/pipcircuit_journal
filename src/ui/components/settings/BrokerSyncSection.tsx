@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { ChevronDown, ChevronRight, RefreshCw, Play, X } from "lucide-react";
-import { useSyncProgress } from "@ui/hooks/useSyncProgress";
 import { SymbolSyncItem } from "./SymbolSyncItem";
 import type { SymbolSyncProgress } from "@domain/entities";
 
@@ -15,6 +14,7 @@ export interface BrokerSyncSectionProps {
   onResetToPending?: (broker: string, symbol: string) => void; // Force reset syncing -> pending
   onRetryFailed?: (broker: string) => void;
   onDeleteBars?: (broker: string, symbol: string) => void; // Delete synced bars and reset
+  onRefetchRange?: (progress: SymbolSyncProgress) => void;
   onCancelBrokerSync?: (broker: string) => void;
   onCancelSymbolSync?: (broker: string, symbol: string) => void;
   isSyncing?: boolean;
@@ -31,6 +31,7 @@ export function BrokerSyncSection({
   onResetToPending,
   onRetryFailed,
   onDeleteBars,
+  onRefetchRange,
   onCancelBrokerSync,
   onCancelSymbolSync,
   isSyncing = false,
@@ -153,6 +154,7 @@ export function BrokerSyncSection({
                   onContinue={() => onContinueSymbol?.(broker, symbol.symbol)}
                   onResetToPending={() => onResetToPending?.(broker, symbol.symbol)}
                   onDeleteBars={() => onDeleteBars?.(broker, symbol.symbol)}
+                  onRefetchRange={() => onRefetchRange?.(symbol)}
                   onCancel={() => onCancelSymbolSync?.(broker, symbol.symbol)}
                   isSyncing={isSymbolSyncing}
                   isDeleting={isSymbolDeleting}

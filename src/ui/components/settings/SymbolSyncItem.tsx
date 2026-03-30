@@ -13,12 +13,13 @@ export interface SymbolSyncItemProps {
   onContinue?: () => void; // For resuming stuck syncs
   onResetToPending?: () => void; // Force reset syncing -> pending (for stuck syncs)
   onDeleteBars?: () => void; // Delete synced bars and reset
+  onRefetchRange?: () => void; // Refetch a selected date/time range
   onCancel?: () => void; // Cancel sync in progress
   isSyncing?: boolean;
   isDeleting?: boolean;
 }
 
-export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending, onDeleteBars, onCancel, isSyncing = false, isDeleting = false }: SymbolSyncItemProps) {
+export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending, onDeleteBars, onRefetchRange, onCancel, isSyncing = false, isDeleting = false }: SymbolSyncItemProps) {
   const [calculatedDates, setCalculatedDates] = useState<{
     firstBarDate: Date | null;
     lastBarDate: Date | null;
@@ -279,6 +280,17 @@ export function SymbolSyncItem({ progress, onSync, onContinue, onResetToPending,
               ) : (
                 <Trash2 className="h-4 w-4" />
               )}
+            </button>
+          )}
+          {!isSyncing && onRefetchRange && (
+            <button
+              onClick={onRefetchRange}
+              disabled={isSyncing || isDeleting}
+              className="rounded p-1.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors disabled:opacity-50"
+              title="Refetch a selected date/time range"
+              aria-label="Refetch a selected date/time range"
+            >
+              <Clock className="h-4 w-4" />
             </button>
           )}
         </div>

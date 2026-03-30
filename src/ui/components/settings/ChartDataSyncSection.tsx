@@ -16,12 +16,37 @@ import { BrokerSyncSection } from "./BrokerSyncSection";
 import type { SymbolSyncProgress } from "@domain/entities";
 import { isOnline } from "@infrastructure/sync/utils/connection";
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+interface RefetchRangeDialogState {
+  broker: string;
+  symbol: string;
+  availableStart: Date | null;
+  availableEnd: Date | null;
+}
+
+function toDateTimeLocalValue(date: Date): string {
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function parseDateTimeLocalValue(value: string): Date | null {
+  if (!value.trim()) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export function ChartDataSyncSection() {
   const [isLoading, setIsLoading] = useState(false);
   const [syncingBrokers, setSyncingBrokers] = useState<Set<string>>(new Set());
   const [syncingSymbols, setSyncingSymbols] = useState<Set<string>>(new Set());
   const [deletingSymbols, setDeletingSymbols] = useState<Set<string>>(new Set());
   const [deleteConfirm, setDeleteConfirm] = useState<{ broker: string; symbol: string } | null>(null);
+  const [refetchRangeDialog, setRefetchRangeDialog] = useState<RefetchRangeDialogState | null>(null);
+  const [refetchRangeStart, setRefetchRangeStart] = useState("");
+  const [refetchRangeEnd, setRefetchRangeEnd] = useState("");
+  const [refetchRangeError, setRefetchRangeError] = useState<string | null>(null);
+  const [isRefetchingRange, setIsRefetchingRange] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cancelRequestedRef = useRef(false);
 
@@ -39,6 +64,7 @@ export function ChartDataSyncSection() {
   });
 
   const { accounts } = useAccount();
+  const maxRefetchDateTime = toDateTimeLocalValue(new Date());
 
   // Group symbols by broker
   const brokersMap = new Map<string, SymbolSyncProgress[]>();
@@ -185,6 +211,140 @@ export function ChartDataSyncSection() {
       });
     }
   }, [user?.id, accounts, getBrokerProgress, progressRepo, refresh]);
+
+  const handleOpenRefetchRange = useCallback((progress: SymbolSyncProgress) => {
+    const availableEnd = progress.lastBarDate ? new Date(progress.lastBarDate) : new Date();
+    const availableStart = progress.firstBarDate
+      ? new Date(progress.firstBarDate)
+      : new Date(availableEnd.getTime() - DAY_MS);
+
+    setRefetchRangeDialog({
+      broker: progress.broker,
+      symbol: progress.symbol,
+      availableStart: progress.firstBarDate ? new Date(progress.firstBarDate) : null,
+      availableEnd: progress.lastBarDate ? new Date(progress.lastBarDate) : null,
+    });
+    setRefetchRangeStart(toDateTimeLocalValue(availableStart));
+    setRefetchRangeEnd(toDateTimeLocalValue(availableEnd));
+    setRefetchRangeError(null);
+  }, []);
+
+  const handleCloseRefetchRange = useCallback(() => {
+    if (isRefetchingRange) return;
+    setRefetchRangeDialog(null);
+    setRefetchRangeStart("");
+    setRefetchRangeEnd("");
+    setRefetchRangeError(null);
+  }, [isRefetchingRange]);
+
+  const handleConfirmRefetchRange = useCallback(async () => {
+    if (!refetchRangeDialog) return;
+
+    if (!user?.id) {
+      setRefetchRangeError("Please log in to refetch bars.");
+      return;
+    }
+
+    if (!isOnline()) {
+      setRefetchRangeError("Cannot refetch bars while offline.");
+      return;
+    }
+
+    const token = TokenStorage.getGlobal();
+    if (!token) {
+      setRefetchRangeError("No access token available. Please reconnect your cTrader account.");
+      return;
+    }
+
+    const fromDate = parseDateTimeLocalValue(refetchRangeStart);
+    const toDate = parseDateTimeLocalValue(refetchRangeEnd);
+    const now = new Date();
+    if (!fromDate || !toDate) {
+      setRefetchRangeError("Choose both a start and end date with time.");
+      return;
+    }
+    if (fromDate > now || toDate > now) {
+      setRefetchRangeError("Future date/time is not allowed.");
+      return;
+    }
+    if (fromDate > toDate) {
+      setRefetchRangeError("The start date must be before the end date.");
+      return;
+    }
+
+    const { broker, symbol } = refetchRangeDialog;
+    const symbolKey = `${broker}:${symbol}`;
+    setRefetchRangeError(null);
+    setError(null);
+    setIsRefetchingRange(true);
+    setSyncingSymbols((prev) => new Set(prev).add(symbolKey));
+    cancelRequestedRef.current = false;
+
+    try {
+      const brokerAccount = accounts.find((acc) => acc.broker === broker);
+      const accountNumber = brokerAccount?.accountNumber;
+      const dexieChartRepo = new DexieChartBarRepository();
+      const api = new CTraderAPI();
+      const syncUseCase = new HybridSyncChartBarsUseCase(
+        api,
+        dexieChartRepo,
+        progressRepo
+      );
+
+      const monthsDiff =
+        (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+      const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000));
+
+      const result = await Promise.race([
+        syncUseCase.execute({
+          userId: user.id,
+          broker,
+          symbol,
+          fromDate,
+          toDate,
+          accessToken: token.accessToken,
+          accountNumber,
+          forceFullSync: true,
+          shouldCancel: () => cancelRequestedRef.current,
+        }),
+        new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Refetch timeout after ${Math.round(timeoutMs / 1000)} seconds`)),
+            timeoutMs
+          )
+        ),
+      ]);
+
+      if (!result.success) {
+        throw new Error(result.error ?? "Failed to refetch the selected range.");
+      }
+
+      await refresh();
+      setRefetchRangeDialog(null);
+      setRefetchRangeStart("");
+      setRefetchRangeEnd("");
+      setRefetchRangeError(null);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setRefetchRangeError(`Failed to refetch bars: ${errorMsg}`);
+      console.error("Refetch range error:", err);
+    } finally {
+      setIsRefetchingRange(false);
+      setSyncingSymbols((prev) => {
+        const next = new Set(prev);
+        next.delete(symbolKey);
+        return next;
+      });
+    }
+  }, [
+    refetchRangeDialog,
+    user?.id,
+    refetchRangeStart,
+    refetchRangeEnd,
+    accounts,
+    progressRepo,
+    refresh,
+  ]);
 
   const handleCancelBrokerSync = useCallback((broker: string) => {
     if (syncingBrokers.has(broker)) {
@@ -615,6 +775,76 @@ export function ChartDataSyncSection() {
         }
       />
 
+      {refetchRangeDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-lg rounded-xl border border-border bg-card p-6 shadow-lg">
+            <h2 className="text-lg font-semibold text-foreground">
+              Refetch Bars
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Fetch M1 bars again for <span className="font-medium text-foreground">{refetchRangeDialog.symbol}</span> between the selected start and end date/time and merge them into local history.
+            </p>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-muted-foreground">Start date and time</span>
+                <input
+                  type="datetime-local"
+                  value={refetchRangeStart}
+                  onChange={(event) => setRefetchRangeStart(event.target.value)}
+                  max={maxRefetchDateTime}
+                  disabled={isRefetchingRange}
+                  className="rounded-lg border border-border bg-background px-3 py-2 text-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-muted-foreground">End date and time</span>
+                <input
+                  type="datetime-local"
+                  value={refetchRangeEnd}
+                  onChange={(event) => setRefetchRangeEnd(event.target.value)}
+                  max={maxRefetchDateTime}
+                  disabled={isRefetchingRange}
+                  className="rounded-lg border border-border bg-background px-3 py-2 text-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+                />
+              </label>
+            </div>
+            {(refetchRangeDialog.availableStart || refetchRangeDialog.availableEnd) && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                Current local range:{" "}
+                {refetchRangeDialog.availableStart
+                  ? refetchRangeDialog.availableStart.toLocaleString()
+                  : "unknown"}{" "}
+                {"->"}{" "}
+                {refetchRangeDialog.availableEnd
+                  ? refetchRangeDialog.availableEnd.toLocaleString()
+                  : "unknown"}
+              </p>
+            )}
+            {refetchRangeError && (
+              <div className="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                {refetchRangeError}
+              </div>
+            )}
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={handleCloseRefetchRange}
+                disabled={isRefetchingRange}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-accent disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleConfirmRefetchRange()}
+                disabled={isRefetchingRange}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              >
+                {isRefetchingRange ? "Refetching..." : "Refetch Range"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {brokers.length === 0 ? (
         <div className="rounded-lg border border-border bg-muted/30 p-8 text-center">
           <p className="text-muted-foreground">
@@ -634,6 +864,7 @@ export function ChartDataSyncSection() {
               onResetToPending={handleResetToPending}
               onRetryFailed={handleRetryFailed}
               onDeleteBars={handleDeleteBarsClick}
+              onRefetchRange={handleOpenRefetchRange}
               onCancelBrokerSync={handleCancelBrokerSync}
               onCancelSymbolSync={handleCancelSymbolSync}
               isSyncing={syncingBrokers.has(broker)}
