@@ -734,6 +734,7 @@ export async function readMt5Bars(params) {
   const { symbol, timeframe, from, to, limit = 10_000, rootPath } = params;
   const normalizedFrom = Math.min(from, to);
   const normalizedTo = Math.max(from, to);
+  let yearBars = [];
 
   if (timeframe === "M1") {
     const yearFiles = await listHistoryYearFiles(symbol, rootPath).catch(() => []);
@@ -774,12 +775,9 @@ export async function readMt5Bars(params) {
           }
         }
 
-        const yearBars = [...merged.values()]
+        yearBars = [...merged.values()]
           .sort((a, b) => a.timestamp - b.timestamp)
           .slice(0, limit);
-        if (yearBars.length > 0) {
-          return yearBars;
-        }
       }
     }
   }
@@ -807,7 +805,7 @@ export async function readMt5Bars(params) {
       to: normalizedTo,
       historyRoot: rootPath,
     });
-    return liveBars.slice(0, limit);
+    return mergeBarsByTimestamp(yearBars, liveBars, limit);
   }
 
   const handle = await fs.open(filePath, "r");
@@ -823,7 +821,7 @@ export async function readMt5Bars(params) {
           to: normalizedTo,
           historyRoot: rootPath,
         });
-        return liveBars.slice(0, limit);
+        return mergeBarsByTimestamp(yearBars, liveBars, limit);
       }
       return [];
     }
@@ -911,8 +909,24 @@ export async function readMt5Bars(params) {
       return bars;
     }
 
+    let mergedM1Bars = bars;
+    if (yearBars.length > 0) {
+      if (cacheMetadata) {
+        const yearlyBeforeCache = yearBars.filter(
+          (bar) => bar.timestamp < cacheMetadata.firstTimestamp
+        );
+        const yearlyAfterCache = yearBars.filter(
+          (bar) => bar.timestamp > cacheMetadata.lastTimestamp
+        );
+        mergedM1Bars = mergeBarsByTimestamp(yearlyBeforeCache, mergedM1Bars, limit);
+        mergedM1Bars = mergeBarsByTimestamp(mergedM1Bars, yearlyAfterCache, limit);
+      } else {
+        mergedM1Bars = mergeBarsByTimestamp(yearBars, mergedM1Bars, limit);
+      }
+    }
+
     if (!cacheMetadata || normalizedTo <= cacheMetadata.lastTimestamp) {
-      return bars;
+      return mergedM1Bars;
     }
 
     const liveFrom = Math.max(normalizedFrom, cacheMetadata.lastTimestamp + TIMEFRAME_TO_MS.M1);
@@ -924,7 +938,7 @@ export async function readMt5Bars(params) {
       historyRoot: rootPath,
     });
 
-    return mergeBarsByTimestamp(bars, liveBars, limit);
+    return mergeBarsByTimestamp(mergedM1Bars, liveBars, limit);
   } finally {
     await handle.close();
   }
