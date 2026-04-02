@@ -46,6 +46,7 @@ const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
 
 const TIMEFRAMES: ChartTimeframe[] = ["M1", "M5", "M15", "H1"];
 const EDGE_FETCH_THRESHOLD = 10;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function readStoredSelection(): ChartSelection | null {
   if (typeof window === "undefined") return null;
@@ -114,6 +115,28 @@ function statusMeta(status?: string) {
         color: "text-muted-foreground",
       };
   }
+}
+
+function drawingTimestampSecondsToMs(timestamp: number): number {
+  return timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp;
+}
+
+function getDrawingWindowDays(
+  centerTimestamp: number | null,
+  drawings: DrawingToolExport[]
+): number {
+  if (centerTimestamp == null || drawings.length === 0) return 0;
+
+  let maxDistance = 0;
+  for (const drawing of drawings) {
+    for (const point of drawing.points) {
+      if (!Number.isFinite(point.timestamp)) continue;
+      const distance = Math.abs(drawingTimestampSecondsToMs(point.timestamp) - centerTimestamp);
+      maxDistance = Math.max(maxDistance, distance);
+    }
+  }
+
+  return maxDistance > 0 ? Math.ceil(maxDistance / DAY_MS) + 1 : 0;
 }
 
 interface SyncedChartWorkspaceProps {
@@ -190,6 +213,13 @@ export function SyncedChartWorkspace({
   const [chartAreaHeight, setChartAreaHeight] = useState(520);
   const [compactDrawOpen, setCompactDrawOpen] = useState(false);
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
+  const [timeframeRestoreAnchor, setTimeframeRestoreAnchor] = useState<{
+    centerTimestamp: number | null;
+    windowDays: number;
+  }>({
+    centerTimestamp: null,
+    windowDays: 0,
+  });
   const compactDrawRef = useRef<HTMLDivElement>(null);
   const compactActionsRef = useRef<HTMLDivElement>(null);
   const pendingRestoreRef = useRef<{ drawings: DrawingToolExport[]; centerTimestamp: number | null } | null>(null);
@@ -198,6 +228,13 @@ export function SyncedChartWorkspace({
     if (typeof window === "undefined" || !selection) return;
     window.localStorage.setItem(CHART_SELECTION_KEY, JSON.stringify(selection));
   }, [selection]);
+
+  useEffect(() => {
+    setTimeframeRestoreAnchor({
+      centerTimestamp: null,
+      windowDays: 0,
+    });
+  }, [selection?.broker, selection?.symbol]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -379,9 +416,12 @@ export function SyncedChartWorkspace({
 
   const chartTrade = useMemo<Trade | null>(() => {
     if (!selection) return null;
-    const anchor = selectedProgress?.lastBarDate
-      ? new Date(selectedProgress.lastBarDate)
-      : new Date();
+    const anchor =
+      timeframeRestoreAnchor.centerTimestamp != null
+        ? new Date(timeframeRestoreAnchor.centerTimestamp - SYNCED_CHART_DISPLAY_OFFSET_MS)
+        : selectedProgress?.lastBarDate
+          ? new Date(selectedProgress.lastBarDate)
+          : new Date();
     const now = new Date();
     return {
       accountId: accountForBroker?.accountNumber ?? "",
@@ -395,7 +435,7 @@ export function SyncedChartWorkspace({
       createdAt: now,
       updatedAt: now,
     };
-  }, [accountForBroker, selection, selectedProgress]);
+  }, [accountForBroker, selection, selectedProgress, timeframeRestoreAnchor.centerTimestamp]);
 
   const accessToken = useMemo(() => {
     if (!accountForBroker) return undefined;
@@ -403,13 +443,14 @@ export function SyncedChartWorkspace({
   }, [accountForBroker]);
 
   const chartEnabled = Boolean(selection && chartTrade);
+  const requestedWindowDays = Math.max(windowDays, timeframeRestoreAnchor.windowDays);
 
   const { data, isLoading, error, refetch, fetchPrevious, fetchNext } = useChartData({
     trade: chartTrade ?? PLACEHOLDER_TRADE,
     timeframe,
     accessToken,
     broker: selection?.broker,
-    windowDays,
+    windowDays: requestedWindowDays,
     enabled: chartEnabled,
   });
   const displayData = useMemo(
@@ -621,11 +662,18 @@ export function SyncedChartWorkspace({
                 key={tf}
                 type="button"
                 onClick={() => {
+                  const drawings = chartRef.current?.exportAllDrawings() ?? [];
+                  const centerTimestamp =
+                    chartRef.current?.getViewportCenterTimestamp() ?? null;
                   // Save drawings and viewport before timeframe change
                   pendingRestoreRef.current = {
-                    drawings: chartRef.current?.exportAllDrawings() ?? [],
-                    centerTimestamp: chartRef.current?.getViewportCenterTimestamp() ?? null,
+                    drawings,
+                    centerTimestamp,
                   };
+                  setTimeframeRestoreAnchor({
+                    centerTimestamp,
+                    windowDays: getDrawingWindowDays(centerTimestamp, drawings),
+                  });
                   setTimeframe(tf);
                   onTimeframeChange?.(tf);
                   setTimeframeMenuOpen(false);

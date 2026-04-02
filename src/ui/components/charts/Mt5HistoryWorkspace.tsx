@@ -257,6 +257,56 @@ function buildCenteredRange(
   return { from, to };
 }
 
+function drawingTimestampSecondsToMs(timestamp: number): number {
+  return timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp;
+}
+
+function getDrawingTimeBounds(drawings: DrawingToolExport[]): LoadedRange | null {
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+
+  for (const drawing of drawings) {
+    for (const point of drawing.points) {
+      if (!Number.isFinite(point.timestamp)) continue;
+      const timestamp = drawingTimestampSecondsToMs(point.timestamp);
+      min = Math.min(min, timestamp);
+      max = Math.max(max, timestamp);
+    }
+  }
+
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return null;
+  }
+
+  return { from: min, to: max };
+}
+
+function extendRangeToIncludeDrawings(
+  range: LoadedRange,
+  summary: TimeframeSummary,
+  drawings: DrawingToolExport[]
+): LoadedRange {
+  const drawingBounds = getDrawingTimeBounds(drawings);
+  if (!drawingBounds) {
+    return range;
+  }
+
+  let from = Math.min(range.from, drawingBounds.from);
+  let to = Math.max(range.to, drawingBounds.to);
+
+  if (from < summary.from) {
+    to = Math.min(summary.to, to + (summary.from - from));
+    from = summary.from;
+  }
+
+  if (to > summary.to) {
+    from = Math.max(summary.from, from - (to - summary.to));
+    to = summary.to;
+  }
+
+  return { from, to };
+}
+
 const PLACEHOLDER_TRADE: Trade = {
   accountId: "",
   symbol: "",
@@ -1078,7 +1128,12 @@ export function Mt5HistoryWorkspace({
   const goToTimestamp = useCallback(
     async (targetTimestamp: number) => {
       if (!selectedTimeframe || !symbol) return;
-      const range = buildCenteredRange(selectedTimeframe, targetTimestamp);
+      const pendingRestore = pendingRestoreRef.current;
+      const range = extendRangeToIncludeDrawings(
+        buildCenteredRange(selectedTimeframe, targetTimestamp),
+        selectedTimeframe,
+        pendingRestore?.drawings ?? []
+      );
       const clampedTarget = Math.max(
         selectedTimeframe.from,
         Math.min(selectedTimeframe.to, targetTimestamp)
@@ -1094,8 +1149,9 @@ export function Mt5HistoryWorkspace({
 
   useEffect(() => {
     if (!selectedTimeframe || !symbol) return;
-    void goToTimestamp(selectedTimeframe.to);
-  }, [goToTimestamp, selectedTimeframe, symbol]);
+    const pendingCenterTimestamp = pendingRestoreRef.current?.centerTimestamp;
+    void goToTimestamp(pendingCenterTimestamp ?? focusTimestamp ?? selectedTimeframe.to);
+  }, [focusTimestamp, goToTimestamp, selectedTimeframe, symbol]);
 
   useEffect(() => {
     if (!shouldCenterOnNextDataRef.current || bars.length === 0) return;
@@ -1286,7 +1342,11 @@ export function Mt5HistoryWorkspace({
             selection.summary.from,
             Math.min(selection.summary.to, target)
           );
-          const range = buildCenteredRange(selection.summary, clampedTarget);
+          const range = extendRangeToIncludeDrawings(
+            buildCenteredRange(selection.summary, clampedTarget),
+            selection.summary,
+            chartRef.current?.exportAllDrawings() ?? []
+          );
           shouldCenterOnNextDataRef.current = true;
           setFocusTimestamp(clampedTarget);
           setGoToDate(toDateInputValue(clampedTarget));

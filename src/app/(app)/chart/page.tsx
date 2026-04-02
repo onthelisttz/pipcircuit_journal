@@ -301,41 +301,48 @@ export default function ChartPage() {
     <div className="flex h-full min-h-0 flex-col gap-3">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Charts</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+        {/* <div>
+          <h1 className="text-2xl font-semibold text-foreground">Charts.</h1>
+       
+        </div> */}
+      </div>
+
+      {/* Mode toggles */}
+
+      <div className="flex w-full flex-wrap items-center gap-2 md:gap-4">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setMode("synced")}
+            className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+              mode === "synced"
+                ? "border-primary/60 bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            Synced Chart
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("history")}
+            className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+              mode === "history"
+                ? "border-primary/60 bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            MT5 History
+          </button>
+        </div>
+        <div className="ml-auto min-w-0 basis-full md:basis-auto">
+          <p className="mt-1 text-sm text-muted-foreground md:mt-0 md:text-right">
             {mode === "synced"
               ? "One workspace for both your synced journal chart and the MT5 history viewer."
               : historyAvailabilityText ?? "Loading MT5 history availability..."}
           </p>
         </div>
       </div>
-
-      {/* Mode toggles */}
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setMode("synced")}
-          className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
-            mode === "synced"
-              ? "border-primary/60 bg-primary/10 text-primary"
-              : "border-border text-muted-foreground hover:bg-muted"
-          }`}
-        >
-          Synced Chart
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("history")}
-          className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
-            mode === "history"
-              ? "border-primary/60 bg-primary/10 text-primary"
-              : "border-border text-muted-foreground hover:bg-muted"
-          }`}
-        >
-          MT5 History
-        </button>
-      </div>
+   
 
       {/* Tab bar + layout selector + sync toggle in one row */}
       <div className="flex items-center gap-2">

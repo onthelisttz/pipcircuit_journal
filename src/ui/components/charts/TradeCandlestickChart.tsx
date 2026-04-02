@@ -506,6 +506,82 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         }
     }, []);
 
+    const exportCurrentDrawings = useCallback((): DrawingToolExport[] => {
+        if (!lineToolsRef.current) return [];
+
+        const exported = parseDrawingToolExports(lineToolsRef.current.exportLineTools?.());
+        if (exported.length > 0) {
+            return exported;
+        }
+
+        const toolsMap = getLineToolsInternal()?._tools;
+        if (!toolsMap || toolsMap.size === 0) return [];
+
+        const fallbackExports: DrawingToolExport[] = [];
+        for (const tool of toolsMap.values()) {
+            try {
+                const exp = tool.getExportData();
+                if (exp && isDrawingToolType(exp.toolType) && exp.points?.length > 0) {
+                    fallbackExports.push(exp);
+                }
+            } catch {
+                // Skip corrupt tools and keep exporting the rest.
+            }
+        }
+
+        return fallbackExports;
+    }, [getLineToolsInternal, parseDrawingToolExports]);
+
+    const normalizeDrawingTimestampForCurrentData = useCallback((timestamp: number): number => {
+        if (!Number.isFinite(timestamp)) {
+            return timestamp;
+        }
+
+        const normalizedSeconds =
+            timestamp >= 1_000_000_000_000
+                ? Math.round(timestamp / 1000)
+                : Math.round(timestamp);
+
+        if (data.length === 0) {
+            return normalizedSeconds;
+        }
+
+        let left = 0;
+        let right = data.length - 1;
+
+        while (left <= right) {
+            const mid = Math.floor((left + right) / 2);
+            const midSeconds = Math.round(data[mid].timestamp / 1000);
+
+            if (midSeconds === normalizedSeconds) {
+                return midSeconds;
+            }
+
+            if (midSeconds < normalizedSeconds) {
+                left = mid + 1;
+            } else {
+                right = mid - 1;
+            }
+        }
+
+        const leftIndex = Math.min(data.length - 1, Math.max(0, left));
+        const rightIndex = Math.min(data.length - 1, Math.max(0, right));
+        const leftSeconds = Math.round(data[leftIndex].timestamp / 1000);
+        const rightSeconds = Math.round(data[rightIndex].timestamp / 1000);
+
+        return Math.abs(leftSeconds - normalizedSeconds) < Math.abs(rightSeconds - normalizedSeconds)
+            ? leftSeconds
+            : rightSeconds;
+    }, [data]);
+
+    const normalizeDrawingForCurrentData = useCallback((drawing: DrawingToolExport): DrawingToolExport => ({
+        ...drawing,
+        points: drawing.points.map((point) => ({
+            ...point,
+            timestamp: normalizeDrawingTimestampForCurrentData(point.timestamp),
+        })),
+    }), [normalizeDrawingTimestampForCurrentData]);
+
     const commitSelectionState = useCallback((selectedTools: DrawingToolExport[]) => {
         selectedDrawingIdsRef.current = selectedTools.map((tool) => tool.id);
         if (selectedTools.length === 0) {
@@ -542,6 +618,42 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const matches = parseDrawingToolExports(lineToolsRef.current.getLineToolByID?.(id));
         return matches[0] ?? null;
     }, [parseDrawingToolExports]);
+
+    const syncImportedDrawings = useCallback((drawings: DrawingToolExport[]) => {
+        const lineTools = lineToolsRef.current;
+        if (!lineTools) return;
+
+        const normalizedDrawings = drawings.map(normalizeDrawingForCurrentData);
+
+        const toolsMap = getLineToolsInternal()?._tools;
+        const incomingIds = new Set(normalizedDrawings.map((drawing) => drawing.id));
+        const staleIds: string[] = [];
+
+        if (toolsMap) {
+            for (const tool of toolsMap.values()) {
+                let exportData: DrawingToolExport;
+                try {
+                    exportData = tool.getExportData();
+                } catch {
+                    continue;
+                }
+
+                if (isDrawingToolType(exportData.toolType) && !incomingIds.has(tool.id())) {
+                    staleIds.push(tool.id());
+                }
+            }
+        }
+
+        if (staleIds.length > 0) {
+            lineTools.removeLineToolsById(staleIds);
+        }
+
+        if (normalizedDrawings.length > 0) {
+            lineTools.importLineTools?.(JSON.stringify(normalizedDrawings));
+        }
+
+        updateDrawingSelection();
+    }, [getLineToolsInternal, normalizeDrawingForCurrentData, updateDrawingSelection]);
 
     const syncSelectionByIds = useCallback((ids: string[], primaryId?: string | null) => {
         const lineTools = getLineToolsInternal();
@@ -1484,32 +1596,9 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             clearAllDrawingSelections();
         },
         cancelActiveDrawing,
-        exportAllDrawings: (): DrawingToolExport[] => {
-            const lineTools = getLineToolsInternal();
-            const toolsMap = lineTools?._tools;
-            if (!toolsMap || toolsMap.size === 0) return [];
-            const exports: DrawingToolExport[] = [];
-            for (const tool of toolsMap.values()) {
-                try {
-                    const exp = tool.getExportData();
-                    if (exp && exp.toolType && exp.points?.length > 0) {
-                        exports.push(exp);
-                    }
-                } catch { /* skip corrupt tools */ }
-            }
-            return exports;
-        },
+        exportAllDrawings: () => exportCurrentDrawings(),
         importDrawings: (drawings: DrawingToolExport[]) => {
-            if (!lineToolsRef.current || drawings.length === 0) return;
-            for (const drawing of drawings) {
-                try {
-                    lineToolsRef.current.addLineTool(
-                        drawing.toolType,
-                        drawing.points,
-                        drawing.options as Parameters<LineToolsApi["addLineTool"]>[2]
-                    );
-                } catch { /* skip invalid */ }
-            }
+            syncImportedDrawings(drawings);
         },
         getViewportCenterTimestamp: (): number | null => {
             const timeScale = chartRef.current?.timeScale();
@@ -1534,13 +1623,17 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 to: (centerSec + halfWindow) as Time,
             });
         },
-    }), [cancelActiveDrawing, clearAllDrawingSelections, scrollToTrade, getLineToolsInternal]);
+    }), [cancelActiveDrawing, clearAllDrawingSelections, exportCurrentDrawings, scrollToTrade, syncImportedDrawings]);
 
     // Update chart data and auto-scroll to trade
     useEffect(() => {
         if (!seriesRef.current || !isChartReady || data.length === 0) return;
 
         const timeScale = chartRef.current?.timeScale();
+        const drawingsBeforeDataUpdate =
+            drawingTool == null && getLineToolsInternal()?._interactionManager?._currentToolCreating == null
+                ? exportCurrentDrawings()
+                : [];
         const previousBars = prevBarsRef.current;
         const currentRange = !autoScrollOnData && timeScale ? timeScale.getVisibleLogicalRange() : null;
         const appendOnlyUpdate =
@@ -1620,6 +1713,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                     }
                 }
             }
+            if (drawingsBeforeDataUpdate.length > 0 && !appendOnlyUpdate) {
+                window.setTimeout(() => {
+                    syncImportedDrawings(drawingsBeforeDataUpdate);
+                }, 0);
+            }
             prevBarsRef.current = data;
             return;
         }
@@ -1635,8 +1733,13 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             suppressVisibleRangeUntilRef.current = Date.now() + 120;
             chartRef.current?.timeScale().fitContent();
         }
+        if (drawingsBeforeDataUpdate.length > 0 && !appendOnlyUpdate) {
+            window.setTimeout(() => {
+                syncImportedDrawings(drawingsBeforeDataUpdate);
+            }, 0);
+        }
         prevBarsRef.current = data;
-    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, dataUpdateMode, findNearestIndexByTimestamp, getPrependedBarCount, isAppendOnlyUpdate, toCandlestickPoint, zoomOutMultiplier]);
+    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, dataUpdateMode, drawingTool, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, syncImportedDrawings, toCandlestickPoint, zoomOutMultiplier]);
 
     // Manage R:R Visualization (Plugin + Price Lines) with Adaptive Scaling
     useEffect(() => {
