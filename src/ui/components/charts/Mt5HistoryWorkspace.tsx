@@ -141,7 +141,7 @@ function formatShortDate(timestamp: number): string {
 }
 
 function sortTimeframes(timeframes: TimeframeSummary[]): TimeframeSummary[] {
-  const order: ChartTimeframe[] = ["M1", "M5", "M15", "H1", "H4", "D1"];
+  const order: ChartTimeframe[] = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"];
   return [...timeframes].sort(
     (a, b) => order.indexOf(a.timeframe) - order.indexOf(b.timeframe)
   );
