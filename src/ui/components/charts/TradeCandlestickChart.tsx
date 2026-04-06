@@ -27,7 +27,7 @@ import {
     type TimeGuideSettings,
 } from "./timeGuides";
 
-export type DrawingToolType = "Path" | "TrendLine" | "Rectangle" | "LongShortPosition";
+export type DrawingToolType = "Path" | "TrendLine" | "Rectangle" | "LongShortPosition" | "Callout";
 type LineToolsApi = ReturnType<typeof createLineToolsPlugin>;
 type DrawingPoint = { timestamp: number; price: number };
 type DrawingToolExport = {
@@ -57,7 +57,43 @@ type LineToolsInternalApi = LineToolsApi & {
 };
 
 function isDrawingToolType(toolType: string): toolType is DrawingToolType {
-    return toolType === "Rectangle" || toolType === "TrendLine" || toolType === "Path" || toolType === "LongShortPosition";
+    return (
+        toolType === "Rectangle" ||
+        toolType === "TrendLine" ||
+        toolType === "Path" ||
+        toolType === "LongShortPosition" ||
+        toolType === "Callout"
+    );
+}
+
+function buildCalloutTextOptions(config: {
+    text: string;
+    fontSize: number;
+    textColor: string;
+    boxColor: string;
+    lineColor: string;
+}) {
+    return {
+        value: config.text.trim() || "Text",
+        // Let short labels size to content instead of forcing a wide box.
+        wordWrapWidth: 0,
+        font: {
+            size: Math.max(10, Math.round(config.fontSize || 14)),
+            color: config.textColor || "#ffffff",
+        },
+        // Keep padding visually tight and stable as font size changes.
+        box: {
+            border: {
+                color: config.lineColor || "#8b5cf6",
+                radius: 10,
+            },
+            background: {
+                color: config.boxColor || "#134985",
+                inflation: { x: 1, y: 2 },
+            },
+            padding: { x: 1, y: 2 },
+        },
+    };
 }
 
 function timeToDate(time: unknown): Date | null {
@@ -293,6 +329,16 @@ export interface TradeCandlestickChartProps {
     rectangleFillColor?: string;
     /** Rectangle tool border color */
     rectangleBorderColor?: string;
+    /** Text content used when creating or editing Callout notes */
+    calloutText?: string;
+    /** Font size used when creating or editing Callout notes */
+    calloutFontSize?: number;
+    /** Text color used when creating or editing Callout notes */
+    calloutTextColor?: string;
+    /** Shared accent color used for the Callout line and border */
+    calloutLineColor?: string;
+    /** Box background used when creating or editing Callout notes */
+    calloutBoxColor?: string;
     /** Lot size for Long/Short tool P&L */
     longShortLots?: number;
     /** Symbol for Long/Short tool P&L and pips */
@@ -303,6 +349,8 @@ export interface TradeCandlestickChartProps {
     onDrawingToolComplete?: (tool: DrawingToolType) => void;
     /** Notify when a rectangle is selected/deselected */
     onRectangleSelectionChange?: (selected: boolean) => void;
+    /** Notify when a Callout should enter edit mode in the parent UI */
+    onCalloutEditRequest?: () => void;
     /** Show automatic risk/reward zones from trade data */
     showRiskReward?: boolean;
     /** Show risk/reward text labels (e.g. +$7.00 / -$9.00) */
@@ -326,6 +374,20 @@ export interface TradeCandlestickChartRef {
     importDrawings: (drawings: DrawingToolExport[]) => void;
     getViewportCenterTimestamp: () => number | null;
     scrollToTimestamp: (timestamp: number, windowSeconds?: number) => void;
+    getSelectedCalloutConfig: () => {
+        text: string;
+        fontSize: number;
+        textColor: string;
+        lineColor: string;
+        boxColor: string;
+    } | null;
+    updateSelectedCallout: (config: {
+        text?: string;
+        fontSize?: number;
+        textColor?: string;
+        lineColor?: string;
+        boxColor?: string;
+    }) => void;
 }
 
 /**
@@ -347,11 +409,17 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     drawingLineColor,
     rectangleFillColor,
     rectangleBorderColor,
+    calloutText = "Text",
+    calloutFontSize = 18,
+    calloutTextColor = "#00ff66",
+    calloutLineColor = "#00ff66",
+    calloutBoxColor = "rgba(0,0,0,0.88)",
     longShortLots = 1,
     longShortSymbol,
     onDrawingSelectionChange,
     onDrawingToolComplete,
     onRectangleSelectionChange,
+    onCalloutEditRequest,
     showRiskReward = true,
     showRiskRewardLabels = true,
     autoScrollOnData = true,
@@ -380,6 +448,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const onDrawingSelectionChangeRef = useRef<typeof onDrawingSelectionChange>(onDrawingSelectionChange);
     const onDrawingToolCompleteRef = useRef<typeof onDrawingToolComplete>(onDrawingToolComplete);
     const onRectangleSelectionChangeRef = useRef<typeof onRectangleSelectionChange>(onRectangleSelectionChange);
+    const onCalloutEditRequestRef = useRef<typeof onCalloutEditRequest>(onCalloutEditRequest);
     const prevBarsRef = useRef<ChartBar[]>([]);
     const suppressVisibleRangeUntilRef = useRef(0);
 
@@ -390,6 +459,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const drawingLineColorRef = useRef<string | undefined>(drawingLineColor);
     const rectangleFillColorRef = useRef<string | undefined>(rectangleFillColor);
     const rectangleBorderColorRef = useRef<string | undefined>(rectangleBorderColor);
+    const calloutTextRef = useRef<string>(calloutText);
+    const calloutFontSizeRef = useRef<number>(calloutFontSize);
+    const calloutTextColorRef = useRef<string>(calloutTextColor);
+    const calloutLineColorRef = useRef<string>(calloutLineColor);
+    const calloutBoxColorRef = useRef<string>(calloutBoxColor);
     const longShortLotsRef = useRef<number>(longShortLots);
     const longShortSymbolRef = useRef<string | undefined>(longShortSymbol);
     const heightRef = useRef<number>(height);
@@ -430,6 +504,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         rectangleFillColorRef.current = rectangleFillColor;
         rectangleBorderColorRef.current = rectangleBorderColor;
     }, [drawingLineColor, rectangleFillColor, rectangleBorderColor]);
+
+    useEffect(() => {
+        calloutTextRef.current = calloutText;
+        calloutFontSizeRef.current = calloutFontSize;
+        calloutTextColorRef.current = calloutTextColor;
+        calloutLineColorRef.current = calloutLineColor;
+        calloutBoxColorRef.current = calloutBoxColor;
+    }, [calloutBoxColor, calloutFontSize, calloutLineColor, calloutText, calloutTextColor]);
 
     useEffect(() => {
         heightRef.current = height;
@@ -610,6 +692,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         onRectangleSelectionChangeRef.current = onRectangleSelectionChange;
     }, [onRectangleSelectionChange]);
 
+    useEffect(() => {
+        onCalloutEditRequestRef.current = onCalloutEditRequest;
+    }, [onCalloutEditRequest]);
+
     const getLineToolsInternal = useCallback(() => lineToolsRef.current as LineToolsInternalApi | null, []);
 
     const cancelActiveDrawing = useCallback(() => {
@@ -774,6 +860,99 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const matches = parseDrawingToolExports(lineToolsRef.current.getLineToolByID?.(id));
         return matches[0] ?? null;
     }, [parseDrawingToolExports]);
+
+    const getSelectedCalloutConfig = useCallback((): {
+        text: string;
+        fontSize: number;
+        textColor: string;
+        lineColor: string;
+        boxColor: string;
+    } | null => {
+        const lineTools = lineToolsRef.current;
+        if (!lineTools) return null;
+
+        const selectedTools = parseDrawingToolExports(lineTools.getSelectedLineTools?.());
+        const selectedCallout =
+            selectedTools.find((tool) => tool.toolType === "Callout") ??
+            (lastSelectedDrawingRef.current?.toolType === "Callout" && lastSelectedDrawingRef.current.id
+                ? readDrawingToolById(lastSelectedDrawingRef.current.id)
+                : null);
+
+        if (!selectedCallout || selectedCallout.toolType !== "Callout") return null;
+
+        const textOptions = (selectedCallout.options as {
+            text?: {
+                value?: unknown;
+                font?: { size?: unknown; color?: unknown };
+                box?: { background?: { color?: unknown }; border?: { color?: unknown } };
+            };
+            line?: { color?: unknown };
+        } | undefined)?.text;
+        const lineOptions = (selectedCallout.options as {
+            line?: { color?: unknown };
+            text?: { box?: { border?: { color?: unknown } } };
+        } | undefined);
+
+        return {
+            text: typeof textOptions?.value === "string" ? textOptions.value : "Text",
+            fontSize:
+                typeof textOptions?.font?.size === "number" && Number.isFinite(textOptions.font.size)
+                    ? textOptions.font.size
+                    : 18,
+            textColor:
+                typeof textOptions?.font?.color === "string"
+                    ? textOptions.font.color
+                    : "#00ff66",
+            lineColor:
+                typeof lineOptions?.line?.color === "string"
+                    ? lineOptions.line.color
+                    : typeof lineOptions?.text?.box?.border?.color === "string"
+                        ? lineOptions.text.box.border.color
+                        : "#00ff66",
+            boxColor:
+                typeof textOptions?.box?.background?.color === "string"
+                    ? textOptions.box.background.color
+                    : "rgba(0,0,0,0.88)",
+        };
+    }, [parseDrawingToolExports, readDrawingToolById]);
+
+    const updateSelectedCallout = useCallback((config: {
+        text?: string;
+        fontSize?: number;
+        textColor?: string;
+        lineColor?: string;
+        boxColor?: string;
+    }) => {
+        const lineTools = lineToolsRef.current;
+        if (!lineTools) return;
+
+        const selectedTools = parseDrawingToolExports(lineTools.getSelectedLineTools?.());
+        const selectedCallout =
+            selectedTools.find((tool) => tool.toolType === "Callout") ??
+            (lastSelectedDrawingRef.current?.toolType === "Callout" && lastSelectedDrawingRef.current.id
+                ? readDrawingToolById(lastSelectedDrawingRef.current.id)
+                : null);
+
+        if (!selectedCallout || selectedCallout.toolType !== "Callout") return;
+
+        const currentConfig = getSelectedCalloutConfig();
+        lineTools.applyLineToolOptions({
+            id: selectedCallout.id,
+            toolType: "Callout",
+            options: {
+                line: {
+                    color: config.lineColor ?? currentConfig?.lineColor ?? "#00ff66",
+                },
+                text: buildCalloutTextOptions({
+                    text: config.text ?? currentConfig?.text ?? "Text",
+                    fontSize: config.fontSize ?? currentConfig?.fontSize ?? 18,
+                    textColor: config.textColor ?? currentConfig?.textColor ?? "#00ff66",
+                    boxColor: config.boxColor ?? currentConfig?.boxColor ?? "rgba(0,0,0,0.88)",
+                    lineColor: config.lineColor ?? currentConfig?.lineColor ?? "#00ff66",
+                }),
+            },
+        } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
+    }, [getSelectedCalloutConfig, parseDrawingToolExports, readDrawingToolById]);
 
     const syncImportedDrawings = useCallback((drawings: DrawingToolExport[]) => {
         const lineTools = lineToolsRef.current;
@@ -1176,9 +1355,13 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
             if (
                 (toolType === "TrendLine" && params.stage === "lineToolFinished") ||
-                (toolType === "Path" && (params.stage === "pathFinished" || params.stage === "lineToolFinished"))
+                (toolType === "Path" && (params.stage === "pathFinished" || params.stage === "lineToolFinished")) ||
+                (toolType === "Callout" && params.stage === "lineToolFinished")
             ) {
-                const lineColor = drawingLineColorRef.current;
+                const lineColor =
+                    toolType === "Callout"
+                        ? calloutLineColorRef.current
+                        : drawingLineColorRef.current;
                 if (toolId) {
                     lineTools.applyLineToolOptions({
                         id: toolId,
@@ -1187,6 +1370,17 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                             showPriceAxisLabels: false,
                             showTimeAxisLabels: false,
                             ...(lineColor ? { line: { color: lineColor } } : {}),
+                            ...(toolType === "Callout"
+                                ? {
+                                      text: buildCalloutTextOptions({
+                                          text: calloutTextRef.current || "Text",
+                                          fontSize: calloutFontSizeRef.current || 18,
+                                          textColor: calloutTextColorRef.current || "#00ff66",
+                                          boxColor: calloutBoxColorRef.current || "rgba(0,0,0,0.88)",
+                                          lineColor: calloutLineColorRef.current || "#00ff66",
+                                      }),
+                                  }
+                                : {}),
                         },
                     } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
                 }
@@ -1213,13 +1407,24 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
             queueSelectionUpdate();
         };
-        const handleDoubleClick = (params: { selectedLineTool?: { id: string; toolType: string } }) => {
+        const handleDoubleClick = (params: {
+            selectedLineTool?: {
+                id: string;
+                toolType: string;
+                options?: unknown;
+            };
+        }) => {
             const rawToolType = params?.selectedLineTool?.toolType;
             if (rawToolType && isDrawingToolType(rawToolType)) {
                 const toolType = rawToolType;
                 const toolId = params?.selectedLineTool?.id;
                 if (toolId) {
                     lastSelectedDrawingRef.current = { id: toolId, toolType };
+                }
+                if (toolType === "Callout") {
+                    window.setTimeout(() => {
+                        onCalloutEditRequestRef.current?.();
+                    }, 0);
                 }
             }
             queueSelectionUpdate();
@@ -1234,6 +1439,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                         tool.toolType === "Rectangle" ||
                         tool.toolType === "TrendLine" ||
                         tool.toolType === "Path" ||
+                        tool.toolType === "Callout" ||
                         tool.toolType === "LongShortPosition"
                     ) as { id: string; toolType: DrawingToolType } | undefined;
                     if (match) {
@@ -1462,6 +1668,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         clearAllDrawingSelections,
         duplicateDrawings,
         getChartPointFromClient,
+        getSelectedCalloutConfig,
         getLineToolsInternal,
         queueSelectionUpdate,
         readDrawingToolById,
@@ -1495,7 +1702,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 : undefined;
 
         const lineOptions =
-            (drawingTool === "TrendLine" || drawingTool === "Path") && drawingLineColor
+            (drawingTool === "TrendLine" || drawingTool === "Path" || drawingTool === "Callout") && drawingLineColor
                 ? ({
                       ...axisLabelOptions,
                       line: { color: drawingLineColor },
@@ -1513,14 +1720,63 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                   } as Parameters<LineToolsApi["addLineTool"]>[2])
                 : undefined;
 
+        const calloutOptions =
+            drawingTool === "Callout"
+                ? ({
+                      ...axisLabelOptions,
+                      line: { color: calloutLineColorRef.current || "#00ff66" },
+                      text: buildCalloutTextOptions({
+                          text: calloutTextRef.current || "Text",
+                          fontSize: calloutFontSizeRef.current || 18,
+                          textColor: calloutTextColorRef.current || "#00ff66",
+                          boxColor: calloutBoxColorRef.current || "rgba(0,0,0,0.88)",
+                          lineColor: calloutLineColorRef.current || "#00ff66",
+                      }),
+                  } as Parameters<LineToolsApi["addLineTool"]>[2])
+                : undefined;
+
         const toolOptions =
             drawingTool === "Rectangle"
                 ? rectangleOptions
                 : drawingTool === "LongShortPosition"
                     ? longShortOptions
+                    : drawingTool === "Callout"
+                        ? calloutOptions
                     : lineOptions;
         lineToolsRef.current.addLineTool(drawingTool, undefined, toolOptions);
     }, [drawingTool, drawingLineColor, rectangleFillColor, rectangleBorderColor]);
+
+    useEffect(() => {
+        if (drawingTool !== "Callout" || !lineToolsRef.current) return;
+
+        const currentToolId = getLineToolsInternal()?._interactionManager?._currentToolCreating?.id();
+        if (!currentToolId) return;
+
+        lineToolsRef.current.applyLineToolOptions({
+            id: currentToolId,
+            toolType: "Callout",
+            options: {
+                line: {
+                    color: calloutLineColor || "#00ff66",
+                },
+                text: buildCalloutTextOptions({
+                    text: calloutText,
+                    fontSize: calloutFontSize,
+                    textColor: calloutTextColor,
+                    boxColor: calloutBoxColor,
+                    lineColor: calloutLineColor || "#00ff66",
+                }),
+            },
+        } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
+    }, [
+        calloutBoxColor,
+        calloutFontSize,
+        calloutLineColor,
+        calloutText,
+        calloutTextColor,
+        drawingTool,
+        getLineToolsInternal,
+    ]);
 
     useEffect(() => {
         if (drawingTool !== null) return;
@@ -1561,14 +1817,22 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         };
 
         const selectedTargets = selectedTools.filter(
-            (tool) => tool.toolType === "Rectangle" || tool.toolType === "TrendLine" || tool.toolType === "Path"
+            (tool) =>
+                tool.toolType === "Rectangle" ||
+                tool.toolType === "TrendLine" ||
+                tool.toolType === "Path" ||
+                tool.toolType === "Callout"
         );
 
         if (selectedTargets.length > 0) {
             selectedTargets.forEach((tool) => {
                 if (tool.toolType === "Rectangle") {
                     applyToRectangle(tool.id);
-                } else if (tool.toolType === "TrendLine" || tool.toolType === "Path") {
+                } else if (
+                    tool.toolType === "TrendLine" ||
+                    tool.toolType === "Path" ||
+                    tool.toolType === "Callout"
+                ) {
                     applyToLineTool(tool.id, tool.toolType);
                 }
             });
@@ -1583,7 +1847,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         if (lastSelected.toolType === "Rectangle") {
             applyToRectangle(lastSelected.id);
-        } else if (lastSelected.toolType === "TrendLine" || lastSelected.toolType === "Path") {
+        } else if (
+            lastSelected.toolType === "TrendLine" ||
+            lastSelected.toolType === "Path" ||
+            lastSelected.toolType === "Callout"
+        ) {
             applyToLineTool(lastSelected.id, lastSelected.toolType);
         }
         window.setTimeout(() => {
@@ -1782,7 +2050,17 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 to: (centerSec + halfWindow) as Time,
             });
         },
-    }), [cancelActiveDrawing, clearAllDrawingSelections, exportCurrentDrawings, scrollToTrade, syncImportedDrawings]);
+        getSelectedCalloutConfig,
+        updateSelectedCallout,
+    }), [
+        cancelActiveDrawing,
+        clearAllDrawingSelections,
+        exportCurrentDrawings,
+        getSelectedCalloutConfig,
+        scrollToTrade,
+        syncImportedDrawings,
+        updateSelectedCallout,
+    ]);
 
     // Update chart data and auto-scroll to trade
     useEffect(() => {

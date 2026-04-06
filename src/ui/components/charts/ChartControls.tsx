@@ -20,6 +20,7 @@ const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
     { id: "Path", label: "Path" },
     { id: "TrendLine", label: "Trendline" },
     { id: "Rectangle", label: "Rectangle" },
+    { id: "Callout", label: "Text" },
     { id: "LongShortPosition", label: "Long/Short" },
 ];
 

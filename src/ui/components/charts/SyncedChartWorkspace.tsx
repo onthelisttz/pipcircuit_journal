@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   RefreshCw,
   Eraser,
@@ -45,6 +45,7 @@ const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
   { id: "Path", label: "Path" },
   { id: "TrendLine", label: "Trendline" },
   { id: "Rectangle", label: "Rectangle" },
+  { id: "Callout", label: "Text" },
   { id: "LongShortPosition", label: "Long/Short" },
 ];
 
@@ -218,9 +219,14 @@ export function SyncedChartWorkspace({
     readStoredTimeframe()
   );
   const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
-  const [rectangleFillColor, setRectangleFillColor] = useState("#8b5cf6");
+  const [rectangleFillColor, setRectangleFillColor] = useState("#00ff66");
   const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
   const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
+  const [calloutText, setCalloutText] = useState("Text");
+  const [calloutFontSize, setCalloutFontSize] = useState(18);
+  const [calloutTextColor, setCalloutTextColor] = useState("#00ff66");
+  const [calloutLineColor, setCalloutLineColor] = useState("#00ff66");
+  const [calloutBoxColor, setCalloutBoxColor] = useState("rgba(0,0,0,0.88)");
   const [longShortLots, setLongShortLots] = useState(1);
   const [showTradeOverlay, setShowTradeOverlay] = useState(() => readStoredShowTrades());
   const [showTradePanel, setShowTradePanel] = useState(() => readStoredShowTradePanel());
@@ -259,6 +265,8 @@ export function SyncedChartWorkspace({
   const compactDrawRef = useRef<HTMLDivElement>(null);
   const compactActionsRef = useRef<HTMLDivElement>(null);
   const pendingRestoreRef = useRef<{ drawings: DrawingToolExport[]; centerTimestamp: number | null } | null>(null);
+  const skipNextCalloutApplyRef = useRef(false);
+  const calloutTextInputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (typeof window === "undefined" || !selection) return;
@@ -297,6 +305,43 @@ export function SyncedChartWorkspace({
       setSelectedTradeHistoryId(null);
     }
   }, [showTradeOverlay, showTradePanel]);
+
+  useEffect(() => {
+    if (selectedDrawingTool !== "Callout") return;
+    const config = chartRef.current?.getSelectedCalloutConfig();
+    if (!config) return;
+    skipNextCalloutApplyRef.current = true;
+    setCalloutText(config.text || "Text");
+    setCalloutFontSize(config.fontSize || 18);
+    setCalloutTextColor(config.textColor || "#00ff66");
+    setCalloutLineColor(config.lineColor || "#00ff66");
+    setCalloutBoxColor(config.boxColor || "rgba(0,0,0,0.88)");
+  }, [selectedDrawingTool]);
+
+  useEffect(() => {
+    if (selectedDrawingTool !== "Callout") return;
+    if (skipNextCalloutApplyRef.current) {
+      skipNextCalloutApplyRef.current = false;
+      return;
+    }
+    chartRef.current?.updateSelectedCallout({
+      text: calloutText,
+      fontSize: calloutFontSize,
+      textColor: calloutTextColor,
+      lineColor: calloutLineColor,
+      boxColor: calloutBoxColor,
+    });
+  }, [calloutBoxColor, calloutFontSize, calloutLineColor, calloutText, calloutTextColor, selectedDrawingTool]);
+
+  const handleCalloutTextKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key !== "Enter") return;
+      if (event.shiftKey) return;
+      event.preventDefault();
+      event.currentTarget.blur();
+    },
+    []
+  );
 
   // Report initial values to parent so tab labels are correct on mount
   useEffect(() => {
@@ -444,6 +489,10 @@ export function SyncedChartWorkspace({
       if (key === "p") {
         event.preventDefault();
         toggleTool("Path");
+      }
+      if (key === "x" || key === "m") {
+        event.preventDefault();
+        toggleTool("Callout");
       }
       if (key === "s" || key === "l") {
         event.preventDefault();
@@ -996,6 +1045,8 @@ export function SyncedChartWorkspace({
               selectedDrawingTool === "Rectangle" ||
               selectedDrawingTool === "TrendLine" ||
               selectedDrawingTool === "Path";
+            const showCalloutControls =
+              drawingTool === "Callout" || selectedDrawingTool === "Callout";
             const showLotsControls =
               drawingTool === "LongShortPosition" ||
               selectedDrawingTool === "LongShortPosition";
@@ -1028,6 +1079,59 @@ export function SyncedChartWorkspace({
                     value={rectangleFillOpacity}
                     onChange={(event) => setRectangleFillOpacity(Number(event.target.value))}
                     className="h-1.5 w-14 accent-foreground"
+                  />
+                </div>
+                <div
+                  className={`h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${
+                    showCalloutControls
+                      ? "flex opacity-100"
+                      : "hidden pointer-events-none opacity-0 sm:flex"
+                  }`}
+                  aria-hidden={!showCalloutControls}
+                >
+                  <textarea
+                    ref={calloutTextInputRef}
+                    value={calloutText}
+                    onChange={(event) => setCalloutText(event.target.value)}
+                    onKeyDown={handleCalloutTextKeyDown}
+                    placeholder="Text"
+                    rows={1}
+                    className="h-7 w-28 resize-none rounded border border-border bg-background px-1.5 py-1 text-[10px] leading-[1.2] text-foreground"
+                  />
+                  <input
+                    type="color"
+                    value={calloutTextColor}
+                    onChange={(event) => setCalloutTextColor(event.target.value)}
+                    className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0"
+                    aria-label="Text color"
+                  />
+                  <input
+                    type="color"
+                    value={calloutLineColor}
+                    onChange={(event) => setCalloutLineColor(event.target.value)}
+                    className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0"
+                    aria-label="Line and border color"
+                  />
+                  <input
+                    type="color"
+                    value={calloutBoxColor}
+                    onChange={(event) => setCalloutBoxColor(event.target.value)}
+                    className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0"
+                    aria-label="Box color"
+                  />
+                  <input
+                    type="number"
+                    min={10}
+                    max={48}
+                    step={1}
+                    value={calloutFontSize}
+                    onChange={(event) =>
+                      setCalloutFontSize(
+                        Math.max(10, Math.min(48, Number(event.target.value) || 18))
+                      )
+                    }
+                    className="h-5 w-12 rounded border border-border bg-background px-1 text-[10px] text-foreground"
+                    aria-label="Font size"
                   />
                 </div>
                 <div
@@ -1106,6 +1210,8 @@ export function SyncedChartWorkspace({
           selectedDrawingTool === "Rectangle" ||
           selectedDrawingTool === "TrendLine" ||
           selectedDrawingTool === "Path";
+        const showCalloutControls =
+          drawingTool === "Callout" || selectedDrawingTool === "Callout";
         const showLotsControls =
           drawingTool === "LongShortPosition" ||
           selectedDrawingTool === "LongShortPosition";
@@ -1129,6 +1235,54 @@ export function SyncedChartWorkspace({
                   value={rectangleFillOpacity}
                   onChange={(event) => setRectangleFillOpacity(Number(event.target.value))}
                   className="h-2 w-14 accent-foreground"
+                />
+              </div>
+            )}
+            {showCalloutControls && (
+              <div className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5">
+                <textarea
+                  ref={calloutTextInputRef}
+                  value={calloutText}
+                  onChange={(event) => setCalloutText(event.target.value)}
+                  onKeyDown={handleCalloutTextKeyDown}
+                  placeholder="Text"
+                  rows={1}
+                  className="h-7 w-24 resize-none rounded border border-border bg-background px-1 py-1 text-[10px] leading-[1.2] text-foreground"
+                />
+                <input
+                  type="color"
+                  value={calloutTextColor}
+                  onChange={(event) => setCalloutTextColor(event.target.value)}
+                  className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0"
+                  aria-label="Text color"
+                />
+                <input
+                  type="color"
+                  value={calloutLineColor}
+                  onChange={(event) => setCalloutLineColor(event.target.value)}
+                  className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0"
+                  aria-label="Line and border color"
+                />
+                <input
+                  type="color"
+                  value={calloutBoxColor}
+                  onChange={(event) => setCalloutBoxColor(event.target.value)}
+                  className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0"
+                  aria-label="Box color"
+                />
+                <input
+                  type="number"
+                  min={10}
+                  max={48}
+                  step={1}
+                  value={calloutFontSize}
+                  onChange={(event) =>
+                    setCalloutFontSize(
+                      Math.max(10, Math.min(48, Number(event.target.value) || 18))
+                    )
+                  }
+                  className="h-5 w-12 rounded border border-border bg-background px-1 text-[10px] text-foreground"
+                  aria-label="Font size"
                 />
               </div>
             )}
@@ -1284,8 +1438,19 @@ export function SyncedChartWorkspace({
           drawingLineColor={rectangleFillColor}
           rectangleFillColor={drawingFillRgba}
           rectangleBorderColor={rectangleFillColor}
+          calloutText={calloutText}
+          calloutFontSize={calloutFontSize}
+          calloutTextColor={calloutTextColor}
+          calloutLineColor={calloutLineColor}
+          calloutBoxColor={calloutBoxColor}
           onDrawingSelectionChange={setSelectedDrawingTool}
           onDrawingToolComplete={() => setDrawingTool(null)}
+          onCalloutEditRequest={() => {
+            window.setTimeout(() => {
+              calloutTextInputRef.current?.focus();
+              calloutTextInputRef.current?.select();
+            }, 0);
+          }}
           longShortLots={longShortLots}
           longShortSymbol={selection?.symbol}
           showRiskReward={false}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Trade, ChartTimeframe } from "@domain/entities";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { TradeCandlestickChart } from "./TradeCandlestickChart";
@@ -112,6 +112,11 @@ export function TradeChartView({
     const [rectangleFillColor, setRectangleFillColor] = useState("#8b5cf6");
     const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
     const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
+    const [calloutText, setCalloutText] = useState("Text");
+    const [calloutFontSize, setCalloutFontSize] = useState(18);
+    const [calloutTextColor, setCalloutTextColor] = useState("#00ff66");
+    const [calloutLineColor, setCalloutLineColor] = useState("#00ff66");
+    const [calloutBoxColor, setCalloutBoxColor] = useState("rgba(0,0,0,0.88)");
     const [timeGuides, setTimeGuides] = useState<TimeGuideSettings>(() =>
         readStoredTimeGuideSettings(TRADE_CHART_TIME_GUIDES_KEY)
     );
@@ -126,7 +131,9 @@ export function TradeChartView({
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const visualAreaRef = useRef<HTMLDivElement>(null);
     const candlestickChartRef = useRef<TradeCandlestickChartRef | null>(null);
+    const calloutTextInputRef = useRef<HTMLTextAreaElement>(null);
     const profitChartRef = useRef<{ fitContent: () => void } | null>(null);
+    const skipNextCalloutApplyRef = useRef(false);
     const showsCandlestick = viewMode !== "pnl";
     const allowsProfitToggle = viewMode === "combined";
     const allowsProfitMarkers = viewMode !== "chart";
@@ -265,6 +272,40 @@ export function TradeChartView({
     );
 
     useEffect(() => {
+        if (selectedDrawingTool !== "Callout") return;
+        const config = candlestickChartRef.current?.getSelectedCalloutConfig();
+        if (!config) return;
+        skipNextCalloutApplyRef.current = true;
+        setCalloutText(config.text || "Text");
+        setCalloutFontSize(config.fontSize || 18);
+        setCalloutTextColor(config.textColor || "#00ff66");
+        setCalloutLineColor(config.lineColor || "#00ff66");
+        setCalloutBoxColor(config.boxColor || "rgba(0,0,0,0.88)");
+    }, [selectedDrawingTool]);
+
+    useEffect(() => {
+        if (selectedDrawingTool !== "Callout") return;
+        if (skipNextCalloutApplyRef.current) {
+            skipNextCalloutApplyRef.current = false;
+            return;
+        }
+        candlestickChartRef.current?.updateSelectedCallout({
+            text: calloutText,
+            fontSize: calloutFontSize,
+            textColor: calloutTextColor,
+            lineColor: calloutLineColor,
+            boxColor: calloutBoxColor,
+        });
+    }, [calloutBoxColor, calloutFontSize, calloutLineColor, calloutText, calloutTextColor, selectedDrawingTool]);
+
+    const handleCalloutTextKeyDown = useCallback((event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+        if (event.key !== "Enter") return;
+        if (event.shiftKey) return;
+        event.preventDefault();
+        event.currentTarget.blur();
+    }, []);
+
+    useEffect(() => {
         setLongShortLots(initialLots);
     }, [initialLots, trade.id]);
 
@@ -333,6 +374,10 @@ export function TradeChartView({
             if (key === "p") {
                 event.preventDefault();
                 toggleTool("Path");
+            }
+            if (key === "m" || key === "x") {
+                event.preventDefault();
+                toggleTool("Callout");
             }
             if (key === "s" || key === "l") {
                 event.preventDefault();
@@ -424,58 +469,103 @@ export function TradeChartView({
                                 selectedDrawingTool === "Rectangle" ||
                                 selectedDrawingTool === "TrendLine" ||
                                 selectedDrawingTool === "Path";
+                            const showCalloutControls =
+                                drawingTool === "Callout" ||
+                                selectedDrawingTool === "Callout";
                             const showLotsControls =
                                 drawingTool === "LongShortPosition" ||
                                 selectedDrawingTool === "LongShortPosition";
 
                             return (
                                 <>
-                                    <div
-                                        className={`flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-opacity ${
-                                            showDrawControls ? "opacity-100" : "pointer-events-none opacity-0"
-                                        }`}
-                                        aria-hidden={!showDrawControls}
-                                    >
-                                        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                                            Draw color
-                                        </span>
-                                        <input
-                                            type="color"
-                                            aria-label="Draw color"
-                                            value={rectangleFillColor}
-                                            onChange={(event) => setRectangleFillColor(event.target.value)}
-                                            className="h-5 w-5 cursor-pointer rounded border border-border bg-transparent p-0"
-                                        />
-                                        <input
-                                            type="range"
-                                            aria-label="Draw opacity"
-                                            min={0}
-                                            max={1}
-                                            step={0.05}
-                                            value={rectangleFillOpacity}
-                                            onChange={(event) => setRectangleFillOpacity(Number(event.target.value))}
-                                            className="h-2 w-20 accent-foreground"
-                                        />
-                                    </div>
-                                    <div
-                                        className={`flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-opacity ${
-                                            showLotsControls ? "opacity-100" : "pointer-events-none opacity-0"
-                                        }`}
-                                        aria-hidden={!showLotsControls}
-                                    >
-                                        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                                            Lots
-                                        </span>
-                                        <input
-                                            type="number"
-                                            inputMode="decimal"
-                                            min={0.01}
-                                            step={0.01}
-                                            value={Number.isFinite(longShortLots) ? longShortLots : 1}
-                                            onChange={(event) => setLongShortLots(Number(event.target.value))}
-                                            className="h-6 w-20 rounded border border-border bg-background px-2 text-[11px] text-foreground"
-                                        />
-                                    </div>
+                                    {showDrawControls ? (
+                                        <div className="flex h-7 items-center gap-1.5 rounded-md border border-border px-1.5 py-0.5">
+                                            <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                                Draw color
+                                            </span>
+                                            <input
+                                                type="color"
+                                                aria-label="Draw color"
+                                                value={rectangleFillColor}
+                                                onChange={(event) => setRectangleFillColor(event.target.value)}
+                                                className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0"
+                                            />
+                                            <input
+                                                type="range"
+                                                aria-label="Draw opacity"
+                                                min={0}
+                                                max={1}
+                                                step={0.05}
+                                                value={rectangleFillOpacity}
+                                                onChange={(event) => setRectangleFillOpacity(Number(event.target.value))}
+                                                className="h-1.5 w-14 accent-foreground"
+                                            />
+                                        </div>
+                                    ) : null}
+                                    {showLotsControls ? (
+                                        <div className="flex h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5">
+                                            <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                                Lots
+                                            </span>
+                                            <input
+                                                type="number"
+                                                inputMode="decimal"
+                                                min={0.01}
+                                                step={0.01}
+                                                value={Number.isFinite(longShortLots) ? longShortLots : 1}
+                                                onChange={(event) => setLongShortLots(Number(event.target.value))}
+                                                className="h-5 w-14 rounded border border-border bg-background px-1.5 text-[10px] text-foreground"
+                                            />
+                                        </div>
+                                    ) : null}
+                                    {showCalloutControls ? (
+                                        <div className="flex h-7 min-w-0 items-center gap-1 rounded-md border border-border px-1.5 py-0.5">
+                                            <textarea
+                                                ref={calloutTextInputRef}
+                                                value={calloutText}
+                                                onChange={(event) => setCalloutText(event.target.value)}
+                                                onKeyDown={handleCalloutTextKeyDown}
+                                                placeholder="Text"
+                                                rows={1}
+                                                className="h-7 w-20 resize-none rounded border border-border bg-background px-1 py-1 text-[10px] leading-[1.2] text-foreground"
+                                            />
+                                            <input
+                                                type="color"
+                                                value={calloutTextColor}
+                                                onChange={(event) => setCalloutTextColor(event.target.value)}
+                                                className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0"
+                                                aria-label="Text color"
+                                            />
+                                            <input
+                                                type="color"
+                                                value={calloutLineColor}
+                                                onChange={(event) => setCalloutLineColor(event.target.value)}
+                                                className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0"
+                                                aria-label="Line and border color"
+                                            />
+                                            <input
+                                                type="color"
+                                                value={calloutBoxColor}
+                                                onChange={(event) => setCalloutBoxColor(event.target.value)}
+                                                className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0"
+                                                aria-label="Box color"
+                                            />
+                                            <input
+                                                type="number"
+                                                min={10}
+                                                max={48}
+                                                step={1}
+                                                value={calloutFontSize}
+                                                onChange={(event) =>
+                                                    setCalloutFontSize(
+                                                        Math.max(10, Math.min(48, Number(event.target.value) || 18))
+                                                    )
+                                                }
+                                                className="h-5 w-12 rounded border border-border bg-background px-1 text-[10px] text-foreground"
+                                                aria-label="Font size"
+                                            />
+                                        </div>
+                                    ) : null}
                                 </>
                             );
                         })()}
@@ -548,8 +638,19 @@ export function TradeChartView({
                         drawingLineColor={rectangleFillColor}
                         rectangleFillColor={drawingFillRgba}
                         rectangleBorderColor={rectangleFillColor}
+                        calloutText={calloutText}
+                        calloutFontSize={calloutFontSize}
+                        calloutTextColor={calloutTextColor}
+                        calloutLineColor={calloutLineColor}
+                        calloutBoxColor={calloutBoxColor}
                         onDrawingSelectionChange={setSelectedDrawingTool}
                         onDrawingToolComplete={() => setDrawingTool(null)}
+                        onCalloutEditRequest={() => {
+                            window.setTimeout(() => {
+                                calloutTextInputRef.current?.focus();
+                                calloutTextInputRef.current?.select();
+                            }, 0);
+                        }}
                         longShortLots={longShortLots}
                         longShortSymbol={trade.symbol ?? ""}
                         showRiskReward={showRiskReward}

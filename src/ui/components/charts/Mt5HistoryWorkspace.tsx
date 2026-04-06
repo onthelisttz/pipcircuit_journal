@@ -7,7 +7,7 @@ import {
   isSameDay,
   startOfMonth,
 } from "date-fns";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   Calendar,
   ChevronDown,
@@ -94,6 +94,7 @@ const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
   { id: "Path", label: "Path" },
   { id: "TrendLine", label: "Trendline" },
   { id: "Rectangle", label: "Rectangle" },
+  { id: "Callout", label: "Text" },
   { id: "LongShortPosition", label: "Long/Short" },
 ];
 const TIMEFRAME_WINDOWS_MS: Record<ChartTimeframe, number> = {
@@ -647,6 +648,11 @@ export function Mt5HistoryWorkspace({
   const [rectangleFillColor, setRectangleFillColor] = useState("#8b5cf6");
   const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
   const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
+  const [calloutText, setCalloutText] = useState("Text");
+  const [calloutFontSize, setCalloutFontSize] = useState(18);
+  const [calloutTextColor, setCalloutTextColor] = useState("#00ff66");
+  const [calloutLineColor, setCalloutLineColor] = useState("#00ff66");
+  const [calloutBoxColor, setCalloutBoxColor] = useState("rgba(0,0,0,0.88)");
   const [longShortLots, setLongShortLots] = useState(1);
   const [timeGuides, setTimeGuides] = useState<TimeGuideSettings>(() =>
     readStoredTimeGuideSettings(HISTORY_TIME_GUIDES_KEY)
@@ -659,6 +665,8 @@ export function Mt5HistoryWorkspace({
   const compactDrawRef = useRef<HTMLDivElement>(null);
   const compactActionsRef = useRef<HTMLDivElement>(null);
   const pendingRestoreRef = useRef<{ drawings: DrawingToolExport[]; centerTimestamp: number | null } | null>(null);
+  const skipNextCalloutApplyRef = useRef(false);
+  const calloutTextInputRef = useRef<HTMLTextAreaElement>(null);
 
   const [bars, setBars] = useState<ChartBar[]>([]);
   const [loadedRange, setLoadedRange] = useState<LoadedRange | null>(null);
@@ -700,6 +708,40 @@ export function Mt5HistoryWorkspace({
     () => hexToRgba(rectangleFillColor, rectangleFillOpacity),
     [rectangleFillColor, rectangleFillOpacity]
   );
+
+  useEffect(() => {
+    if (selectedDrawingTool !== "Callout") return;
+    const config = chartRef.current?.getSelectedCalloutConfig();
+    if (!config) return;
+    skipNextCalloutApplyRef.current = true;
+    setCalloutText(config.text || "Text");
+    setCalloutFontSize(config.fontSize || 18);
+    setCalloutTextColor(config.textColor || "#00ff66");
+    setCalloutLineColor(config.lineColor || "#00ff66");
+    setCalloutBoxColor(config.boxColor || "rgba(0,0,0,0.88)");
+  }, [selectedDrawingTool]);
+
+  useEffect(() => {
+    if (selectedDrawingTool !== "Callout") return;
+    if (skipNextCalloutApplyRef.current) {
+      skipNextCalloutApplyRef.current = false;
+      return;
+    }
+    chartRef.current?.updateSelectedCallout({
+      text: calloutText,
+      fontSize: calloutFontSize,
+      textColor: calloutTextColor,
+      lineColor: calloutLineColor,
+      boxColor: calloutBoxColor,
+    });
+  }, [calloutBoxColor, calloutFontSize, calloutLineColor, calloutText, calloutTextColor, selectedDrawingTool]);
+
+  const handleCalloutTextKeyDown = useCallback((event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Enter") return;
+    if (event.shiftKey) return;
+    event.preventDefault();
+    event.currentTarget.blur();
+  }, []);
 
   const activeSeriesKey = `${symbol}|${selectedTimeframe?.timeframe ?? ""}`;
   const resolvedMt5ServiceUrl = useMemo(() => {
@@ -893,6 +935,10 @@ export function Mt5HistoryWorkspace({
       if (key === "p") {
         event.preventDefault();
         toggleTool("Path");
+      }
+      if (key === "m" || key === "x") {
+        event.preventDefault();
+        toggleTool("Callout");
       }
       if (key === "s" || key === "l") {
         event.preventDefault();
@@ -1498,6 +1544,7 @@ export function Mt5HistoryWorkspace({
           ))}
           {(() => {
             const showDrawControls = drawingTool === "Rectangle" || drawingTool === "TrendLine" || drawingTool === "Path" || selectedDrawingTool === "Rectangle" || selectedDrawingTool === "TrendLine" || selectedDrawingTool === "Path";
+            const showCalloutControls = drawingTool === "Callout" || selectedDrawingTool === "Callout";
             const showLotsControls = drawingTool === "LongShortPosition" || selectedDrawingTool === "LongShortPosition";
             return (
               <>
@@ -1509,6 +1556,13 @@ export function Mt5HistoryWorkspace({
                 <div className={`h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${showLotsControls ? "flex opacity-100" : "hidden pointer-events-none opacity-0 sm:flex"}`} aria-hidden={!showLotsControls}>
                   <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Lots</span>
                   <input type="number" inputMode="decimal" min={0.01} step={0.01} value={Number.isFinite(longShortLots) ? longShortLots : 1} onChange={(event) => setLongShortLots(Number(event.target.value))} className="h-5 w-14 rounded border border-border bg-background px-1.5 text-[10px] text-foreground" />
+                </div>
+                <div className={`h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${showCalloutControls ? "flex opacity-100" : "hidden pointer-events-none opacity-0 sm:flex"}`} aria-hidden={!showCalloutControls}>
+                  <textarea ref={calloutTextInputRef} value={calloutText} onChange={(event) => setCalloutText(event.target.value)} onKeyDown={handleCalloutTextKeyDown} placeholder="Text" rows={1} className="h-7 w-28 resize-none rounded border border-border bg-background px-1.5 py-1 text-[10px] leading-[1.2] text-foreground" />
+                  <input type="color" value={calloutTextColor} onChange={(event) => setCalloutTextColor(event.target.value)} className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0" aria-label="Text color" />
+                  <input type="color" value={calloutLineColor} onChange={(event) => setCalloutLineColor(event.target.value)} className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0" aria-label="Line and border color" />
+                  <input type="color" value={calloutBoxColor} onChange={(event) => setCalloutBoxColor(event.target.value)} className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0" aria-label="Box color" />
+                  <input type="number" min={10} max={48} step={1} value={calloutFontSize} onChange={(event) => setCalloutFontSize(Math.max(10, Math.min(48, Number(event.target.value) || 18)))} className="h-5 w-12 rounded border border-border bg-background px-1 text-[10px] text-foreground" aria-label="Font size" />
                 </div>
               </>
             );
@@ -1543,6 +1597,7 @@ export function Mt5HistoryWorkspace({
 
       {compact && (() => {
         const showDrawControls = drawingTool === "Rectangle" || drawingTool === "TrendLine" || drawingTool === "Path" || selectedDrawingTool === "Rectangle" || selectedDrawingTool === "TrendLine" || selectedDrawingTool === "Path";
+        const showCalloutControls = drawingTool === "Callout" || selectedDrawingTool === "Callout";
         const showLotsControls = drawingTool === "LongShortPosition" || selectedDrawingTool === "LongShortPosition";
         return (
           <>
@@ -1553,9 +1608,18 @@ export function Mt5HistoryWorkspace({
               </div>
             )}
             {showLotsControls && (
-              <div className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5">
+              <div className="flex h-7 items-center gap-1 rounded-md border border-border px-2 py-0.5">
                 <span className="text-[9px] font-medium uppercase text-muted-foreground">Lots</span>
                 <input type="number" inputMode="decimal" min={0.01} step={0.01} value={Number.isFinite(longShortLots) ? longShortLots : 1} onChange={(event) => setLongShortLots(Number(event.target.value))} className="h-5 w-16 rounded border border-border bg-background px-1 text-[10px] text-foreground" />
+              </div>
+            )}
+            {showCalloutControls && (
+              <div className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5">
+                <textarea ref={calloutTextInputRef} value={calloutText} onChange={(event) => setCalloutText(event.target.value)} onKeyDown={handleCalloutTextKeyDown} placeholder="Text" rows={1} className="h-7 w-24 resize-none rounded border border-border bg-background px-1 py-1 text-[10px] leading-[1.2] text-foreground" />
+                <input type="color" value={calloutTextColor} onChange={(event) => setCalloutTextColor(event.target.value)} className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0" aria-label="Text color" />
+                <input type="color" value={calloutLineColor} onChange={(event) => setCalloutLineColor(event.target.value)} className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0" aria-label="Line and border color" />
+                <input type="color" value={calloutBoxColor} onChange={(event) => setCalloutBoxColor(event.target.value)} className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0" aria-label="Box color" />
+                <input type="number" min={10} max={48} step={1} value={calloutFontSize} onChange={(event) => setCalloutFontSize(Math.max(10, Math.min(48, Number(event.target.value) || 18)))} className="h-5 w-12 rounded border border-border bg-background px-1 text-[10px] text-foreground" aria-label="Font size" />
               </div>
             )}
           </>
@@ -1641,8 +1705,19 @@ export function Mt5HistoryWorkspace({
           drawingLineColor={rectangleFillColor}
           rectangleFillColor={drawingFillRgba}
           rectangleBorderColor={rectangleFillColor}
+          calloutText={calloutText}
+          calloutFontSize={calloutFontSize}
+          calloutTextColor={calloutTextColor}
+          calloutLineColor={calloutLineColor}
+          calloutBoxColor={calloutBoxColor}
           onDrawingSelectionChange={setSelectedDrawingTool}
           onDrawingToolComplete={() => setDrawingTool(null)}
+          onCalloutEditRequest={() => {
+            window.setTimeout(() => {
+              calloutTextInputRef.current?.focus();
+              calloutTextInputRef.current?.select();
+            }, 0);
+          }}
           longShortLots={longShortLots}
           longShortSymbol={symbol}
           showEntryMarker={false}
