@@ -22,6 +22,9 @@ export type { TradeChartViewProps } from "./TradeChartView";
 
 export { SyncedChartWorkspace } from "./SyncedChartWorkspace";
 export { Mt5HistoryWorkspace } from "./Mt5HistoryWorkspace";
+export { ChartTradeHistoryPanel } from "./ChartTradeHistoryPanel";
+export { ChartTradeHistoryDock } from "./ChartTradeHistoryDock";
+export type { ChartTradeHistoryPanelData } from "./ChartTradeHistoryPanel";
 
 export { ChartTabBar } from "./ChartTabBar";
 export type { ChartTab, ChartPane, ChartTabBarProps, LayoutType } from "./ChartTabBar";

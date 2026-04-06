@@ -1,5 +1,6 @@
 "use client";
 
+import { useLayoutEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { RichTextEditor } from "@ui/components/common";
 
@@ -24,6 +25,12 @@ interface ObservationFormModalProps {
   isEdit: boolean;
 }
 
+function resizeTitleField(element: HTMLTextAreaElement | null) {
+  if (!element) return;
+  element.style.height = "auto";
+  element.style.height = `${Math.max(element.scrollHeight, 44)}px`;
+}
+
 export function ObservationFormModal({
   open,
   onClose,
@@ -44,6 +51,12 @@ export function ObservationFormModal({
   saving,
   isEdit,
 }: ObservationFormModalProps) {
+  const titleRef = useRef<HTMLTextAreaElement>(null);
+
+  useLayoutEffect(() => {
+    resizeTitleField(titleRef.current);
+  }, [open, title]);
+
   if (!open) return null;
 
   return (
@@ -74,13 +87,17 @@ export function ObservationFormModal({
             <label htmlFor="obs-modal-title" className="block text-sm font-medium text-muted-foreground mb-1">
               Title
             </label>
-            <input
+            <textarea
               id="obs-modal-title"
-              type="text"
+              ref={titleRef}
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                resizeTitleField(e.currentTarget);
+              }}
               placeholder="Observation title"
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+              rows={1}
+              className="min-h-[44px] w-full resize-none overflow-hidden rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6"
               required
             />
           </div>

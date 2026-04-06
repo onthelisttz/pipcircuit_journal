@@ -4,7 +4,12 @@ import { useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { AuthGuard, Header, Sidebar } from "@ui/components/layout";
 import { TradePanel, ObservationPanel } from "@ui/components/panels";
-import { TradePanelProvider, ObservationPanelProvider } from "@ui/providers";
+import { ChartTradeHistoryDock } from "@ui/components/charts";
+import {
+  TradePanelProvider,
+  ObservationPanelProvider,
+  ChartTradeHistoryPanelProvider,
+} from "@ui/providers";
 import { useRealtimeSync } from "@ui/hooks/useRealtimeSync";
 import { SyncInitializer } from "@ui/components/sync";
 
@@ -61,65 +66,68 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     <AuthGuard>
       <TradePanelProvider>
         <ObservationPanelProvider>
-          <SyncInitializer />
-          <div className="flex h-screen overflow-hidden bg-background text-foreground">
-            <Sidebar
-              className="hidden md:flex"
-              isHeaderVisible={isHeaderVisible}
-              onHeaderVisibilityToggle={toggleHeaderVisibility}
-            />
-            {isSidebarOpen && (
-              <div className="fixed inset-0 z-40 md:hidden">
-                <div
-                  className="absolute inset-0 bg-black/60"
-                  onClick={() => setIsSidebarOpen(false)}
-                />
-                <Sidebar
-                  className="relative z-50 h-full shadow-xl"
-                  forceCollapsed
-                  hideCollapseToggle
-                  isHeaderVisible={isHeaderVisible}
-                  onHeaderVisibilityToggle={() => {
-                    toggleHeaderVisibility();
-                    setIsSidebarOpen(false);
-                  }}
-                  onNavigate={() => setIsSidebarOpen(false)}
-                />
-              </div>
-            )}
-            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-              {!isHeaderVisible && (
-                <button
-                  onClick={() => setIsSidebarOpen(true)}
-                  className="fixed left-3 top-3 z-30 rounded-lg border border-border bg-background/95 p-2 text-foreground shadow-md backdrop-blur md:hidden"
-                  aria-label="Open navigation"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-4 w-4"
-                  >
-                    <line x1="4" x2="20" y1="12" y2="12" />
-                    <line x1="4" x2="20" y1="6" y2="6" />
-                    <line x1="4" x2="20" y1="18" y2="18" />
-                  </svg>
-                </button>
+          <ChartTradeHistoryPanelProvider>
+            <SyncInitializer />
+            <div className="flex h-screen overflow-hidden bg-background text-foreground">
+              <Sidebar
+                className="hidden md:flex"
+                isHeaderVisible={isHeaderVisible}
+                onHeaderVisibilityToggle={toggleHeaderVisibility}
+              />
+              {isSidebarOpen && (
+                <div className="fixed inset-0 z-40 md:hidden">
+                  <div
+                    className="absolute inset-0 bg-black/60"
+                    onClick={() => setIsSidebarOpen(false)}
+                  />
+                  <Sidebar
+                    className="relative z-50 h-full shadow-xl"
+                    forceCollapsed
+                    hideCollapseToggle
+                    isHeaderVisible={isHeaderVisible}
+                    onHeaderVisibilityToggle={() => {
+                      toggleHeaderVisibility();
+                      setIsSidebarOpen(false);
+                    }}
+                    onNavigate={() => setIsSidebarOpen(false)}
+                  />
+                </div>
               )}
-              <div className={isHeaderVisible ? "" : "hidden"}>
-                <Header onMenuToggle={() => setIsSidebarOpen((prev) => !prev)} />
+              <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                {!isHeaderVisible && (
+                  <button
+                    onClick={() => setIsSidebarOpen(true)}
+                    className="fixed left-3 top-3 z-30 rounded-lg border border-border bg-background/95 p-2 text-foreground shadow-md backdrop-blur md:hidden"
+                    aria-label="Open navigation"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4"
+                    >
+                      <line x1="4" x2="20" y1="12" y2="12" />
+                      <line x1="4" x2="20" y1="6" y2="6" />
+                      <line x1="4" x2="20" y1="18" y2="18" />
+                    </svg>
+                  </button>
+                )}
+                <div className={isHeaderVisible ? "" : "hidden"}>
+                  <Header onMenuToggle={() => setIsSidebarOpen((prev) => !prev)} />
+                </div>
+                <main className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-0 sm:px-4 sm:pb-5 md:px-6 md:pr-10 md:pb-6">
+                  {children}
+                </main>
               </div>
-              <main className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-0 sm:px-4 sm:pb-5 md:px-6 md:pr-10 md:pb-6">
-                {children}
-              </main>
+              <ChartTradeHistoryDock />
+              <TradePanel />
+              <ObservationPanel />
             </div>
-            <TradePanel />
-            <ObservationPanel />
-          </div>
+          </ChartTradeHistoryPanelProvider>
         </ObservationPanelProvider>
       </TradePanelProvider>
     </AuthGuard>

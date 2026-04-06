@@ -27,6 +27,8 @@ export interface DateRangePopoverProps {
   onClose: () => void;
   onApply: (from: Date, to: Date) => void;
   quickPresetStorageKey?: string;
+  align?: "left" | "right";
+  compact?: boolean;
 }
 
 type QuickPresetKey =
@@ -158,6 +160,8 @@ export function DateRangePopover({
   onClose,
   onApply,
   quickPresetStorageKey,
+  align = "right",
+  compact = false,
 }: DateRangePopoverProps) {
   const today = useMemo(() => new Date(), []);
   const minSelectableDate = useMemo(() => startOfDay(APP_ALL_TIME_START_DATE), []);
@@ -265,14 +269,22 @@ export function DateRangePopover({
   const shiftVisibleMonth = (delta: number) => {
     setMonthLeft((prev) => clampMonthLeft(addMonths(prev, delta)));
   };
+  const rootClassName = [
+    "fixed inset-x-2 bottom-2 top-16 z-30 overflow-y-auto rounded-xl border border-border bg-popover p-3 shadow-2xl animate-in fade-in-0 zoom-in-95",
+    compact ? "sm:w-[300px] sm:p-3" : "sm:w-[540px] sm:p-4",
+    align === "left" ? "sm:left-0 sm:right-auto" : "sm:right-0 sm:left-auto",
+    "sm:absolute sm:inset-y-auto sm:top-full sm:mt-2 sm:max-w-[calc(100vw-2rem)] sm:max-h-[80vh]",
+  ].join(" ");
 
   return (
-    <div className="fixed inset-x-2 bottom-2 top-16 z-30 overflow-y-auto rounded-xl border border-border bg-popover p-3 shadow-2xl animate-in fade-in-0 zoom-in-95 sm:absolute sm:inset-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[540px] sm:max-w-[calc(100vw-2rem)] sm:max-h-[80vh] sm:p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <span className="text-sm font-medium text-foreground">{headerLabel}</span>
+    <div className={rootClassName}>
+      <div className="mb-3 flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+          {headerLabel}
+        </span>
         <button
           type="button"
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           onClick={onClose}
           aria-label="Close date picker"
         >
@@ -351,8 +363,8 @@ export function DateRangePopover({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 text-xs sm:grid-cols-2">
-        {[monthLeft, monthRight].map((month, idx) => {
+      <div className={`grid grid-cols-1 gap-4 text-xs ${compact ? "" : "sm:grid-cols-2"}`}>
+        {(compact ? [monthLeft] : [monthLeft, monthRight]).map((month, idx) => {
           const days = buildMonthDays(month);
           const monthLabel = format(month, "MMMM yyyy");
           const firstWeekday = new Date(month).getDay();

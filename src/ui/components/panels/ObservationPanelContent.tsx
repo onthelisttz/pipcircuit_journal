@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useLayoutEffect, useRef } from "react";
 import { Loader2, Expand, Minimize2 } from "lucide-react";
 import { useObservation } from "@ui/hooks";
 import { useObservationCategories } from "@ui/hooks";
@@ -24,6 +24,12 @@ interface ObservationPanelContentProps {
   onToggleEditorOnlyExpanded?: () => void;
 }
 
+function resizeTitleField(element: HTMLTextAreaElement | null) {
+  if (!element) return;
+  element.style.height = "auto";
+  element.style.height = `${Math.max(element.scrollHeight, 44)}px`;
+}
+
 export function ObservationPanelContent({
   observationId,
   onClose,
@@ -43,6 +49,7 @@ export function ObservationPanelContent({
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [editingNames, setEditingNames] = useState<Record<number, string>>({});
+  const titleRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (observation) {
@@ -62,14 +69,38 @@ export function ObservationPanelContent({
     setEditingNames(map);
   }, [categories]);
 
+  useLayoutEffect(() => {
+    resizeTitleField(titleRef.current);
+    if (typeof window === "undefined") return;
+    const rafId = window.requestAnimationFrame(() => {
+      resizeTitleField(titleRef.current);
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [observationId, title, observation?.title, observation?.updatedAt, saving]);
+
   const handleSave = useCallback(async () => {
     if (!observation?.id) return;
+
+    const nextTitle = title.trim();
+    const currentTitle = (observation.title ?? "").trim();
+    const currentCategoryId = observation.categoryId ?? null;
+    const currentContent = observation.content || "<p></p>";
+    const nextContent = content || "<p></p>";
+
+    if (
+      nextTitle === currentTitle &&
+      categoryId === currentCategoryId &&
+      nextContent === currentContent
+    ) {
+      return;
+    }
+
     setSaving(true);
     try {
       await repo.update(observation.id, {
-        title: title.trim(),
+        title: nextTitle,
         categoryId,
-        content: content || "<p></p>",
+        content: nextContent,
         updatedAt: new Date(),
       });
       await refetch();
@@ -78,7 +109,17 @@ export function ObservationPanelContent({
     } finally {
       setSaving(false);
     }
-  }, [observation?.id, title, categoryId, content, refetch, repo]);
+  }, [
+    observation?.categoryId,
+    observation?.content,
+    observation?.id,
+    observation?.title,
+    title,
+    categoryId,
+    content,
+    refetch,
+    repo,
+  ]);
 
   const handleAddCategory = useCallback(async () => {
     if (!newCategoryName.trim()) return;
@@ -201,13 +242,17 @@ export function ObservationPanelContent({
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
       <div>
         <label className="mb-1 block text-xs text-muted-foreground">Title</label>
-        <input
-          type="text"
+        <textarea
+          ref={titleRef}
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(e) => {
+            setTitle(e.target.value);
+            resizeTitleField(e.currentTarget);
+          }}
           onBlur={handleSave}
           placeholder="Observation title"
-          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium"
+          rows={1}
+          className="min-h-[44px] w-full resize-none overflow-hidden rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium leading-6 box-border"
         />
       </div>
 

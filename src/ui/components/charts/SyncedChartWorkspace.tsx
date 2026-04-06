@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   RefreshCw,
   Eraser,
@@ -18,6 +18,7 @@ import type { ChartTimeframe, Trade } from "@domain/entities";
 import { Direction, OrderType } from "@domain/enums";
 import { TradeCandlestickChart } from "@ui/components/charts";
 import type { DrawingToolType, TradeCandlestickChartRef } from "@ui/components/charts/TradeCandlestickChart";
+import type { ChartTradeHistoryPanelData } from "./ChartTradeHistoryPanel";
 type DrawingToolExport = ReturnType<TradeCandlestickChartRef["exportAllDrawings"]>[number];
 import { useChartData } from "@ui/hooks/useChartData";
 import { useSyncProgress } from "@ui/hooks/useSyncProgress";
@@ -35,7 +36,8 @@ import {
 const CHART_SELECTION_KEY = "chartSelection";
 const CHART_TIMEFRAME_KEY = "chartTimeframe";
 const CHART_TIME_GUIDES_KEY = "chartTimeGuides_synced";
-const CHART_SHOW_TRADES_KEY = "chartShowTrades_synced";
+const CHART_SHOW_TRADES_OVERLAY_KEY = "chartShowTrades_synced";
+const CHART_SHOW_TRADES_PANEL_KEY = "chartShowTradesPanel_synced";
 const SYNCED_CHART_DISPLAY_OFFSET_MS = 3 * 60 * 60 * 1000;
 type ChartSelection = { broker: string; symbol: string };
 
@@ -81,7 +83,20 @@ function readStoredTimeframe(): ChartTimeframe {
 function readStoredShowTrades(): boolean {
   if (typeof window === "undefined") return false;
   try {
-    return window.localStorage.getItem(CHART_SHOW_TRADES_KEY) === "true";
+    return window.localStorage.getItem(CHART_SHOW_TRADES_OVERLAY_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function readStoredShowTradePanel(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const storedPanelValue = window.localStorage.getItem(CHART_SHOW_TRADES_PANEL_KEY);
+    if (storedPanelValue == null) {
+      return window.localStorage.getItem(CHART_SHOW_TRADES_OVERLAY_KEY) === "true";
+    }
+    return storedPanelValue === "true";
   } catch {
     return false;
   }
@@ -155,6 +170,8 @@ interface SyncedChartWorkspaceProps {
   initialBroker?: string;
   onSymbolChange?: (symbol: string, broker: string) => void;
   onTimeframeChange?: (timeframe: string) => void;
+  isActive?: boolean;
+  onTradePanelChange?: (panel: ChartTradeHistoryPanelData | null) => void;
   /** Hide drawing tools & action buttons for compact multi-pane layouts */
   compact?: boolean;
 }
@@ -164,6 +181,8 @@ export function SyncedChartWorkspace({
   initialBroker,
   onSymbolChange,
   onTimeframeChange,
+  isActive = true,
+  onTradePanelChange,
   compact = false,
 }: SyncedChartWorkspaceProps = {}) {
   const { activeAccount, accounts } = useAccount();
@@ -203,7 +222,9 @@ export function SyncedChartWorkspace({
   const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
   const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
   const [longShortLots, setLongShortLots] = useState(1);
-  const [showTradeHistory, setShowTradeHistory] = useState(() => readStoredShowTrades());
+  const [showTradeOverlay, setShowTradeOverlay] = useState(() => readStoredShowTrades());
+  const [showTradePanel, setShowTradePanel] = useState(() => readStoredShowTradePanel());
+  const [selectedTradeHistoryId, setSelectedTradeHistoryId] = useState<number | null>(null);
   const [timeGuides, setTimeGuides] = useState<TimeGuideSettings>(() =>
     readStoredTimeGuideSettings(CHART_TIME_GUIDES_KEY)
   );
@@ -222,9 +243,12 @@ export function SyncedChartWorkspace({
   const symbolMenuRef = useRef<HTMLDivElement>(null);
   const timeframeButtonRef = useRef<HTMLButtonElement>(null);
   const timeframeMenuRef = useRef<HTMLDivElement>(null);
+  const tradesButtonRef = useRef<HTMLButtonElement>(null);
+  const tradesMenuRef = useRef<HTMLDivElement>(null);
   const [chartAreaHeight, setChartAreaHeight] = useState(520);
   const [compactDrawOpen, setCompactDrawOpen] = useState(false);
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
+  const [tradesMenuOpen, setTradesMenuOpen] = useState(false);
   const [timeframeRestoreAnchor, setTimeframeRestoreAnchor] = useState<{
     centerTimestamp: number | null;
     windowDays: number;
@@ -260,8 +284,19 @@ export function SyncedChartWorkspace({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(CHART_SHOW_TRADES_KEY, String(showTradeHistory));
-  }, [showTradeHistory]);
+    window.localStorage.setItem(CHART_SHOW_TRADES_OVERLAY_KEY, String(showTradeOverlay));
+  }, [showTradeOverlay]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CHART_SHOW_TRADES_PANEL_KEY, String(showTradePanel));
+  }, [showTradePanel]);
+
+  useEffect(() => {
+    if (!showTradeOverlay && !showTradePanel) {
+      setSelectedTradeHistoryId(null);
+    }
+  }, [showTradeOverlay, showTradePanel]);
 
   // Report initial values to parent so tab labels are correct on mount
   useEffect(() => {
@@ -317,6 +352,28 @@ export function SyncedChartWorkspace({
       window.removeEventListener("keydown", handleKey);
     };
   }, [timeframeMenuOpen]);
+
+  useEffect(() => {
+    if (!tradesMenuOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        !tradesMenuRef.current?.contains(target) &&
+        !tradesButtonRef.current?.contains(target)
+      ) {
+        setTradesMenuOpen(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setTradesMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [tradesMenuOpen]);
 
   useEffect(() => {
     if (!isExpanded) return;
@@ -470,9 +527,10 @@ export function SyncedChartWorkspace({
 
   const chartEnabled = Boolean(selection && chartTrade);
   const requestedWindowDays = Math.max(windowDays, timeframeRestoreAnchor.windowDays);
+  const tradeFeaturesEnabled = showTradeOverlay || showTradePanel;
   const tradeHistoryQuery = useMemo(
-    () => (showTradeHistory && selection ? { symbol: selection.symbol } : null),
-    [selection, showTradeHistory]
+    () => (tradeFeaturesEnabled && selection ? { symbol: selection.symbol } : null),
+    [selection, tradeFeaturesEnabled]
   );
   const { trades: symbolTrades } = useTradesByQuery(tradeHistoryQuery);
 
@@ -493,23 +551,18 @@ export function SyncedChartWorkspace({
       })),
     [data]
   );
-  const displayTradeHistory = useMemo(() => {
-    if (!showTradeHistory || !selection || brokerAccountNumbers.length === 0 || displayData.length === 0) {
+  const displayDataRef = useRef(displayData);
+  const brokerSymbolTrades = useMemo(() => {
+    if (!tradeFeaturesEnabled || !selection || brokerAccountNumbers.length === 0) {
       return [];
     }
 
-    const accountNumberSet = new Set(brokerAccountNumbers);
-    const visibleStart = displayData[0]?.timestamp ?? 0;
-    const visibleEnd = displayData[displayData.length - 1]?.timestamp ?? 0;
-
     return symbolTrades
-      .filter((trade) => trade.symbol === selection.symbol && accountNumberSet.has(trade.accountId))
       .filter((trade) => {
-        const openTime = new Date(trade.openTime).getTime() + SYNCED_CHART_DISPLAY_OFFSET_MS;
-        const closeTime = trade.closeTime
-          ? new Date(trade.closeTime).getTime() + SYNCED_CHART_DISPLAY_OFFSET_MS
-          : openTime;
-        return closeTime >= visibleStart && openTime <= visibleEnd;
+        return (
+          trade.symbol === selection.symbol &&
+          brokerAccountNumbers.includes(trade.accountId)
+        );
       })
       .map((trade) => ({
         ...trade,
@@ -519,7 +572,38 @@ export function SyncedChartWorkspace({
           : trade.closeTime,
       }))
       .sort((left, right) => new Date(left.openTime).getTime() - new Date(right.openTime).getTime());
-  }, [brokerAccountNumbers, displayData, selection, showTradeHistory, symbolTrades]);
+  }, [brokerAccountNumbers, selection, symbolTrades, tradeFeaturesEnabled]);
+
+  const displayTradeHistory = useMemo(() => {
+    if (!showTradeOverlay || brokerSymbolTrades.length === 0 || displayData.length === 0) {
+      return [];
+    }
+
+    const visibleStart = displayData[0]?.timestamp ?? 0;
+    const visibleEnd = displayData[displayData.length - 1]?.timestamp ?? 0;
+
+    return brokerSymbolTrades.filter((trade) => {
+      const openTime = new Date(trade.openTime).getTime();
+      const closeTime = trade.closeTime
+        ? new Date(trade.closeTime).getTime()
+        : openTime;
+      return closeTime >= visibleStart && openTime <= visibleEnd;
+    });
+  }, [brokerSymbolTrades, displayData, showTradeOverlay]);
+
+  useEffect(() => {
+    displayDataRef.current = displayData;
+  }, [displayData]);
+
+  useEffect(() => {
+    if (
+      selectedTradeHistoryId == null ||
+      brokerSymbolTrades.some((trade) => trade.id === selectedTradeHistoryId)
+    ) {
+      return;
+    }
+    setSelectedTradeHistoryId(null);
+  }, [brokerSymbolTrades, selectedTradeHistoryId]);
 
   // Restore drawings and viewport after timeframe data loads
   useEffect(() => {
@@ -595,6 +679,77 @@ export function SyncedChartWorkspace({
     [data.length, displayData.length, fetchNext, fetchPrevious]
   );
 
+  const handleTradeHistorySelect = useCallback(
+    (trade: Trade) => {
+      setSelectedTradeHistoryId(trade.id ?? null);
+
+      const openTime = new Date(trade.openTime).getTime();
+      const closeTime = trade.closeTime ? new Date(trade.closeTime).getTime() : openTime;
+      const centerTimestamp = Math.round((openTime + closeTime) / 2);
+
+      const currentDisplayData = displayDataRef.current;
+      const loadedStart = currentDisplayData[0]?.timestamp ?? 0;
+      const loadedEnd = currentDisplayData[currentDisplayData.length - 1]?.timestamp ?? 0;
+      if (
+        currentDisplayData.length > 0 &&
+        centerTimestamp >= loadedStart &&
+        centerTimestamp <= loadedEnd
+      ) {
+        chartRef.current?.scrollToTimestamp(centerTimestamp);
+        return;
+      }
+
+      const drawings = chartRef.current?.exportAllDrawings() ?? [];
+      pendingRestoreRef.current = {
+        drawings,
+        centerTimestamp,
+      };
+      setTimeframeRestoreAnchor({
+        centerTimestamp,
+        windowDays: getDrawingWindowDays(centerTimestamp, drawings),
+      });
+    },
+    []
+  );
+
+  const handleTradeHistoryPanelClose = useCallback(() => {
+    setShowTradePanel(false);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!onTradePanelChange) return;
+    if (!isActive || !showTradePanel) {
+      onTradePanelChange(null);
+      return;
+    }
+
+    onTradePanelChange({
+      symbol: selection?.symbol ?? null,
+      broker: selection?.broker ?? null,
+      trades: brokerSymbolTrades,
+      selectedTradeId: selectedTradeHistoryId,
+      onSelectTrade: handleTradeHistorySelect,
+      onClose: handleTradeHistoryPanelClose,
+    });
+  }, [
+    brokerSymbolTrades,
+    handleTradeHistoryPanelClose,
+    handleTradeHistorySelect,
+    isActive,
+    onTradePanelChange,
+    selectedTradeHistoryId,
+    selection?.broker,
+    selection?.symbol,
+    showTradePanel,
+  ]);
+
+  useEffect(() => {
+    if (!onTradePanelChange) return;
+    return () => {
+      onTradePanelChange(null);
+    };
+  }, [onTradePanelChange]);
+
   useEffect(() => {
     fetchingPrevRef.current = false;
     fetchingNextRef.current = false;
@@ -631,7 +786,10 @@ export function SyncedChartWorkspace({
         <button
           ref={symbolButtonRef}
           type="button"
-          onClick={() => setSymbolMenuOpen((open) => !open)}
+          onClick={() => {
+            setSymbolMenuOpen((open) => !open);
+            setTradesMenuOpen(false);
+          }}
           disabled={!hasSymbols}
           className="flex h-7 items-center gap-2 rounded border border-border bg-background px-2 text-xs font-medium text-foreground outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -702,7 +860,10 @@ export function SyncedChartWorkspace({
         <button
           ref={timeframeButtonRef}
           type="button"
-          onClick={() => setTimeframeMenuOpen((open) => !open)}
+          onClick={() => {
+            setTimeframeMenuOpen((open) => !open);
+            setTradesMenuOpen(false);
+          }}
           disabled={!selection}
           className="flex h-7 items-center gap-2 rounded border border-border bg-background px-2 text-xs font-medium text-foreground outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -759,23 +920,52 @@ export function SyncedChartWorkspace({
         disabled={!selection}
       />
 
-      <label
-        className={`flex h-7 items-center gap-1.5 rounded border border-border px-2 text-[11px] transition-colors ${
-          showTradeHistory
-            ? "bg-primary/10 text-primary"
-            : "text-muted-foreground hover:bg-muted"
-        } ${!selection ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
-      >
-        <input
-          type="checkbox"
-          checked={showTradeHistory}
-          onChange={(event) => setShowTradeHistory(event.target.checked)}
+      <div className="relative">
+        <button
+          ref={tradesButtonRef}
+          type="button"
+          onClick={() => {
+            setTradesMenuOpen((open) => !open);
+            setSymbolMenuOpen(false);
+            setTimeframeMenuOpen(false);
+          }}
           disabled={!selection}
-          className="h-3.5 w-3.5 rounded border-border accent-primary"
-          aria-label="Show trades on chart"
-        />
-        <span className="font-medium">Trades</span>
-      </label>
+          className={`flex h-7 items-center gap-1.5 rounded border border-border px-2 text-[11px] transition-colors ${
+            showTradeOverlay || showTradePanel
+              ? "bg-primary/10 text-primary"
+              : "text-muted-foreground hover:bg-muted"
+          } disabled:cursor-not-allowed disabled:opacity-50`}
+        >
+          <span className="font-medium">Trades</span>
+          <ChevronDown className="h-3 w-3" />
+        </button>
+
+        {tradesMenuOpen ? (
+          <div
+            ref={tradesMenuRef}
+            className="absolute left-0 top-full z-50 mt-1 min-w-[170px] rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-xl"
+          >
+            <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-xs transition-colors hover:bg-muted">
+              <input
+                type="checkbox"
+                checked={showTradeOverlay}
+                onChange={(event) => setShowTradeOverlay(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-border accent-primary"
+              />
+              <span>On chart</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-xs transition-colors hover:bg-muted">
+              <input
+                type="checkbox"
+                checked={showTradePanel}
+                onChange={(event) => setShowTradePanel(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-border accent-primary"
+              />
+              <span>Sidebar</span>
+            </label>
+          </div>
+        ) : null}
+      </div>
 
       {!compact ? (
         <div className="flex flex-wrap items-center gap-2">
