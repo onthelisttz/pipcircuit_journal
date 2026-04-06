@@ -736,12 +736,14 @@ export function SyncedChartWorkspace({
             return (
               <>
                 <div
-                  className={`flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-opacity ${
-                    showDrawControls ? "opacity-100" : "pointer-events-none opacity-0"
+                  className={`h-7 items-center gap-1.5 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${
+                    showDrawControls
+                      ? "flex opacity-100"
+                      : "hidden pointer-events-none opacity-0 sm:flex"
                   }`}
                   aria-hidden={!showDrawControls}
                 >
-                  <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Draw color
                   </span>
                   <input
@@ -749,7 +751,7 @@ export function SyncedChartWorkspace({
                     aria-label="Rectangle fill color"
                     value={rectangleFillColor}
                     onChange={(event) => setRectangleFillColor(event.target.value)}
-                    className="h-5 w-5 cursor-pointer rounded border border-border bg-transparent p-0"
+                    className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0"
                   />
                   <input
                     type="range"
@@ -759,16 +761,18 @@ export function SyncedChartWorkspace({
                     step={0.05}
                     value={rectangleFillOpacity}
                     onChange={(event) => setRectangleFillOpacity(Number(event.target.value))}
-                    className="h-2 w-20 accent-foreground"
+                    className="h-1.5 w-14 accent-foreground"
                   />
                 </div>
                 <div
-                  className={`flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-opacity ${
-                    showLotsControls ? "opacity-100" : "pointer-events-none opacity-0"
+                  className={`h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${
+                    showLotsControls
+                      ? "flex opacity-100"
+                      : "hidden pointer-events-none opacity-0 sm:flex"
                   }`}
                   aria-hidden={!showLotsControls}
                 >
-                  <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Lots
                   </span>
                   <input
@@ -778,7 +782,7 @@ export function SyncedChartWorkspace({
                     step={0.01}
                     value={Number.isFinite(longShortLots) ? longShortLots : 1}
                     onChange={(event) => setLongShortLots(Number(event.target.value))}
-                    className="h-6 w-20 rounded border border-border bg-background px-2 text-[11px] text-foreground"
+                    className="h-5 w-14 rounded border border-border bg-background px-1.5 text-[10px] text-foreground"
                   />
                 </div>
               </>
@@ -881,7 +885,7 @@ export function SyncedChartWorkspace({
       })()}
 
       {!compact ? (
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2 max-[480px]:ml-0 max-[480px]:w-full max-[480px]:flex-wrap max-[480px]:pt-1">
           <button
             type="button"
             onClick={() => setIsExpanded((prev) => !prev)}

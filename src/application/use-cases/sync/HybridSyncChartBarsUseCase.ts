@@ -326,13 +326,29 @@ export class HybridSyncChartBarsUseCase {
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : String(error);
+          const chunkError = `Chunk ${chunk + 1} failed: ${errorMsg}`;
           console.error(`[HybridSync] Failed to sync chunk ${chunk + 1}/${totalChunks}:`, error);
-          
-          await this.progressRepo.updateProgress(broker, symbol, {
-            error: `Chunk ${chunk + 1} failed: ${errorMsg}`,
-          });
 
-          chunksProcessed++;
+          await this.progressRepo.updateStatus(
+            broker,
+            symbol,
+            "failed" as SymbolSyncStatus,
+            chunkError
+          );
+
+          const failedProgress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
+          if (failedProgress) {
+            progressEventEmitter.emit(failedProgress);
+          }
+
+          return {
+            success: false,
+            totalBars,
+            barsSynced,
+            chunksProcessed,
+            source,
+            error: chunkError,
+          };
         }
       }
 

@@ -65,6 +65,18 @@ export function ChartDataSyncSection() {
 
   const { accounts } = useAccount();
   const maxRefetchDateTime = toDateTimeLocalValue(new Date());
+  const ensureSyncSucceeded = useCallback(
+    (
+      result: Awaited<ReturnType<HybridSyncChartBarsUseCase["execute"]>>,
+      fallbackMessage: string
+    ) => {
+      if (!result.success) {
+        throw new Error(result.error ?? fallbackMessage);
+      }
+      return result;
+    },
+    []
+  );
 
   // Group symbols by broker
   const brokersMap = new Map<string, SymbolSyncProgress[]>();
@@ -145,45 +157,38 @@ export function ChartDataSyncSection() {
               : now;
           }
 
-          
+          // Calculate timeout based on date range (allow 1 minute per month of data)
+          const monthsDiff = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+          const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
 
-          
-          
-          try {
-            // Calculate timeout based on date range (allow 1 minute per month of data)
-            const monthsDiff = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
-            const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
+          const result = await Promise.race([
+            syncUseCase.execute({
+              userId: user.id,
+              broker,
+              symbol: symbolProgress.symbol,
+              fromDate,
+              toDate,
+              accessToken: token.accessToken,
+              accountNumber,
+              shouldCancel: () => cancelRequestedRef.current,
+            }),
+            new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>((_, reject) =>
+              setTimeout(
+                () => reject(new Error(`Sync timeout after ${Math.round(timeoutMs / 1000)} seconds`)),
+                timeoutMs
+              )
+            ),
+          ]);
 
-            await Promise.race([
-              syncUseCase.execute({
-                userId: user.id,
-                broker,
-                symbol: symbolProgress.symbol,
-                fromDate,
-                toDate,
-                accessToken: token.accessToken,
-                accountNumber,
-                shouldCancel: () => cancelRequestedRef.current,
-              }),
-              new Promise((_, reject) =>
-                setTimeout(
-                  () => reject(new Error(`Sync timeout after ${Math.round(timeoutMs / 1000)} seconds`)),
-                  timeoutMs
-                )
-              ),
-            ]) as Awaited<ReturnType<typeof syncUseCase.execute>>;
+          ensureSyncSucceeded(result, `Failed to sync ${symbolProgress.symbol}`);
 
-            if (cancelRequestedRef.current) {
-              break;
-            }
-          } catch (syncError) {
-            console.error(`[ChartDataSync] Sync error for ${symbolProgress.symbol}:`, syncError);
-            console.error(`[ChartDataSync] Error stack:`, syncError instanceof Error ? syncError.stack : 'No stack');
-            // Don't re-throw - let it be handled by outer catch
+          if (cancelRequestedRef.current) {
+            break;
           }
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           console.error(`Failed to sync ${symbolProgress.symbol}:`, errorMsg);
+          throw new Error(`Failed to sync ${symbolProgress.symbol}: ${errorMsg}`);
         } finally {
           setSyncingSymbols((prev) => {
             const next = new Set(prev);
@@ -210,7 +215,7 @@ export function ChartDataSyncSection() {
         return next;
       });
     }
-  }, [user?.id, accounts, getBrokerProgress, progressRepo, refresh]);
+  }, [user?.id, accounts, getBrokerProgress, progressRepo, refresh, ensureSyncSucceeded]);
 
   const handleOpenRefetchRange = useCallback((progress: SymbolSyncProgress) => {
     const availableEnd = progress.lastBarDate ? new Date(progress.lastBarDate) : new Date();
@@ -428,7 +433,7 @@ export function ChartDataSyncSection() {
       const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
       
       
-      await Promise.race([
+      const result = await Promise.race([
         syncUseCase.execute({
           userId: user.id,
           broker,
@@ -439,12 +444,12 @@ export function ChartDataSyncSection() {
           accountNumber,
           shouldCancel: () => cancelRequestedRef.current,
         }),
-        new Promise((_, reject) => 
+        new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>((_, reject) => 
           setTimeout(() => reject(new Error(`Sync timeout after ${Math.round(timeoutMs/1000)} seconds`)), timeoutMs)
         )
-      ]) as Awaited<ReturnType<typeof syncUseCase.execute>>;
+      ]);
 
-      
+      ensureSyncSucceeded(result, `Failed to sync ${symbol}`);
 
       await refresh();
     } catch (err) {
@@ -459,7 +464,7 @@ export function ChartDataSyncSection() {
         return next;
       });
     }
-  }, [user?.id, accounts, progressRepo, refresh]);
+  }, [user?.id, accounts, progressRepo, refresh, ensureSyncSucceeded]);
 
   const handleRetryFailed = useCallback(async (broker: string) => {
     if (!user?.id) {
@@ -521,7 +526,7 @@ export function ChartDataSyncSection() {
             ? new Date(symbolProgress.lastBarDate)
             : new Date();
 
-          await syncUseCase.execute({
+          const result = await syncUseCase.execute({
             userId: user.id,
             broker,
             symbol: symbolProgress.symbol,
@@ -530,9 +535,11 @@ export function ChartDataSyncSection() {
             accessToken: token.accessToken,
             accountNumber,
           });
+          ensureSyncSucceeded(result, `Failed to retry ${symbolProgress.symbol}`);
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           console.error(`Failed to retry ${symbolProgress.symbol}:`, errorMsg);
+          throw new Error(`Failed to retry ${symbolProgress.symbol}: ${errorMsg}`);
         } finally {
           setSyncingSymbols((prev) => {
             const next = new Set(prev);
@@ -554,7 +561,7 @@ export function ChartDataSyncSection() {
         return next;
       });
     }
-  }, [user?.id, accounts, getBrokerProgress, progressRepo, refresh]);
+  }, [user?.id, accounts, getBrokerProgress, progressRepo, refresh, ensureSyncSucceeded]);
 
   const handleDeleteBarsClick = useCallback((broker: string, symbol: string) => {
     setDeleteConfirm({ broker, symbol });
@@ -686,7 +693,7 @@ export function ChartDataSyncSection() {
       const monthsDiff = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
       const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
       
-      await Promise.race([
+      const result = await Promise.race([
         syncUseCase.execute({
           userId: user.id,
           broker,
@@ -696,12 +703,12 @@ export function ChartDataSyncSection() {
           accessToken: token.accessToken,
           accountNumber,
         }),
-        new Promise((_, reject) => 
+        new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>((_, reject) => 
           setTimeout(() => reject(new Error(`Sync timeout after ${Math.round(timeoutMs/1000)} seconds`)), timeoutMs)
         )
-      ]) as Awaited<ReturnType<typeof syncUseCase.execute>>;
+      ]);
 
-      
+      ensureSyncSucceeded(result, `Failed to continue sync for ${symbol}`);
       await refresh();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -714,7 +721,7 @@ export function ChartDataSyncSection() {
         return next;
       });
     }
-  }, [user?.id, accounts, progressRepo, refresh]);
+  }, [user?.id, accounts, progressRepo, refresh, ensureSyncSucceeded]);
 
   const handleRefresh = useCallback(async () => {
     setIsLoading(true);

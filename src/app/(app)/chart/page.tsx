@@ -337,7 +337,7 @@ export default function ChartPage() {
         <div className="ml-auto min-w-0 basis-full md:basis-auto">
           <p className="mt-1 text-sm text-muted-foreground md:mt-0 md:text-right">
             {mode === "synced"
-              ? "One workspace for both your synced journal chart and the MT5 history viewer."
+              ? "workspace"
               : historyAvailabilityText ?? "Loading MT5 history availability..."}
           </p>
         </div>

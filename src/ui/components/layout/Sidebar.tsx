@@ -6,6 +6,7 @@ import {
     LayoutDashboard,
     LineChart,
     Eye,
+    EyeOff,
     Tag,
     Users,
     Settings,
@@ -62,6 +63,8 @@ interface SidebarProps {
     className?: string;
     forceCollapsed?: boolean;
     hideCollapseToggle?: boolean;
+    isHeaderVisible?: boolean;
+    onHeaderVisibilityToggle?: () => void;
     onNavigate?: () => void;
 }
 
@@ -69,6 +72,8 @@ export function Sidebar({
     className,
     forceCollapsed,
     hideCollapseToggle = false,
+    isHeaderVisible = true,
+    onHeaderVisibilityToggle,
     onNavigate,
 }: SidebarProps) {
     const pathname = usePathname();
@@ -136,23 +141,47 @@ export function Sidebar({
             </nav>
 
             {/* Collapse Toggle */}
-            {!hideCollapseToggle && forceCollapsed === undefined && (
+            {(onHeaderVisibilityToggle || (!hideCollapseToggle && forceCollapsed === undefined)) && (
                 <div className="p-2 border-t border-sidebar-border">
-                    <button
-                        onClick={() => setCollapsed(!collapsed)}
-                        className="
-                mx-auto flex h-8 w-8 items-center justify-center rounded-lg
+                    <div className={`flex items-center ${isCollapsed ? "flex-col gap-2" : "justify-between gap-2"}`}>
+                        {onHeaderVisibilityToggle && (
+                            <button
+                                onClick={onHeaderVisibilityToggle}
+                                className="
+                flex h-8 w-8 items-center justify-center rounded-lg
                 text-sidebar-foreground hover:bg-sidebar-accent/50
                 transition-colors duration-150
               "
-                        aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                    >
-                        {isCollapsed ? (
-                            <ChevronRight className="w-5 h-5" />
-                        ) : (
-                            <ChevronLeft className="w-5 h-5" />
+                                aria-label={isHeaderVisible ? "Hide top bar" : "Show top bar"}
+                                title={isHeaderVisible ? "Hide top bar" : "Show top bar"}
+                            >
+                                {isHeaderVisible ? (
+                                    <EyeOff className="w-5 h-5" />
+                                ) : (
+                                    <Eye className="w-5 h-5" />
+                                )}
+                            </button>
                         )}
-                    </button>
+
+                        {!hideCollapseToggle && forceCollapsed === undefined && (
+                            <button
+                                onClick={() => setCollapsed(!collapsed)}
+                                className="
+                flex h-8 w-8 items-center justify-center rounded-lg
+                text-sidebar-foreground hover:bg-sidebar-accent/50
+                transition-colors duration-150
+              "
+                                aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                                title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                            >
+                                {isCollapsed ? (
+                                    <ChevronRight className="w-5 h-5" />
+                                ) : (
+                                    <ChevronLeft className="w-5 h-5" />
+                                )}
+                            </button>
+                        )}
+                    </div>
                 </div>
             )}
         </aside>
