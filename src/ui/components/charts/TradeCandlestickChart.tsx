@@ -1,5 +1,4 @@
 "use client";
-/* eslint-disable react-hooks/set-state-in-effect */
 
 import {
     createChart,
@@ -17,7 +16,7 @@ import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHand
 import type { ChartBar, ChartTimeframe, Trade } from "@domain/entities";
 import { Direction } from "@domain/enums";
 import { estimateGrossProfit, volumeToLots, priceDiffToPips } from "@lib/pnl-estimate";
-import { RiskRewardPlugin } from "./plugins/RiskRewardPlugin";
+import { RiskRewardPlugin, type RiskRewardLabels } from "./plugins/RiskRewardPlugin";
 import { createLineToolsPlugin } from "lightweight-charts-line-tools-core";
 import { LineToolRectangle } from "lightweight-charts-line-tools-rectangle";
 import { registerLinesPlugin } from "lightweight-charts-line-tools-lines";
@@ -86,6 +85,143 @@ function formatInChartTimezone(
     }).format(date);
 }
 
+type TradeOverlayData = {
+    entryPrice: number;
+    rewardPrice: number;
+    scaledRiskPrice: number;
+    startTs: Time;
+    endTs: Time | null;
+    isBuy: boolean;
+    useMae: boolean;
+    labels: RiskRewardLabels;
+};
+
+function buildTradeOverlay(
+    trade: Trade,
+    data: ChartBar[],
+    showLabels: boolean
+): TradeOverlayData | null {
+    if (data.length === 0) return null;
+
+    const isBuy = trade.direction === Direction.Buy;
+    const symbol = trade.symbol ?? "";
+    const rawEntry = trade.entryPrice ?? trade.openPrice;
+    const rawReward = trade.closePrice ?? trade.takeProfit;
+    const rawStopLoss = trade.stopLoss;
+
+    if (
+        rawEntry == null ||
+        rawReward == null ||
+        !Number.isFinite(rawEntry) ||
+        !Number.isFinite(rawReward)
+    ) {
+        return null;
+    }
+
+    let entryPrice = rawEntry;
+    let rewardPrice = rawReward;
+    let stopLoss = rawStopLoss;
+
+    const openTs = new Date(trade.openTime).getTime();
+    const closeTs = trade.closeTime ? new Date(trade.closeTime).getTime() : null;
+    const dataEndTs = data.length > 0 ? Math.max(...data.map((bar) => bar.timestamp)) : openTs;
+    const endTs = closeTs ?? dataEndTs;
+    const tradeBars = data.filter((bar) => bar.timestamp >= openTs && bar.timestamp <= endTs);
+    const allBarsFromOpen = data.filter((bar) => bar.timestamp >= openTs);
+
+    let rawMaePrice: number | null = null;
+    const barsForMae = tradeBars.length > 0 ? tradeBars : allBarsFromOpen;
+    if (barsForMae.length > 0) {
+        rawMaePrice = isBuy
+            ? Math.min(...barsForMae.map((bar) => bar.low))
+            : Math.max(...barsForMae.map((bar) => bar.high));
+    }
+
+    const actualProfit = trade.netProfit ?? trade.grossProfit;
+    const isClosedTrade = trade.closeTime != null && actualProfit != null && Number.isFinite(actualProfit);
+    const isWinningTrade = isClosedTrade && (actualProfit ?? 0) > 0;
+    const hasExplicitSL = stopLoss != null && Number.isFinite(stopLoss);
+    const hasMae = rawMaePrice != null && Number.isFinite(rawMaePrice);
+    const useMae = hasMae && !hasExplicitSL && (!isClosedTrade || isWinningTrade);
+    const showRiskZone = hasExplicitSL || useMae;
+
+    const avgPrice = data.reduce((sum, bar) => sum + bar.close, 0) / data.length;
+    if (entryPrice && avgPrice > 0) {
+        const ratio = avgPrice / entryPrice;
+        const logDiff = Math.log10(ratio);
+        const magnitude = Math.round(logDiff);
+
+        if (Math.abs(magnitude) >= 1) {
+            const multiplier = Math.pow(10, magnitude);
+            entryPrice = entryPrice * multiplier;
+            rewardPrice = rewardPrice * multiplier;
+            if (stopLoss != null) stopLoss = stopLoss * multiplier;
+        }
+    }
+
+    const scaledRiskPrice =
+        hasExplicitSL && stopLoss != null
+            ? stopLoss
+            : useMae && rawMaePrice != null
+                ? rawMaePrice
+                : entryPrice;
+
+    const lots = (trade.lots ?? volumeToLots(trade.volume ?? 0, symbol)) || 0.01;
+    const direction = isBuy ? "Buy" : "Sell";
+    const rawRiskPrice = hasExplicitSL
+        ? rawStopLoss
+        : useMae
+            ? rawMaePrice
+            : null;
+
+    let riskLabel: string | undefined;
+    if (showLabels && showRiskZone && rawRiskPrice != null) {
+        const riskDollar = estimateGrossProfit(rawEntry, rawRiskPrice, lots, direction, symbol);
+        if (Number.isFinite(riskDollar) && Math.abs(riskDollar) < 1_000_000) {
+            riskLabel = `${riskDollar >= 0 ? "+" : ""}$${riskDollar.toFixed(2)}`;
+        }
+    }
+
+    let rewardLabel: string | undefined;
+    if (showLabels && actualProfit != null && Number.isFinite(actualProfit) && Math.abs(actualProfit) < 1_000_000) {
+        rewardLabel = `${actualProfit >= 0 ? "+" : ""}$${actualProfit.toFixed(2)}`;
+    } else if (showLabels) {
+        const rewardDollar = estimateGrossProfit(rawEntry, rawReward, lots, direction, symbol);
+        if (Number.isFinite(rewardDollar) && Math.abs(rewardDollar) < 1_000_000) {
+            rewardLabel = `${rewardDollar >= 0 ? "+" : ""}$${rewardDollar.toFixed(2)}`;
+        }
+    }
+
+    const profitLabel =
+        showLabels && actualProfit != null && Number.isFinite(actualProfit)
+            ? `${actualProfit >= 0 ? "+" : ""}$${actualProfit.toFixed(2)}`
+            : undefined;
+
+    const findClosestTime = (targetDate: Date | string | number): Time => {
+        const targetTs = new Date(targetDate).getTime();
+        const closest = data.reduce((prev, curr) =>
+            Math.abs(curr.timestamp - targetTs) < Math.abs(prev.timestamp - targetTs) ? curr : prev
+        );
+        return (closest.timestamp / 1000) as Time;
+    };
+
+    return {
+        entryPrice,
+        rewardPrice,
+        scaledRiskPrice,
+        startTs: findClosestTime(trade.openTime),
+        endTs: trade.closeTime ? findClosestTime(trade.closeTime) : null,
+        isBuy,
+        useMae,
+        labels: {
+            riskLabel,
+            rewardLabel,
+            profitLabel,
+            isProfit: (trade.netProfit ?? trade.grossProfit ?? 0) >= 0,
+        },
+    };
+}
+
 function formatCrosshairDateTime(time: unknown): string {
     const date = timeToDate(time);
     if (!date) {
@@ -137,6 +273,8 @@ export interface TradeCandlestickChartProps {
     timeGuides?: TimeGuideSettings;
     /** Trade for context visualization */
     trade?: Trade;
+    /** Additional trades to render as history overlays */
+    tradeHistory?: Trade[];
     /** Height of the chart container */
     height?: number;
     /** Show entry marker on chart */
@@ -201,6 +339,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     timeframe,
     timeGuides,
     trade,
+    tradeHistory,
     height = 400,
     onVisibleRangeChange,
     isLoading = false,
@@ -245,6 +384,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const suppressVisibleRangeUntilRef = useRef(0);
 
     const riskRewardPluginRef = useRef<RiskRewardPlugin | null>(null);
+    const tradeHistoryPluginsRef = useRef<RiskRewardPlugin[]>([]);
     const lineToolsRef = useRef<LineToolsApi | null>(null);
     const lastSelectedDrawingRef = useRef<{ id: string; toolType: DrawingToolType } | null>(null);
     const drawingLineColorRef = useRef<string | undefined>(drawingLineColor);
@@ -268,6 +408,22 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         ctrlOrMeta: boolean;
         selectedIds: string[];
     } | null>(null);
+    const clearTradeHistoryPlugins = useCallback((series: ISeriesApi<"Candlestick"> | null = seriesRef.current) => {
+        if (!series || tradeHistoryPluginsRef.current.length === 0) {
+            tradeHistoryPluginsRef.current = [];
+            return;
+        }
+
+        for (const plugin of tradeHistoryPluginsRef.current) {
+            try {
+                series.detachPrimitive(plugin);
+            } catch {
+                // Ignore teardown errors during rapid chart updates/unmounts.
+            }
+        }
+
+        tradeHistoryPluginsRef.current = [];
+    }, []);
 
     useEffect(() => {
         drawingLineColorRef.current = drawingLineColor;
@@ -1275,6 +1431,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         chart.timeScale().subscribeVisibleLogicalRangeChange(handleVisibleRange);
 
         return () => {
+            clearTradeHistoryPlugins(seriesRef.current);
             lineToolsRef.current?.removeAllLineTools();
             lineToolsRef.current?.unsubscribeLineToolsAfterEdit?.(handleAfterEdit);
             lineToolsRef.current?.unsubscribeLineToolsDoubleClick?.(handleDoubleClick);
@@ -1295,6 +1452,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             stopLossLineRef.current = null;
             exitLineRef.current = null;
             riskRewardPluginRef.current = null;
+            tradeHistoryPluginsRef.current = [];
             chart.remove();
             chartRef.current = null;
             seriesRef.current = null;
@@ -1309,6 +1467,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         readDrawingToolById,
         syncSelectionByIds,
         updateLongShortText,
+        clearTradeHistoryPlugins,
     ]);
 
     useEffect(() => {
@@ -1740,6 +1899,50 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         }
         prevBarsRef.current = data;
     }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, dataUpdateMode, drawingTool, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, syncImportedDrawings, toCandlestickPoint, zoomOutMultiplier]);
+
+    useEffect(() => {
+        const series = seriesRef.current;
+        if (!series || !isChartReady || !tradeHistory || tradeHistory.length === 0 || data.length === 0) {
+            clearTradeHistoryPlugins(series);
+            return;
+        }
+
+        clearTradeHistoryPlugins(series);
+
+        const attachedPlugins = tradeHistory
+            .map((historyTrade) => buildTradeOverlay(historyTrade, data, true))
+            .filter((overlay): overlay is TradeOverlayData => overlay !== null)
+            .map((overlay) => {
+                const plugin = new RiskRewardPlugin(
+                    overlay.entryPrice,
+                    overlay.scaledRiskPrice,
+                    overlay.rewardPrice,
+                    overlay.startTs,
+                    overlay.endTs,
+                    overlay.isBuy,
+                    overlay.useMae,
+                    overlay.labels
+                );
+                series.attachPrimitive(plugin);
+                return plugin;
+            });
+
+        tradeHistoryPluginsRef.current = attachedPlugins;
+
+        return () => {
+            for (const plugin of attachedPlugins) {
+                try {
+                    series.detachPrimitive(plugin);
+                } catch {
+                    // Ignore detach errors when chart state changes rapidly.
+                }
+            }
+
+            if (tradeHistoryPluginsRef.current === attachedPlugins) {
+                tradeHistoryPluginsRef.current = [];
+            }
+        };
+    }, [clearTradeHistoryPlugins, data, isChartReady, tradeHistory]);
 
     // Manage R:R Visualization (Plugin + Price Lines) with Adaptive Scaling
     useEffect(() => {

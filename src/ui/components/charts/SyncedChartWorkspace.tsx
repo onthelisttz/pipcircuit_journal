@@ -21,6 +21,7 @@ import type { DrawingToolType, TradeCandlestickChartRef } from "@ui/components/c
 type DrawingToolExport = ReturnType<TradeCandlestickChartRef["exportAllDrawings"]>[number];
 import { useChartData } from "@ui/hooks/useChartData";
 import { useSyncProgress } from "@ui/hooks/useSyncProgress";
+import { useTradesByQuery } from "@ui/hooks/useTradesByQuery";
 import { useAccount } from "@ui/hooks/useAccount";
 import { DexieSymbolSyncProgressRepository } from "@infrastructure/db/dexie/repositories";
 import { TokenStorage } from "@infrastructure/auth";
@@ -34,6 +35,7 @@ import {
 const CHART_SELECTION_KEY = "chartSelection";
 const CHART_TIMEFRAME_KEY = "chartTimeframe";
 const CHART_TIME_GUIDES_KEY = "chartTimeGuides_synced";
+const CHART_SHOW_TRADES_KEY = "chartShowTrades_synced";
 const SYNCED_CHART_DISPLAY_OFFSET_MS = 3 * 60 * 60 * 1000;
 type ChartSelection = { broker: string; symbol: string };
 
@@ -74,6 +76,15 @@ function readStoredTimeframe(): ChartTimeframe {
     // ignore
   }
   return "M1";
+}
+
+function readStoredShowTrades(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(CHART_SHOW_TRADES_KEY) === "true";
+  } catch {
+    return false;
+  }
 }
 
 const PLACEHOLDER_TRADE: Trade = {
@@ -192,6 +203,7 @@ export function SyncedChartWorkspace({
   const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
   const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
   const [longShortLots, setLongShortLots] = useState(1);
+  const [showTradeHistory, setShowTradeHistory] = useState(() => readStoredShowTrades());
   const [timeGuides, setTimeGuides] = useState<TimeGuideSettings>(() =>
     readStoredTimeGuideSettings(CHART_TIME_GUIDES_KEY)
   );
@@ -245,6 +257,11 @@ export function SyncedChartWorkspace({
     if (typeof window === "undefined") return;
     window.localStorage.setItem(CHART_TIME_GUIDES_KEY, JSON.stringify(timeGuides));
   }, [timeGuides]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CHART_SHOW_TRADES_KEY, String(showTradeHistory));
+  }, [showTradeHistory]);
 
   // Report initial values to parent so tab labels are correct on mount
   useEffect(() => {
@@ -413,6 +430,15 @@ export function SyncedChartWorkspace({
       null
     );
   }, [accounts, activeAccount, selection]);
+  const brokerAccountNumbers = useMemo(() => {
+    if (!selection) return [];
+    const matches = accounts
+      .filter((account) => account.broker === selection.broker)
+      .map((account) => account.accountNumber);
+
+    if (matches.length > 0) return matches;
+    return accountForBroker?.accountNumber ? [accountForBroker.accountNumber] : [];
+  }, [accounts, accountForBroker, selection]);
 
   const chartTrade = useMemo<Trade | null>(() => {
     if (!selection) return null;
@@ -444,6 +470,11 @@ export function SyncedChartWorkspace({
 
   const chartEnabled = Boolean(selection && chartTrade);
   const requestedWindowDays = Math.max(windowDays, timeframeRestoreAnchor.windowDays);
+  const tradeHistoryQuery = useMemo(
+    () => (showTradeHistory && selection ? { symbol: selection.symbol } : null),
+    [selection, showTradeHistory]
+  );
+  const { trades: symbolTrades } = useTradesByQuery(tradeHistoryQuery);
 
   const { data, isLoading, error, refetch, fetchPrevious, fetchNext } = useChartData({
     trade: chartTrade ?? PLACEHOLDER_TRADE,
@@ -462,6 +493,33 @@ export function SyncedChartWorkspace({
       })),
     [data]
   );
+  const displayTradeHistory = useMemo(() => {
+    if (!showTradeHistory || !selection || brokerAccountNumbers.length === 0 || displayData.length === 0) {
+      return [];
+    }
+
+    const accountNumberSet = new Set(brokerAccountNumbers);
+    const visibleStart = displayData[0]?.timestamp ?? 0;
+    const visibleEnd = displayData[displayData.length - 1]?.timestamp ?? 0;
+
+    return symbolTrades
+      .filter((trade) => trade.symbol === selection.symbol && accountNumberSet.has(trade.accountId))
+      .filter((trade) => {
+        const openTime = new Date(trade.openTime).getTime() + SYNCED_CHART_DISPLAY_OFFSET_MS;
+        const closeTime = trade.closeTime
+          ? new Date(trade.closeTime).getTime() + SYNCED_CHART_DISPLAY_OFFSET_MS
+          : openTime;
+        return closeTime >= visibleStart && openTime <= visibleEnd;
+      })
+      .map((trade) => ({
+        ...trade,
+        openTime: new Date(new Date(trade.openTime).getTime() + SYNCED_CHART_DISPLAY_OFFSET_MS),
+        closeTime: trade.closeTime
+          ? new Date(new Date(trade.closeTime).getTime() + SYNCED_CHART_DISPLAY_OFFSET_MS)
+          : trade.closeTime,
+      }))
+      .sort((left, right) => new Date(left.openTime).getTime() - new Date(right.openTime).getTime());
+  }, [brokerAccountNumbers, displayData, selection, showTradeHistory, symbolTrades]);
 
   // Restore drawings and viewport after timeframe data loads
   useEffect(() => {
@@ -700,6 +758,24 @@ export function SyncedChartWorkspace({
         compact={compact}
         disabled={!selection}
       />
+
+      <label
+        className={`flex h-7 items-center gap-1.5 rounded border border-border px-2 text-[11px] transition-colors ${
+          showTradeHistory
+            ? "bg-primary/10 text-primary"
+            : "text-muted-foreground hover:bg-muted"
+        } ${!selection ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+      >
+        <input
+          type="checkbox"
+          checked={showTradeHistory}
+          onChange={(event) => setShowTradeHistory(event.target.checked)}
+          disabled={!selection}
+          className="h-3.5 w-3.5 rounded border-border accent-primary"
+          aria-label="Show trades on chart"
+        />
+        <span className="font-medium">Trades</span>
+      </label>
 
       {!compact ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -1010,6 +1086,7 @@ export function SyncedChartWorkspace({
           data={displayData}
           timeframe={timeframe}
           timeGuides={timeGuides}
+          tradeHistory={displayTradeHistory}
           clipTimeGuideOverlayToPane
           height={isExpanded ? expandedHeight : chartAreaHeight}
           isLoading={isLoading}
