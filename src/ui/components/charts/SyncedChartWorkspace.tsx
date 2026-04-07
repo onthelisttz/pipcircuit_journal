@@ -59,6 +59,7 @@ const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
 
 const TIMEFRAMES: ChartTimeframe[] = ["M1", "M5", "M15", "H1"];
 const EDGE_FETCH_THRESHOLD = 10;
+const FETCH_THROTTLE_MS = 160;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function readStoredSelection(): ChartSelection | null {
@@ -252,6 +253,8 @@ export function SyncedChartWorkspace({
   const lastNextFetchRef = useRef(0);
   const fetchingPrevRef = useRef(false);
   const fetchingNextRef = useRef(false);
+  const pendingPrevFetchRef = useRef(false);
+  const pendingNextFetchRef = useRef(false);
   const lastVisibleRangeRef = useRef<{ from: number; to: number } | null>(null);
   const chartRef = useRef<TradeCandlestickChartRef | null>(null);
   const chartAreaRef = useRef<HTMLDivElement>(null);
@@ -637,7 +640,7 @@ export function SyncedChartWorkspace({
   );
   const { trades: symbolTrades } = useTradesByQuery(tradeHistoryQuery);
 
-  const { data, isLoading, error, refetch, fetchPrevious, fetchNext } = useChartData({
+  const { data, dataUpdateMode, isLoading, error, refetch, fetchPrevious, fetchNext } = useChartData({
     trade: chartTrade ?? PLACEHOLDER_TRADE,
     timeframe,
     accessToken,
@@ -798,6 +801,34 @@ export function SyncedChartWorkspace({
     timeframe,
   ]);
 
+  const runQueuedPreviousFetch = useCallback(() => {
+    lastPrevFetchRef.current = Date.now();
+    fetchingPrevRef.current = true;
+    void fetchPrevious().finally(() => {
+      fetchingPrevRef.current = false;
+      window.setTimeout(() => {
+        if (pendingPrevFetchRef.current && !fetchingPrevRef.current) {
+          pendingPrevFetchRef.current = false;
+          runQueuedPreviousFetch();
+        }
+      }, 80);
+    });
+  }, [fetchPrevious]);
+
+  const runQueuedNextFetch = useCallback(() => {
+    lastNextFetchRef.current = Date.now();
+    fetchingNextRef.current = true;
+    void fetchNext().finally(() => {
+      fetchingNextRef.current = false;
+      window.setTimeout(() => {
+        if (pendingNextFetchRef.current && !fetchingNextRef.current) {
+          pendingNextFetchRef.current = false;
+          runQueuedNextFetch();
+        }
+      }, 80);
+    });
+  }, [fetchNext]);
+
   const handleVisibleRangeChange = useCallback(
     (from: number, to: number) => {
       if (data.length === 0) return;
@@ -830,29 +861,25 @@ export function SyncedChartWorkspace({
         }
       }
 
-      if (shouldFetchPrev && !fetchingPrevRef.current) {
+      if (shouldFetchPrev) {
         const now = Date.now();
-        if (now - lastPrevFetchRef.current >= 800) {
-          lastPrevFetchRef.current = now;
-          fetchingPrevRef.current = true;
-          void fetchPrevious().finally(() => {
-            fetchingPrevRef.current = false;
-          });
+        if (fetchingPrevRef.current) {
+          pendingPrevFetchRef.current = true;
+        } else if (now - lastPrevFetchRef.current >= FETCH_THROTTLE_MS) {
+          runQueuedPreviousFetch();
         }
       }
 
-      if (shouldFetchNext && !fetchingNextRef.current) {
+      if (shouldFetchNext) {
         const now = Date.now();
-        if (now - lastNextFetchRef.current >= 800) {
-          lastNextFetchRef.current = now;
-          fetchingNextRef.current = true;
-          void fetchNext().finally(() => {
-            fetchingNextRef.current = false;
-          });
+        if (fetchingNextRef.current) {
+          pendingNextFetchRef.current = true;
+        } else if (now - lastNextFetchRef.current >= FETCH_THROTTLE_MS) {
+          runQueuedNextFetch();
         }
       }
     },
-    [data.length, displayData.length, fetchNext, fetchPrevious]
+    [data.length, displayData.length, runQueuedNextFetch, runQueuedPreviousFetch]
   );
 
   const handleTradeHistorySelect = useCallback(
@@ -930,6 +957,8 @@ export function SyncedChartWorkspace({
   useEffect(() => {
     fetchingPrevRef.current = false;
     fetchingNextRef.current = false;
+    pendingPrevFetchRef.current = false;
+    pendingNextFetchRef.current = false;
     lastPrevFetchRef.current = 0;
     lastNextFetchRef.current = 0;
     lastVisibleRangeRef.current = null;
@@ -1561,6 +1590,7 @@ export function SyncedChartWorkspace({
           timeGuides={timeGuides}
           tradeHistory={displayTradeHistory}
           clipTimeGuideOverlayToPane
+          dataUpdateMode={dataUpdateMode}
           height={isExpanded ? expandedHeight : chartAreaHeight}
           isLoading={isLoading}
           drawingTool={drawingTool}

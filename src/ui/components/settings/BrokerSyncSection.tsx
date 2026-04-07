@@ -38,7 +38,7 @@ export function BrokerSyncSection({
   syncingSymbols = new Set(),
   deletingSymbols = new Set(),
 }: BrokerSyncSectionProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const completed = symbols.filter((s) => s.status === "completed").length;
   const syncing = symbols.filter((s) => s.status === "syncing").length;

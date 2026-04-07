@@ -24,6 +24,8 @@ export interface UseChartDataOptions {
 export interface UseChartDataResult {
     /** Chart bar data */
     data: ChartBar[];
+    /** How the latest data change should be applied by the chart */
+    dataUpdateMode: "replace" | "append" | "prepend";
     /** Loading state */
     isLoading: boolean;
     /** Error if any */
@@ -41,9 +43,17 @@ export interface UseChartDataResult {
     windowEnd: number;
 }
 
-// Memory cap for chart bars
-const MAX_BARS = 5000;
+const MAX_RENDERED_BARS: Record<ChartTimeframe, number> = {
+    M1: 15_000,
+    M5: 30_000,
+    M15: 50_000,
+    M30: 50_000,
+    H1: 80_000,
+    H4: 80_000,
+    D1: 100_000,
+};
 const DAY_MS = 24 * 60 * 60 * 1000;
+type ChartDataUpdateMode = "replace" | "append" | "prepend";
 
 function normalizeBars(bars: ChartBar[]): ChartBar[] {
     if (bars.length === 0) return [];
@@ -62,9 +72,34 @@ function normalizeBars(bars: ChartBar[]): ChartBar[] {
     return Array.from(byTimestamp.values()).sort((a, b) => a.timestamp - b.timestamp);
 }
 
-function capBars(bars: ChartBar[], mode: "earliest" | "recent"): ChartBar[] {
-    if (bars.length <= MAX_BARS) return bars;
-    return mode === "recent" ? bars.slice(-MAX_BARS) : bars.slice(0, MAX_BARS);
+function trimBarsForMode(
+    bars: ChartBar[],
+    mode: ChartDataUpdateMode,
+    timeframe: ChartTimeframe
+): { bars: ChartBar[]; updateMode: ChartDataUpdateMode } {
+    const maxBars = MAX_RENDERED_BARS[timeframe];
+    if (bars.length <= maxBars) {
+        return { bars, updateMode: mode };
+    }
+
+    if (mode === "append") {
+        return {
+            bars: bars.slice(bars.length - maxBars),
+            updateMode: "replace",
+        };
+    }
+
+    if (mode === "prepend") {
+        return {
+            bars: bars.slice(0, maxBars),
+            updateMode: "replace",
+        };
+    }
+
+    return {
+        bars: bars.slice(Math.max(0, bars.length - maxBars)),
+        updateMode: "replace",
+    };
 }
 
 /**
@@ -81,6 +116,7 @@ export function useChartData({
     broker,
 }: UseChartDataOptions): UseChartDataResult {
     const [data, setData] = useState<ChartBar[]>([]);
+    const [dataUpdateMode, setDataUpdateMode] = useState<ChartDataUpdateMode>("replace");
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<Error | null>(null);
     const [fromCache, setFromCache] = useState(false);
@@ -93,6 +129,7 @@ export function useChartData({
     useEffect(() => {
         activeSeriesKeyRef.current = currentSeriesKey;
         lazyFetchDirectionRef.current = null;
+        setDataUpdateMode("replace");
     }, [currentSeriesKey]);
 
     // Create use case with dependencies
@@ -119,16 +156,17 @@ export function useChartData({
             });
 
             const normalizedBars = normalizeBars(result.bars);
-            // On initial load, keep the most recent segment.
-            const cappedBars = capBars(normalizedBars, "recent");
+            const { bars: cappedBars } = trimBarsForMode(normalizedBars, "replace", timeframe);
 
             setData(cappedBars);
+            setDataUpdateMode("replace");
             setFromCache(result.fromCache);
             setWindowStart(cappedBars[0]?.timestamp ?? result.windowStart);
             setWindowEnd(cappedBars[cappedBars.length - 1]?.timestamp ?? result.windowEnd);
         } catch (err) {
             setError(err instanceof Error ? err : new Error("Failed to load chart data"));
             setData([]);
+            setDataUpdateMode("replace");
         } finally {
             setIsLoading(false);
         }
@@ -162,24 +200,22 @@ export function useChartData({
 
             const normalizedPreviousBars = normalizeBars(previousBars);
             if (normalizedPreviousBars.length > 0) {
+                let nextUpdateMode: ChartDataUpdateMode = "prepend";
                 setData((prev) => {
                     const earliest = prev[0]?.timestamp ?? Number.POSITIVE_INFINITY;
                     const olderBars = normalizedPreviousBars.filter((bar) => bar.timestamp < earliest);
                     if (olderBars.length === 0) return prev;
 
                     const merged = normalizeBars([...olderBars, ...prev]);
-                    if (merged.length <= MAX_BARS) {
-                        return merged;
-                    }
-
-                    // Keep earliest bars when paging left.
-                    const capped = capBars(merged, "earliest");
-                    const newEnd = capped[capped.length - 1]?.timestamp;
+                    const { bars: nextBars, updateMode } = trimBarsForMode(merged, "prepend", timeframe);
+                    nextUpdateMode = updateMode;
+                    const newEnd = nextBars[nextBars.length - 1]?.timestamp;
                     if (newEnd != null) {
                         setWindowEnd(newEnd);
                     }
-                    return capped;
+                    return nextBars;
                 });
+                setDataUpdateMode(nextUpdateMode);
             }
 
             // Always advance window start so history paging can move through empty gaps.
@@ -215,24 +251,22 @@ export function useChartData({
 
             const normalizedNextBars = normalizeBars(nextBars);
             if (normalizedNextBars.length > 0) {
+                let nextUpdateMode: ChartDataUpdateMode = "append";
                 setData((prev) => {
                     const latest = prev[prev.length - 1]?.timestamp ?? Number.NEGATIVE_INFINITY;
                     const newerBars = normalizedNextBars.filter((bar) => bar.timestamp > latest);
                     if (newerBars.length === 0) return prev;
 
                     const merged = normalizeBars([...prev, ...newerBars]);
-                    if (merged.length <= MAX_BARS) {
-                        return merged;
-                    }
-
-                    // Keep most recent bars when paging right.
-                    const capped = capBars(merged, "recent");
-                    const newStart = capped[0]?.timestamp;
+                    const { bars: nextBars, updateMode } = trimBarsForMode(merged, "append", timeframe);
+                    nextUpdateMode = updateMode;
+                    const newStart = nextBars[0]?.timestamp;
                     if (newStart != null) {
                         setWindowStart(newStart);
                     }
-                    return capped;
+                    return nextBars;
                 });
+                setDataUpdateMode(nextUpdateMode);
             }
 
             // Always advance window end so forward paging can move through empty gaps.
@@ -248,6 +282,7 @@ export function useChartData({
 
     return {
         data,
+        dataUpdateMode,
         isLoading,
         error,
         fromCache,

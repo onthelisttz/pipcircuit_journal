@@ -21,7 +21,7 @@ import { createLineToolsPlugin } from "lightweight-charts-line-tools-core";
 import { LineToolRectangle } from "lightweight-charts-line-tools-rectangle";
 import { registerLinesPlugin } from "lightweight-charts-line-tools-lines";
 import { registerPathPlugin } from "lightweight-charts-line-tools-path";
-import { registerLongShortPositionPlugin } from "lightweight-charts-line-tools-long-short-position";
+import { StableLongShortPosition, defaultLongShortWidthSeconds } from "./plugins/StableLongShortPosition";
 import {
     buildTimeGuides,
     type TimeGuideSettings,
@@ -274,6 +274,58 @@ function formatCrosshairDateTime(time: unknown): string {
     });
 }
 
+function normalizeInstrumentSymbol(symbol?: string): string {
+    return (symbol ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function countFractionDigits(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+
+    const text = value.toString().toLowerCase();
+    if (text.includes("e-")) {
+        const [, exponentText] = text.split("e-");
+        const exponent = Number(exponentText);
+        return Number.isFinite(exponent) ? exponent : 0;
+    }
+
+    const decimalPart = text.split(".")[1];
+    return decimalPart ? decimalPart.length : 0;
+}
+
+function inferPricePrecision(symbol: string | undefined, bars: ChartBar[]): number {
+    const normalizedSymbol = normalizeInstrumentSymbol(symbol);
+    const symbolPrecision =
+        normalizedSymbol.includes("JPY") ? 3 :
+        /^[A-Z]{6}$/.test(normalizedSymbol) ? 5 :
+        normalizedSymbol.startsWith("XAU") || normalizedSymbol === "GOLD" ? 2 :
+        null;
+
+    let dataPrecision = 0;
+    const sampleSize = Math.min(bars.length, 200);
+    for (let index = 0; index < sampleSize; index += 1) {
+        const bar = bars[index];
+        dataPrecision = Math.max(
+            dataPrecision,
+            countFractionDigits(bar.open),
+            countFractionDigits(bar.high),
+            countFractionDigits(bar.low),
+            countFractionDigits(bar.close)
+        );
+    }
+
+    const inferred = symbolPrecision == null ? dataPrecision : Math.max(symbolPrecision, dataPrecision);
+    return Math.min(6, Math.max(0, inferred || 2));
+}
+
+function buildSeriesPriceFormat(symbol: string | undefined, bars: ChartBar[]) {
+    const precision = inferPricePrecision(symbol, bars);
+    return {
+        type: "price" as const,
+        precision,
+        minMove: 1 / Math.pow(10, precision),
+    };
+}
+
 function sameTimeGuideOverlay(
     left: {
         width: number | null;
@@ -483,6 +535,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         ctrlOrMeta: boolean;
         selectedIds: string[];
     } | null>(null);
+    const priceFormat = useMemo(
+        () => buildSeriesPriceFormat(longShortSymbol ?? trade?.symbol, data),
+        [data, longShortSymbol, trade?.symbol]
+    );
     const clearTradeHistoryPlugins = useCallback((series: ISeriesApi<"Candlestick"> | null = seriesRef.current) => {
         if (!series || tradeHistoryPluginsRef.current.length === 0) {
             tradeHistoryPluginsRef.current = [];
@@ -611,7 +667,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     };
 
     const updateLongShortText = useCallback((tool: { id: string; points: Array<{ price: number }> }) => {
-        if (!lineToolsRef.current) return;
+        const lineTools = lineToolsRef.current;
+        if (!lineTools) return;
         const symbol = longShortSymbolRef.current ?? "";
         const lots = longShortLotsRef.current;
         if (!symbol || !Number.isFinite(lots) || lots <= 0) return;
@@ -670,7 +727,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             },
         };
 
-        lineToolsRef.current.applyLineToolOptions({
+        lineTools!.applyLineToolOptions({
             id: tool.id,
             toolType: "LongShortPosition",
             options: {
@@ -774,6 +831,19 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         return fallbackExports;
     }, [getLineToolsInternal, parseDrawingToolExports]);
+
+    const removeAllLineToolsSafely = useCallback(() => {
+        const lineTools = lineToolsRef.current;
+        if (!lineTools) return;
+
+        try {
+            lineTools.removeAllLineTools();
+        } catch (error) {
+            // Some plugin teardown paths briefly lose chart internals during unmount.
+            // Avoid crashing the page while React is disposing the chart.
+            console.warn("Failed to remove line tools cleanly:", error);
+        }
+    }, []);
 
     const normalizeDrawingTimestampForCurrentData = useCallback((timestamp: number): number => {
         if (!Number.isFinite(timestamp)) {
@@ -1250,6 +1320,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             borderDownColor: "#636363",
             wickUpColor: "#dbdbdb",
             wickDownColor: "#636363",
+            priceFormat,
         });
 
         chartRef.current = chart;
@@ -1259,7 +1330,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         lineTools.registerLineTool("Rectangle", LineToolRectangle);
         registerLinesPlugin(lineTools as Parameters<typeof registerLinesPlugin>[0]);
         registerPathPlugin(lineTools as Parameters<typeof registerPathPlugin>[0]);
-        registerLongShortPositionPlugin(lineTools as Parameters<typeof registerLongShortPositionPlugin>[0]);
+        lineTools.registerLineTool("LongShortPosition", StableLongShortPosition);
         lineToolsRef.current = lineTools;
 
         const handleAfterEdit = (params: {
@@ -1639,9 +1710,9 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         return () => {
             clearTradeHistoryPlugins(seriesRef.current);
-            lineToolsRef.current?.removeAllLineTools();
             lineToolsRef.current?.unsubscribeLineToolsAfterEdit?.(handleAfterEdit);
             lineToolsRef.current?.unsubscribeLineToolsDoubleClick?.(handleDoubleClick);
+            removeAllLineToolsSafely();
             chart.unsubscribeClick(handleChartClick);
             chartContainer.removeEventListener("pointerdown", handlePointerDown, true);
             chartContainer.removeEventListener("pointerup", handlePointerUp, true);
@@ -1673,10 +1744,16 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         getLineToolsInternal,
         queueSelectionUpdate,
         readDrawingToolById,
+        removeAllLineToolsSafely,
         syncSelectionByIds,
         updateLongShortText,
         clearTradeHistoryPlugins,
     ]);
+
+    useEffect(() => {
+        if (!seriesRef.current) return;
+        seriesRef.current.applyOptions({ priceFormat });
+    }, [priceFormat]);
 
     useEffect(() => {
         if (!isChartReady) {
@@ -1699,7 +1776,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                       showAutoText: true,
                       showPriceAxisLabels: false,
                       showTimeAxisLabels: false,
-                  } as Parameters<LineToolsApi["addLineTool"]>[2])
+                      initialWidthSeconds: defaultLongShortWidthSeconds(timeframe),
+                  } as unknown as Parameters<LineToolsApi["addLineTool"]>[2])
                 : undefined;
 
         const lineOptions =
@@ -1745,7 +1823,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                         ? calloutOptions
                     : lineOptions;
         lineToolsRef.current.addLineTool(drawingTool, undefined, toolOptions);
-    }, [drawingTool, drawingLineColor, rectangleFillColor, rectangleBorderColor]);
+    }, [drawingTool, drawingLineColor, rectangleFillColor, rectangleBorderColor, timeframe]);
 
     useEffect(() => {
         if (drawingTool !== "Callout" || !lineToolsRef.current) return;
@@ -2020,7 +2098,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         },
         scrollToTrade,
         removeAllDrawingTools: () => {
-            lineToolsRef.current?.removeAllLineTools();
+            removeAllLineToolsSafely();
             clearAllDrawingSelections();
         },
         cancelActiveDrawing,

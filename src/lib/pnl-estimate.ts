@@ -34,9 +34,38 @@ const PIP_SIZE: Record<string, number> = {
 
 const DEFAULT_POINT_VALUE = 5;
 const DEFAULT_PIP_SIZE = 0.0001;
+const FX_ALIAS_TO_CURRENCY: Record<string, string> = {
+  A: "AUD",
+  C: "CAD",
+  E: "EUR",
+  F: "CHF",
+  G: "GBP",
+  J: "JPY",
+  N: "NZD",
+  U: "USD",
+};
+
+function normalizeSymbol(symbol: string): string {
+  const upper = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!upper) return "";
+
+  if (/^[A-Z]{6}$/.test(upper)) {
+    return upper;
+  }
+
+  if (/^[A-Z]{2}$/.test(upper)) {
+    const base = FX_ALIAS_TO_CURRENCY[upper[0]];
+    const quote = FX_ALIAS_TO_CURRENCY[upper[1]];
+    if (base && quote) {
+      return `${base}${quote}`;
+    }
+  }
+
+  return upper;
+}
 
 function getPointValue(symbol: string): number {
-  const upper = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const upper = normalizeSymbol(symbol);
   for (const [key, val] of Object.entries(POINT_VALUE_PER_LOT)) {
     if (upper.includes(key.replace(/[^A-Z0-9]/g, ""))) {
       return val;
@@ -49,13 +78,13 @@ function getPointValue(symbol: string): number {
 }
 
 function getPipSize(symbol: string): number {
-  const upper = symbol.toUpperCase();
+  const upper = normalizeSymbol(symbol);
   if (upper.includes("JPY")) return 0.01;
   return DEFAULT_PIP_SIZE;
 }
 
 function isForex(symbol: string): boolean {
-  const upper = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const upper = normalizeSymbol(symbol);
   // Metals (XAUUSD, GOLD, etc.) use point value, not pip value - exclude from forex
   if (upper === "XAUUSD" || upper === "GOLD" || upper.startsWith("XAU")) return false;
   return (
@@ -75,7 +104,7 @@ function isForex(symbol: string): boolean {
 export function volumeToLots(volume: number, symbol: string): number {
   if (!Number.isFinite(volume) || volume <= 0) return 0;
   if (volume < 1) return volume;
-  const upper = symbol.toUpperCase();
+  const upper = normalizeSymbol(symbol);
   if (upper === "XAUUSD" || upper === "GOLD") {
     return volume >= 100 ? volume / 10_000 : volume / 100;
   }
@@ -128,7 +157,7 @@ const POINT_SIZE: Record<string, number> = {
 };
 
 function getPointSize(symbol: string): number {
-  const upper = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const upper = normalizeSymbol(symbol);
   for (const [key, val] of Object.entries(POINT_SIZE)) {
     if (upper.includes(key.replace(/[^A-Z0-9]/g, ""))) {
       return val;
@@ -144,7 +173,7 @@ function getPointSize(symbol: string): number {
  */
 export function priceDiffToPips(priceDiff: number, symbol: string): number {
   if (!Number.isFinite(priceDiff)) return 0;
-  const upper = symbol.toUpperCase();
+  const upper = normalizeSymbol(symbol);
   if (isForex(upper)) {
     const pipSize = getPipSize(upper);
     return priceDiff / pipSize;
