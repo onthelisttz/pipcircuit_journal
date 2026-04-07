@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { subDays } from "date-fns";
-import { Plus, Loader2, Eye, Pencil, Trash2 } from "lucide-react";
+import { Plus, Loader2, Eye, Pencil, Search, Trash2 } from "lucide-react";
+import type { ObservationSource } from "@domain/entities";
 import { useObservations } from "@ui/hooks/useObservations";
 import { useObservationCategories } from "@ui/hooks/useObservationCategories";
 import { useObservationRepository } from "@ui/hooks/useObservationRepository";
@@ -26,10 +27,19 @@ function truncate(str: string, len: number): string {
   return str.slice(0, len) + "…";
 }
 
+function getObservationSource(
+  source: ObservationSource | undefined,
+  hasChartContext: boolean
+): ObservationSource {
+  if (hasChartContext) return "chart";
+  return source ?? "manual";
+}
+
 const defaultFilters: ObservationFiltersState = {
   from: subDays(new Date(), 30),
   to: new Date(),
   categoryId: null,
+  source: "all",
 };
 const OBS_FILTERS_KEY = "observationFilters";
 
@@ -62,6 +72,7 @@ export function ObservationsPage() {
         from?: string;
         to?: string;
         categoryId?: number | null;
+        source?: "all" | "manual" | "chart";
       };
       const parsedFrom = parsed.from ? new Date(parsed.from) : defaultFilters.from;
       const parsedTo = parsed.to ? new Date(parsed.to) : defaultFilters.to;
@@ -76,6 +87,7 @@ export function ObservationsPage() {
         from,
         to,
         categoryId: parsed.categoryId ?? defaultFilters.categoryId,
+        source: parsed.source ?? defaultFilters.source,
       };
     } catch {
       return defaultFilters;
@@ -101,6 +113,7 @@ export function ObservationsPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [showManageCategories, setShowManageCategories] = useState(false);
   const [editingNames, setEditingNames] = useState<Record<number, string>>({});
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Persist filters whenever they change
   useEffect(() => {
@@ -112,6 +125,7 @@ export function ObservationsPage() {
           from: filters.from.toISOString(),
           to: filters.to.toISOString(),
           categoryId: filters.categoryId ?? null,
+          source: filters.source,
         })
       );
     } catch {
@@ -167,6 +181,8 @@ export function ObservationsPage() {
             title: title.trim(),
             categoryId: categoryId ?? undefined,
             content: content || "<p></p>",
+            source: "manual",
+            chartContext: null,
             createdAt: now,
             updatedAt: now,
           });
@@ -266,13 +282,51 @@ export function ObservationsPage() {
   );
 
   const observationIds = filteredObs.map((o) => o.id).filter((id): id is number => id != null);
+  const visibleObservations = filteredObs.filter((obs) => {
+    const normalizedSearch = searchQuery.trim().toLowerCase();
+    if (!normalizedSearch) return true;
+
+    const categoryName =
+      obs.categoryId != null
+        ? categories.find((category) => category.id === obs.categoryId)?.name ?? ""
+        : "";
+    const source = getObservationSource(obs.source, Boolean(obs.chartContext));
+    const chartMeta =
+      source === "chart"
+        ? [obs.chartContext?.broker, obs.chartContext?.symbol, obs.chartContext?.timeframe]
+            .filter(Boolean)
+            .join(" ")
+        : "";
+
+    const haystack = [
+      obs.title,
+      stripHtml(obs.content || ""),
+      categoryName,
+      source === "chart" ? "chart" : "manual",
+      chartMeta,
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(normalizedSearch);
+  });
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="relative z-30 flex flex-col gap-4 overflow-visible sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold text-foreground">Observations</h1>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="relative z-30 flex flex-wrap items-center gap-3 overflow-visible">
           <ObservationFilters filters={filters} onChange={setFilters} categories={categories} />
+          <label className="relative min-w-[220px] flex-1 sm:flex-none">
+            <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search observations..."
+              className="h-10 w-full rounded-lg border border-border bg-card px-3 pl-11 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            />
+          </label>
           <button
             type="button"
             onClick={() => {
@@ -308,20 +362,27 @@ export function ObservationsPage() {
         isEdit={editingId != null}
       />
 
-      <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <div className="relative z-0 rounded-xl border border-border bg-card overflow-hidden">
         {isLoading ? (
           <div className="flex h-48 items-center justify-center">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
-        ) : filteredObs.length === 0 ? (
+        ) : visibleObservations.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
-            No observations in this range. Add one or adjust filters.
+            No observations match the current filters or search.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-            {filteredObs.map((obs) => {
+            {visibleObservations.map((obs) => {
               const cat = obs.categoryId ? categories.find((c) => c.id === obs.categoryId) : null;
               const descPreview = truncate(stripHtml(obs.content || ""), 120);
+              const source = getObservationSource(obs.source, Boolean(obs.chartContext));
+              const chartMeta =
+                source === "chart"
+                  ? [obs.chartContext?.broker, obs.chartContext?.symbol, obs.chartContext?.timeframe]
+                      .filter(Boolean)
+                      .join(" - ")
+                  : null;
 
               return (
                 <div
@@ -350,7 +411,19 @@ export function ObservationsPage() {
                           {cat.name}
                         </span>
                       )}
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs ${
+                          source === "chart"
+                            ? "bg-primary/10 text-primary"
+                            : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {source === "chart" ? "Chart" : "Manual"}
+                      </span>
                     </div>
+                    {chartMeta ? (
+                      <p className="mt-1 text-xs text-muted-foreground">{chartMeta}</p>
+                    ) : null}
                     {descPreview && (
                       <p className="mt-1 text-sm text-muted-foreground line-clamp-2">
                         {descPreview}

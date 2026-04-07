@@ -7,6 +7,7 @@ import { RichTextEditor } from "@ui/components/common";
 interface ObservationFormModalProps {
   open: boolean;
   onClose: () => void;
+  heading?: string;
   title: string;
   setTitle: (v: string) => void;
   categoryId: number | null;
@@ -23,6 +24,9 @@ interface ObservationFormModalProps {
   onSubmit: (e: React.FormEvent) => void;
   saving: boolean;
   isEdit: boolean;
+  extraActionLabel?: string;
+  onExtraAction?: () => void;
+  extraActionDisabled?: boolean;
 }
 
 function resizeTitleField(element: HTMLTextAreaElement | null) {
@@ -34,6 +38,7 @@ function resizeTitleField(element: HTMLTextAreaElement | null) {
 export function ObservationFormModal({
   open,
   onClose,
+  heading,
   title,
   setTitle,
   categoryId,
@@ -50,6 +55,9 @@ export function ObservationFormModal({
   onSubmit,
   saving,
   isEdit,
+  extraActionLabel,
+  onExtraAction,
+  extraActionDisabled = false,
 }: ObservationFormModalProps) {
   const titleRef = useRef<HTMLTextAreaElement>(null);
 
@@ -70,7 +78,7 @@ export function ObservationFormModal({
       >
         <div className="sticky top-0 flex items-center justify-between border-b border-border bg-card px-4 py-3">
           <h2 className="text-lg font-semibold text-foreground">
-            {isEdit ? "Edit Observation" : "New Observation"}
+            {heading ?? (isEdit ? "Edit Observation" : "New Observation")}
           </h2>
           <button
             type="button"
@@ -82,7 +90,7 @@ export function ObservationFormModal({
           </button>
         </div>
 
-        <form onSubmit={onSubmit} className="p-4 space-y-4">
+        <form onSubmit={onSubmit} className="space-y-4 p-4">
           <div>
             <label htmlFor="obs-modal-title" className="block text-sm font-medium text-muted-foreground mb-1">
               Title
@@ -179,21 +187,33 @@ export function ObservationFormModal({
             />
           </div>
 
-          <div className="flex gap-2 pt-2">
-            <button
-              type="submit"
-              disabled={saving || !title.trim()}
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {saving ? "Saving…" : isEdit ? "Update" : "Save"}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-accent"
-            >
-              Cancel
-            </button>
+          <div className="sticky bottom-0 -mx-4 border-t border-border bg-card px-4 pb-1 pt-3">
+            <div className="flex gap-2">
+              {extraActionLabel && onExtraAction ? (
+                <button
+                  type="button"
+                  onClick={onExtraAction}
+                  disabled={extraActionDisabled || saving}
+                  className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-accent disabled:opacity-50"
+                >
+                  {extraActionLabel}
+                </button>
+              ) : null}
+              <button
+                type="submit"
+                disabled={saving || !title.trim()}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              >
+                {saving ? "Saving…" : isEdit ? "Update" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-accent"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </form>
       </div>

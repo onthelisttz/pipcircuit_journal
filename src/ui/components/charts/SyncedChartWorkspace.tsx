@@ -32,6 +32,14 @@ import {
   readStoredTimeGuideSettings,
   type TimeGuideSettings,
 } from "./timeGuides";
+import type {
+  ChartObservationLoadRequest,
+  ChartObservationWorkspaceApi,
+} from "./chartObservationTypes";
+import {
+  drawingTimestampToMs,
+  filterDrawingsToVisibleWindow,
+} from "./chartObservationUtils";
 
 const CHART_SELECTION_KEY = "chartSelection";
 const CHART_TIMEFRAME_KEY = "chartTimeframe";
@@ -144,21 +152,17 @@ function statusMeta(status?: string) {
   }
 }
 
-function drawingTimestampSecondsToMs(timestamp: number): number {
-  return timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp;
-}
-
 function getDrawingWindowDays(
   centerTimestamp: number | null,
   drawings: DrawingToolExport[]
 ): number {
   if (centerTimestamp == null || drawings.length === 0) return 0;
 
-  let maxDistance = 0;
+    let maxDistance = 0;
   for (const drawing of drawings) {
     for (const point of drawing.points) {
       if (!Number.isFinite(point.timestamp)) continue;
-      const distance = Math.abs(drawingTimestampSecondsToMs(point.timestamp) - centerTimestamp);
+      const distance = Math.abs(drawingTimestampToMs(point.timestamp) - centerTimestamp);
       maxDistance = Math.max(maxDistance, distance);
     }
   }
@@ -171,6 +175,9 @@ interface SyncedChartWorkspaceProps {
   initialBroker?: string;
   onSymbolChange?: (symbol: string, broker: string) => void;
   onTimeframeChange?: (timeframe: string) => void;
+  onObservationApiChange?: (api: ChartObservationWorkspaceApi | null) => void;
+  observationLoadRequest?: ChartObservationLoadRequest | null;
+  onObservationLoadHandled?: (requestId: string) => void;
   isActive?: boolean;
   onTradePanelChange?: (panel: ChartTradeHistoryPanelData | null) => void;
   /** Hide drawing tools & action buttons for compact multi-pane layouts */
@@ -182,6 +189,9 @@ export function SyncedChartWorkspace({
   initialBroker,
   onSymbolChange,
   onTimeframeChange,
+  onObservationApiChange,
+  observationLoadRequest,
+  onObservationLoadHandled,
   isActive = true,
   onTradePanelChange,
   compact = false,
@@ -264,7 +274,12 @@ export function SyncedChartWorkspace({
   });
   const compactDrawRef = useRef<HTMLDivElement>(null);
   const compactActionsRef = useRef<HTMLDivElement>(null);
-  const pendingRestoreRef = useRef<{ drawings: DrawingToolExport[]; centerTimestamp: number | null } | null>(null);
+  const pendingRestoreRef = useRef<{
+    drawings: DrawingToolExport[];
+    centerTimestamp: number | null;
+    windowSeconds?: number | null;
+  } | null>(null);
+  const lastHandledObservationRequestRef = useRef<string | null>(null);
   const skipNextCalloutApplyRef = useRef(false);
   const calloutTextInputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -353,6 +368,45 @@ export function SyncedChartWorkspace({
     onTimeframeChange?.(timeframe);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeframe]);
+
+  const observationApi = useMemo<ChartObservationWorkspaceApi>(
+    () => ({
+      workspaceMode: "synced",
+      symbol: selection?.symbol ?? null,
+      broker: selection?.broker ?? null,
+      timeframe,
+      captureObservationContext: () => {
+        const centerTimestamp = chartRef.current?.getViewportCenterTimestamp() ?? null;
+        const windowSeconds = chartRef.current?.getVisibleWindowSeconds() ?? null;
+        const drawings = filterDrawingsToVisibleWindow(
+          chartRef.current?.exportAllDrawings() ?? [],
+          centerTimestamp,
+          windowSeconds
+        );
+
+        return {
+          workspaceMode: "synced",
+          broker: selection?.broker ?? null,
+          symbol: selection?.symbol ?? null,
+          timeframe,
+          centerTimestamp,
+          windowSeconds,
+          drawings,
+        };
+      },
+    }),
+    [selection?.broker, selection?.symbol, timeframe]
+  );
+
+  useEffect(() => {
+    if (!onObservationApiChange) return;
+    if (!isActive) {
+      onObservationApiChange(null);
+      return;
+    }
+    onObservationApiChange(observationApi);
+    return () => onObservationApiChange(null);
+  }, [isActive, observationApi, onObservationApiChange]);
 
   useEffect(() => {
     if (!symbolMenuOpen) return;
@@ -665,11 +719,84 @@ export function SyncedChartWorkspace({
         chartRef.current?.importDrawings(pending.drawings);
       }
       if (pending.centerTimestamp != null) {
-        chartRef.current?.scrollToTimestamp(pending.centerTimestamp);
+        chartRef.current?.scrollToTimestamp(
+          pending.centerTimestamp,
+          pending.windowSeconds ?? undefined
+        );
       }
     }, 80);
     return () => window.clearTimeout(timer);
   }, [data, isLoading]);
+
+  useEffect(() => {
+    const request = observationLoadRequest;
+    if (!request) return;
+    if (request.context.workspaceMode && request.context.workspaceMode !== "synced") {
+      return;
+    }
+    if (lastHandledObservationRequestRef.current === request.requestId) {
+      return;
+    }
+
+    lastHandledObservationRequestRef.current = request.requestId;
+    const nextSymbol = request.context.symbol ?? selection?.symbol ?? null;
+    const nextBroker = request.context.broker ?? selection?.broker ?? null;
+    const nextTimeframe = request.context.timeframe;
+    const drawings = (request.context.drawings ?? []) as DrawingToolExport[];
+    const pending = {
+      drawings,
+      centerTimestamp: request.context.centerTimestamp ?? null,
+      windowSeconds: request.context.windowSeconds ?? null,
+    };
+
+    if (nextSymbol && nextBroker) {
+      setStoredSelection({ broker: nextBroker, symbol: nextSymbol });
+      onSymbolChange?.(nextSymbol, nextBroker);
+    }
+
+    if (nextTimeframe && TIMEFRAMES.includes(nextTimeframe)) {
+      setTimeframe(nextTimeframe);
+      onTimeframeChange?.(nextTimeframe);
+    }
+
+    pendingRestoreRef.current = pending;
+    setTimeframeRestoreAnchor({
+      centerTimestamp: pending.centerTimestamp,
+      windowDays: getDrawingWindowDays(pending.centerTimestamp, drawings),
+    });
+
+    const selectionMatches =
+      (nextSymbol == null || nextSymbol === selection?.symbol) &&
+      (nextBroker == null || nextBroker === selection?.broker);
+    const timeframeMatches = !nextTimeframe || nextTimeframe === timeframe;
+
+    if (selectionMatches && timeframeMatches && data.length > 0 && !isLoading) {
+      pendingRestoreRef.current = null;
+      window.setTimeout(() => {
+        if (pending.drawings.length > 0) {
+          chartRef.current?.importDrawings(pending.drawings);
+        }
+        if (pending.centerTimestamp != null) {
+          chartRef.current?.scrollToTimestamp(
+            pending.centerTimestamp,
+            pending.windowSeconds ?? undefined
+          );
+        }
+      }, 0);
+    }
+
+    onObservationLoadHandled?.(request.requestId);
+  }, [
+    data.length,
+    isLoading,
+    observationLoadRequest,
+    onObservationLoadHandled,
+    onSymbolChange,
+    onTimeframeChange,
+    selection?.broker,
+    selection?.symbol,
+    timeframe,
+  ]);
 
   const handleVisibleRangeChange = useCallback(
     (from: number, to: number) => {
@@ -752,6 +879,7 @@ export function SyncedChartWorkspace({
       pendingRestoreRef.current = {
         drawings,
         centerTimestamp,
+        windowSeconds: chartRef.current?.getVisibleWindowSeconds() ?? null,
       };
       setTimeframeRestoreAnchor({
         centerTimestamp,
@@ -937,6 +1065,7 @@ export function SyncedChartWorkspace({
                   pendingRestoreRef.current = {
                     drawings,
                     centerTimestamp,
+                    windowSeconds: chartRef.current?.getVisibleWindowSeconds() ?? null,
                   };
                   setTimeframeRestoreAnchor({
                     centerTimestamp,

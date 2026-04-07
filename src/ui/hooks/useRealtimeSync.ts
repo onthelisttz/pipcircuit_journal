@@ -255,6 +255,14 @@ export function useRealtimeSync() {
                 remoteId,
                 clientId,
                 categoryId: localCategoryId ?? existing?.categoryId ?? null,
+                source:
+                  row.source === "chart" || row.source === "manual"
+                    ? row.source
+                    : existing?.source ?? "manual",
+                chartContext:
+                  row.chart_context && typeof row.chart_context === "object"
+                    ? (row.chart_context as Record<string, unknown>)
+                    : existing?.chartContext ?? null,
                 title: String(row.title ?? ""),
                 content: String(row.content ?? ""),
                 createdAt: parseDate(row.created_at),

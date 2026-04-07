@@ -1,5 +1,10 @@
 import type { IObservationRepository } from "@application/ports/repositories";
-import type { Observation, ObservationCategory } from "@domain/entities";
+import type {
+  Observation,
+  ObservationCategory,
+  ObservationChartContext,
+  ObservationSource,
+} from "@domain/entities";
 import { createUuid, getOrCreateDeviceId } from "@infrastructure/sync/utils";
 import { getSupabaseClient } from "../client";
 
@@ -8,6 +13,8 @@ interface SupabaseObservation {
   user_id: string;
   client_id: string;
   category_id: number | null;
+  source: ObservationSource | null;
+  chart_context: ObservationChartContext | null;
   title: string;
   content: string;
   created_at: string;
@@ -48,6 +55,8 @@ function toDomainObs(row: SupabaseObservation): Observation {
     remoteId: row.id,
     clientId: row.client_id,
     categoryId: row.category_id ?? undefined,
+    source: row.source ?? "manual",
+    chartContext: row.chart_context ?? null,
     title: row.title,
     content: row.content,
     createdAt: new Date(row.created_at),
@@ -80,6 +89,8 @@ function toSupabaseObs(o: Observation, userId: string): Record<string, unknown> 
     user_id: userId,
     client_id: o.clientId ?? createUuid(),
     category_id: o.categoryId ?? null,
+    source: o.source ?? "manual",
+    chart_context: o.chartContext ?? null,
     title: o.title,
     content: o.content,
     created_at: toIso(o.createdAt),
@@ -227,6 +238,10 @@ export class SupabaseObservationRepository implements IObservationRepository {
       device_id: updates.deviceId ?? getOrCreateDeviceId(),
     };
     if (updates.categoryId !== undefined) supabaseUpdates.category_id = updates.categoryId ?? null;
+    if (updates.source !== undefined) supabaseUpdates.source = updates.source ?? "manual";
+    if (updates.chartContext !== undefined) {
+      supabaseUpdates.chart_context = updates.chartContext ?? null;
+    }
     if (updates.title !== undefined) supabaseUpdates.title = updates.title;
     if (updates.content !== undefined) supabaseUpdates.content = updates.content;
     if (updates.deletedAt !== undefined) {

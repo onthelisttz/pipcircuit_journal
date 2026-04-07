@@ -373,6 +373,7 @@ export interface TradeCandlestickChartRef {
     exportAllDrawings: () => DrawingToolExport[];
     importDrawings: (drawings: DrawingToolExport[]) => void;
     getViewportCenterTimestamp: () => number | null;
+    getVisibleWindowSeconds: () => number | null;
     scrollToTimestamp: (timestamp: number, windowSeconds?: number) => void;
     getSelectedCalloutConfig: () => {
         text: string;
@@ -2034,6 +2035,13 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             if (!range) return null;
             const centerSec = ((range.from as number) + (range.to as number)) / 2;
             return centerSec * 1000;
+        },
+        getVisibleWindowSeconds: (): number | null => {
+            const timeScale = chartRef.current?.timeScale();
+            if (!timeScale) return null;
+            const range = timeScale.getVisibleRange();
+            if (!range) return null;
+            return Math.max(1, (range.to as number) - (range.from as number));
         },
         scrollToTimestamp: (timestamp: number, windowSeconds?: number) => {
             const timeScale = chartRef.current?.timeScale();

@@ -6,7 +6,13 @@
 
 export type { Trade } from "./Trade";
 export type { TradeNote } from "./TradeNote";
-export type { Observation } from "./Observation";
+export type {
+  Observation,
+  ObservationSource,
+  ObservationChartContext,
+  ObservationChartDrawing,
+  ObservationChartDrawingPoint,
+} from "./Observation";
 export type { ObservationCategory } from "./ObservationCategory";
 export type { Tag } from "./Tag";
 export type { TradeTag } from "./TradeTag";

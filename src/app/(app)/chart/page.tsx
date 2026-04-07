@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link2, Link2Off } from "lucide-react";
+import { FileText, Link2, Link2Off } from "lucide-react";
 import {
   Mt5HistoryWorkspace,
   SyncedChartWorkspace,
@@ -10,8 +10,15 @@ import {
   ChartLayoutGrid,
   paneCountForLayout,
 } from "@ui/components/charts";
-import type { ChartTab, ChartPane, LayoutType } from "@ui/components/charts";
-import { useChartTradeHistoryPanel } from "@ui/providers";
+import type {
+  ChartObservationLoadRequest,
+  ChartObservationWorkspaceApi,
+  ChartTab,
+  ChartPane,
+  LayoutType,
+} from "@ui/components/charts";
+import { useChartObservationPanel, useChartTradeHistoryPanel } from "@ui/providers";
+import type { Observation } from "@domain/entities";
 
 type ChartMode = "synced" | "history";
 
@@ -33,6 +40,25 @@ function makeTab(symbol = "", broker?: string): ChartTab {
     id: generateId(),
     layout: "single",
     panes: [makePane(symbol, broker)],
+    activePaneIndex: 0,
+  };
+}
+
+function makeObservationTab(
+  mode: ChartMode,
+  context: NonNullable<Observation["chartContext"]>
+): ChartTab {
+  return {
+    id: generateId(),
+    layout: "single",
+    panes: [
+      {
+        id: generateId(),
+        symbol: context.symbol ?? "",
+        broker: mode === "synced" ? context.broker ?? undefined : undefined,
+        timeframe: context.timeframe ?? undefined,
+      },
+    ],
     activePaneIndex: 0,
   };
 }
@@ -89,14 +115,47 @@ function createInitialModeState(mode: ChartMode): { tabs: ChartTab[]; activeId: 
   };
 }
 
+function paneMatchesObservation(
+  pane: ChartPane,
+  mode: ChartMode,
+  context: NonNullable<Observation["chartContext"]>
+): boolean {
+  if (!context.symbol || pane.symbol !== context.symbol) return false;
+  if (mode === "synced" && context.broker) {
+    return pane.broker === context.broker;
+  }
+  return true;
+}
+
+function findTabForObservation(
+  tabs: ChartTab[],
+  mode: ChartMode,
+  context: NonNullable<Observation["chartContext"]>
+): { tabId: string; paneIndex: number } | null {
+  for (const tab of tabs) {
+    const paneIndex = tab.panes.findIndex((pane) => paneMatchesObservation(pane, mode, context));
+    if (paneIndex >= 0) {
+      return { tabId: tab.id, paneIndex };
+    }
+  }
+
+  return null;
+}
+
 export default function ChartPage() {
   const [mode, setMode] = useState<ChartMode>(() => readStoredMode());
   const [historyAvailabilityText, setHistoryAvailabilityText] = useState<string | null>(null);
   const [syncTimeframes, setSyncTimeframes] = useState(false);
+  const [isObservationPanelOpen, setIsObservationPanelOpen] = useState(false);
+  const [activeObservationWorkspace, setActiveObservationWorkspace] =
+    useState<ChartObservationWorkspaceApi | null>(null);
+  const [observationLoadRequest, setObservationLoadRequest] =
+    useState<ChartObservationLoadRequest | null>(null);
   const {
     panel: tradePanel,
     setPanel: handleTradePanelChange,
   } = useChartTradeHistoryPanel();
+  const { setPanel: setObservationPanel } = useChartObservationPanel();
 
   const [syncedInitial] = useState(() => createInitialModeState("synced"));
   const [historyInitial] = useState(() => createInitialModeState("history"));
@@ -107,6 +166,7 @@ export default function ChartPage() {
 
   const tabs = mode === "synced" ? syncedTabs : historyTabs;
   const activeTabId = mode === "synced" ? syncedActiveId : historyActiveId;
+  const hasChartDock = Boolean(tradePanel || isObservationPanelOpen);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
@@ -149,6 +209,73 @@ export default function ChartPage() {
       handleTradePanelChange(null);
     };
   }, [handleTradePanelChange]);
+
+  const handleLoadObservation = useCallback((observation: Observation) => {
+    const context = observation.chartContext;
+    if (!context) return;
+    const targetMode = context.workspaceMode ?? mode;
+    const targetTabs = targetMode === "synced" ? syncedTabs : historyTabs;
+    const matchingTarget = findTabForObservation(targetTabs, targetMode, context);
+
+    setMode(targetMode);
+    if (matchingTarget) {
+      if (targetMode === "synced") {
+        setSyncedActiveId(matchingTarget.tabId);
+        setSyncedTabs((previous) =>
+          previous.map((tab) =>
+            tab.id === matchingTarget.tabId
+              ? { ...tab, activePaneIndex: matchingTarget.paneIndex }
+              : tab
+          )
+        );
+      } else {
+        setHistoryActiveId(matchingTarget.tabId);
+        setHistoryTabs((previous) =>
+          previous.map((tab) =>
+            tab.id === matchingTarget.tabId
+              ? { ...tab, activePaneIndex: matchingTarget.paneIndex }
+              : tab
+          )
+        );
+      }
+    } else {
+      const newTab = makeObservationTab(targetMode, context);
+      if (targetMode === "synced") {
+        setSyncedTabs((previous) => [...previous, newTab]);
+        setSyncedActiveId(newTab.id);
+      } else {
+        setHistoryTabs((previous) => [...previous, newTab]);
+        setHistoryActiveId(newTab.id);
+      }
+    }
+    setObservationLoadRequest({
+      requestId: generateId(),
+      observationId: observation.id ?? null,
+      context,
+    });
+  }, [historyTabs, mode, syncedTabs]);
+
+  useEffect(() => {
+    if (!isObservationPanelOpen) {
+      setObservationPanel(null);
+      return;
+    }
+
+    setObservationPanel({
+      workspace: activeObservationWorkspace,
+      onLoadObservation: handleLoadObservation,
+      onClose: () => setIsObservationPanelOpen(false),
+    });
+
+    return () => {
+      setObservationPanel(null);
+    };
+  }, [
+    activeObservationWorkspace,
+    handleLoadObservation,
+    isObservationPanelOpen,
+    setObservationPanel,
+  ]);
 
   const handleTabSelect = useCallback((tabId: string) => {
     if (mode === "synced") {
@@ -312,6 +439,21 @@ export default function ChartPage() {
             initialBroker={pane.broker || undefined}
             onSymbolChange={onSyncedSymbolChange}
             onTimeframeChange={onTimeframeChange}
+            onObservationApiChange={
+              tabIsVisible && (!isMulti || paneIsActive)
+                ? setActiveObservationWorkspace
+                : undefined
+            }
+            observationLoadRequest={
+              tabIsVisible && (!isMulti || paneIsActive)
+                ? observationLoadRequest
+                : null
+            }
+            onObservationLoadHandled={(requestId) =>
+              setObservationLoadRequest((current) =>
+                current?.requestId === requestId ? null : current
+              )
+            }
             isActive={tabIsVisible && (!isMulti || paneIsActive)}
             onTradePanelChange={handleTradePanelChange}
             compact={isMulti}
@@ -326,16 +468,37 @@ export default function ChartPage() {
           initialSymbol={pane.symbol || undefined}
           onSymbolChange={onMt5SymbolChange}
           onTimeframeChange={onTimeframeChange}
+          onObservationApiChange={
+            tabIsVisible && (!isMulti || paneIsActive)
+              ? setActiveObservationWorkspace
+              : undefined
+          }
+          observationLoadRequest={
+            tabIsVisible && (!isMulti || paneIsActive)
+              ? observationLoadRequest
+              : null
+          }
+          onObservationLoadHandled={(requestId) =>
+            setObservationLoadRequest((current) =>
+              current?.requestId === requestId ? null : current
+            )
+          }
           isActive={tabIsVisible && (!isMulti || paneIsActive)}
           compact={isMulti}
         />
       );
     },
-    [handleTimeframeChangeForPane, handleTradePanelChange, mode, updatePaneField]
+    [
+      handleTimeframeChangeForPane,
+      handleTradePanelChange,
+      mode,
+      observationLoadRequest,
+      updatePaneField,
+    ]
   );
 
   return (
-    <div className={`flex h-full min-h-0 ${tradePanel ? "md:-mr-10" : "md:-mr-6"}`}>
+    <div className={`flex h-full min-h-0 ${hasChartDock ? "md:-mr-10" : "md:-mr-6"}`}>
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3" />
 
@@ -410,6 +573,19 @@ export default function ChartPage() {
             value={activeTab?.layout ?? "single"}
             onChange={handleLayoutChange}
           />
+          <button
+            type="button"
+            onClick={() => setIsObservationPanelOpen((previous) => !previous)}
+            className={`flex h-7 items-center gap-1.5 rounded border px-2 text-xs font-medium transition-colors ${
+              isObservationPanelOpen
+                ? "border-primary/60 bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:bg-muted"
+            }`}
+            title="Toggle chart observations"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Observations</span>
+          </button>
         </div>
 
         {tabs.map((tab) => {

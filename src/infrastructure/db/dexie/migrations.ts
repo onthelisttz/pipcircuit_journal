@@ -6,6 +6,7 @@ import {
   DEXIE_SCHEMA_V4,
   DEXIE_SCHEMA_V5,
   DEXIE_SCHEMA_V6,
+  DEXIE_SCHEMA_V7,
 } from "./schema";
 
 export function registerMigrations(db: AppDexie): void {
@@ -164,6 +165,34 @@ export function registerMigrations(db: AppDexie): void {
             status: "Pending",
             nextRetryAt: null,
           });
+        }
+      }
+    });
+
+  // v7: add observation source/context metadata for chart-linked observations
+  db.version(7)
+    .stores(DEXIE_SCHEMA_V7)
+    .upgrade(async (tx) => {
+      type ObservationRow = {
+        id?: number;
+        source?: string | null;
+        chartContext?: unknown;
+      };
+
+      const observations = await tx.table("observations").toCollection().toArray();
+      for (const observation of observations as ObservationRow[]) {
+        if (observation.id == null) continue;
+        const updates: Record<string, unknown> = {};
+
+        if (!observation.source) {
+          updates.source = "manual";
+        }
+        if (!("chartContext" in observation)) {
+          updates.chartContext = null;
+        }
+
+        if (Object.keys(updates).length > 0) {
+          await tx.table("observations").update(observation.id, updates);
         }
       }
     });

@@ -44,6 +44,14 @@ import {
   readStoredTimeGuideSettings,
   type TimeGuideSettings,
 } from "./timeGuides";
+import type {
+  ChartObservationLoadRequest,
+  ChartObservationWorkspaceApi,
+} from "./chartObservationTypes";
+import {
+  drawingTimestampToMs,
+  filterDrawingsToVisibleWindow,
+} from "./chartObservationUtils";
 
 type TimeframeSummary = {
   timeframe: ChartTimeframe;
@@ -258,10 +266,6 @@ function buildCenteredRange(
   return { from, to };
 }
 
-function drawingTimestampSecondsToMs(timestamp: number): number {
-  return timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp;
-}
-
 function getDrawingTimeBounds(drawings: DrawingToolExport[]): LoadedRange | null {
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
@@ -269,7 +273,7 @@ function getDrawingTimeBounds(drawings: DrawingToolExport[]): LoadedRange | null
   for (const drawing of drawings) {
     for (const point of drawing.points) {
       if (!Number.isFinite(point.timestamp)) continue;
-      const timestamp = drawingTimestampSecondsToMs(point.timestamp);
+      const timestamp = drawingTimestampToMs(point.timestamp);
       min = Math.min(min, timestamp);
       max = Math.max(max, timestamp);
     }
@@ -359,6 +363,9 @@ interface Mt5HistoryWorkspaceProps {
   initialSymbol?: string;
   onSymbolChange?: (symbol: string) => void;
   onTimeframeChange?: (timeframe: string) => void;
+  onObservationApiChange?: (api: ChartObservationWorkspaceApi | null) => void;
+  observationLoadRequest?: ChartObservationLoadRequest | null;
+  onObservationLoadHandled?: (requestId: string) => void;
   isActive?: boolean;
   /** Hide drawing tools & action buttons for compact multi-pane layouts */
   compact?: boolean;
@@ -607,6 +614,9 @@ export function Mt5HistoryWorkspace({
   initialSymbol,
   onSymbolChange,
   onTimeframeChange,
+  onObservationApiChange,
+  observationLoadRequest,
+  onObservationLoadHandled,
   isActive = true,
   compact = false,
 }: Mt5HistoryWorkspaceProps) {
@@ -664,7 +674,12 @@ export function Mt5HistoryWorkspace({
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
   const compactDrawRef = useRef<HTMLDivElement>(null);
   const compactActionsRef = useRef<HTMLDivElement>(null);
-  const pendingRestoreRef = useRef<{ drawings: DrawingToolExport[]; centerTimestamp: number | null } | null>(null);
+  const pendingRestoreRef = useRef<{
+    drawings: DrawingToolExport[];
+    centerTimestamp: number | null;
+    windowSeconds?: number | null;
+  } | null>(null);
+  const lastHandledObservationRequestRef = useRef<string | null>(null);
   const skipNextCalloutApplyRef = useRef(false);
   const calloutTextInputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -684,7 +699,10 @@ export function Mt5HistoryWorkspace({
         chartRef.current?.importDrawings(pending.drawings);
       }
       if (pending.centerTimestamp != null) {
-        chartRef.current?.scrollToTimestamp(pending.centerTimestamp);
+        chartRef.current?.scrollToTimestamp(
+          pending.centerTimestamp,
+          pending.windowSeconds ?? undefined
+        );
       }
     }, 80);
     return () => window.clearTimeout(timer);
@@ -1030,6 +1048,109 @@ export function Mt5HistoryWorkspace({
     if (timeframe) onTimeframeChange?.(timeframe);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeframe]);
+
+  const observationApi = useMemo<ChartObservationWorkspaceApi>(
+    () => ({
+      workspaceMode: "history",
+      symbol: symbol || null,
+      broker: null,
+      timeframe: timeframe || null,
+      captureObservationContext: () => {
+        const centerTimestamp = chartRef.current?.getViewportCenterTimestamp() ?? null;
+        const windowSeconds = chartRef.current?.getVisibleWindowSeconds() ?? null;
+        const drawings = filterDrawingsToVisibleWindow(
+          chartRef.current?.exportAllDrawings() ?? [],
+          centerTimestamp,
+          windowSeconds
+        );
+
+        return {
+          workspaceMode: "history",
+          broker: null,
+          symbol: symbol || null,
+          timeframe: timeframe || null,
+          centerTimestamp,
+          windowSeconds,
+          drawings,
+        };
+      },
+    }),
+    [symbol, timeframe]
+  );
+
+  useEffect(() => {
+    if (!onObservationApiChange) return;
+    if (!isActive) {
+      onObservationApiChange(null);
+      return;
+    }
+    onObservationApiChange(observationApi);
+    return () => onObservationApiChange(null);
+  }, [isActive, observationApi, onObservationApiChange]);
+
+  useEffect(() => {
+    const request = observationLoadRequest;
+    if (!request) return;
+    if (request.context.workspaceMode && request.context.workspaceMode !== "history") {
+      return;
+    }
+    if (lastHandledObservationRequestRef.current === request.requestId) {
+      return;
+    }
+
+    lastHandledObservationRequestRef.current = request.requestId;
+    const nextSymbol = request.context.symbol ?? symbol;
+    const nextTimeframe = request.context.timeframe ?? timeframe;
+    const drawings = (request.context.drawings ?? []) as DrawingToolExport[];
+    const pending = {
+      drawings,
+      centerTimestamp: request.context.centerTimestamp ?? null,
+      windowSeconds: request.context.windowSeconds ?? null,
+    };
+
+    if (nextSymbol && nextSymbol !== symbol) {
+      setSymbol(nextSymbol);
+      onSymbolChange?.(nextSymbol);
+    }
+
+    if (nextTimeframe && nextTimeframe !== timeframe) {
+      setTimeframe(nextTimeframe);
+      onTimeframeChange?.(nextTimeframe);
+    }
+
+    if (pending.centerTimestamp != null) {
+      setFocusTimestamp(pending.centerTimestamp);
+    }
+    pendingRestoreRef.current = pending;
+
+    const symbolMatches = !nextSymbol || nextSymbol === symbol;
+    const timeframeMatches = !nextTimeframe || nextTimeframe === timeframe;
+    if (symbolMatches && timeframeMatches && bars.length > 0 && !isBarsLoading) {
+      pendingRestoreRef.current = null;
+      window.setTimeout(() => {
+        if (pending.drawings.length > 0) {
+          chartRef.current?.importDrawings(pending.drawings);
+        }
+        if (pending.centerTimestamp != null) {
+          chartRef.current?.scrollToTimestamp(
+            pending.centerTimestamp,
+            pending.windowSeconds ?? undefined
+          );
+        }
+      }, 0);
+    }
+
+    onObservationLoadHandled?.(request.requestId);
+  }, [
+    bars.length,
+    isBarsLoading,
+    observationLoadRequest,
+    onObservationLoadHandled,
+    onSymbolChange,
+    onTimeframeChange,
+    symbol,
+    timeframe,
+  ]);
 
   const requestBars = useCallback(
     async (range: LoadedRange): Promise<ChartBar[]> => {
@@ -1481,6 +1602,7 @@ export function Mt5HistoryWorkspace({
           pendingRestoreRef.current = {
             drawings: chartRef.current?.exportAllDrawings() ?? [],
             centerTimestamp: chartRef.current?.getViewportCenterTimestamp() ?? null,
+            windowSeconds: chartRef.current?.getVisibleWindowSeconds() ?? null,
           };
           setTimeframe(tf);
           onTimeframeChange?.(tf);

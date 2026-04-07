@@ -25,6 +25,13 @@ export { Mt5HistoryWorkspace } from "./Mt5HistoryWorkspace";
 export { ChartTradeHistoryPanel } from "./ChartTradeHistoryPanel";
 export { ChartTradeHistoryDock } from "./ChartTradeHistoryDock";
 export type { ChartTradeHistoryPanelData } from "./ChartTradeHistoryPanel";
+export { ChartObservationPanel } from "./ChartObservationPanel";
+export { ChartObservationDock } from "./ChartObservationDock";
+export type {
+  ChartObservationWorkspaceApi,
+  ChartObservationLoadRequest,
+  ChartObservationPanelData,
+} from "./chartObservationTypes";
 
 export { ChartTabBar } from "./ChartTabBar";
 export type { ChartTab, ChartPane, ChartTabBarProps, LayoutType } from "./ChartTabBar";

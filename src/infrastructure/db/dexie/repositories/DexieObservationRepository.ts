@@ -52,6 +52,8 @@ export class DexieObservationRepository implements IObservationRepository {
       ...observation,
       clientId: observation.clientId ?? createUuid(),
       deviceId: observation.deviceId ?? getOrCreateDeviceId(),
+      source: observation.source ?? "manual",
+      chartContext: observation.chartContext ?? null,
       createdAt,
       updatedAt,
       deletedAt: observation.deletedAt ?? null,
@@ -128,6 +130,8 @@ export class DexieObservationRepository implements IObservationRepository {
     const payload: Observation = {
       ...observation,
       clientId: observation.clientId ?? existing?.clientId ?? createUuid(),
+      source: observation.source ?? existing?.source ?? "manual",
+      chartContext: observation.chartContext ?? existing?.chartContext ?? null,
       deviceId: observation.deviceId ?? null,
       deletedAt: observation.deletedAt ?? null,
       version: observation.version ?? existing?.version ?? 1,

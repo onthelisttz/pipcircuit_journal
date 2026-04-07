@@ -3,7 +3,7 @@
 import { useCallback } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { startOfDay, endOfDay } from "date-fns";
-import type { Observation } from "@domain/entities";
+import type { Observation, ObservationSource } from "@domain/entities";
 import { db } from "@infrastructure/db/dexie/database";
 import { useAuth } from "@ui/hooks/useAuth";
 
@@ -17,6 +17,12 @@ export interface UseObservationsFilters {
   from?: Date;
   to?: Date;
   categoryId?: number | null;
+  source?: ObservationSource | "all";
+}
+
+function getObservationSource(observation: Observation): ObservationSource {
+  if (observation.chartContext) return "chart";
+  return observation.source ?? "manual";
 }
 
 export function useObservations(filters?: UseObservationsFilters) {
@@ -39,10 +45,16 @@ export function useObservations(filters?: UseObservationsFilters) {
   const error = null;
 
   const filtered = (() => {
-    if (!filters?.from && !filters?.to) return observations;
+    let next = observations;
+
+    if (filters?.source && filters.source !== "all") {
+      next = next.filter((obs) => getObservationSource(obs) === filters.source);
+    }
+
+    if (!filters?.from && !filters?.to) return next;
     const fromMs = filters.from ? startOfDay(filters.from).getTime() : 0;
     const toMs = filters.to ? endOfDay(filters.to).getTime() : Number.MAX_SAFE_INTEGER;
-    return observations.filter((obs) => {
+    return next.filter((obs) => {
       const created = toTimeMs(obs.createdAt);
       return created >= fromMs && created <= toMs;
     });

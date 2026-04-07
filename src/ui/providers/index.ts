@@ -8,6 +8,7 @@ export { TradePanelProvider, useTradePanel } from "./TradePanelProvider";
 export type { TradePanelSortState, TradePanelSortKey, TradePanelSortDir } from "./TradePanelProvider";
 export { ObservationPanelProvider, useObservationPanel } from "./ObservationPanelProvider";
 export { ChartTradeHistoryPanelProvider, useChartTradeHistoryPanel } from "./ChartTradeHistoryPanelProvider";
+export { ChartObservationPanelProvider, useChartObservationPanel } from "./ChartObservationPanelProvider";
 
 // Future implementations:
 // export { QueryProvider } from './QueryProvider';
