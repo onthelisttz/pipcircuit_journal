@@ -1578,6 +1578,7 @@ export function Mt5HistoryWorkspace({
 
   const toolbar = (
     <div className={`relative z-20 flex flex-wrap items-center gap-2 border-b border-border ${compact ? 'pb-1.5' : 'pb-3'}`}>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
       <select
         value={symbol}
         onChange={(event) => {
@@ -1648,7 +1649,7 @@ export function Mt5HistoryWorkspace({
       />
 
       {!compact ? (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {DRAW_TOOLS.map((tool) => (
             <button
               key={tool.id}
@@ -1747,9 +1748,10 @@ export function Mt5HistoryWorkspace({
           </>
         );
       })()}
+      </div>
 
       {!compact ? (
-        <div className="ml-auto flex items-center gap-2 max-[480px]:ml-0 max-[480px]:w-full max-[480px]:flex-wrap max-[480px]:pt-1">
+        <div className="ml-auto flex shrink-0 items-center gap-2 max-[480px]:ml-0 max-[480px]:w-full max-[480px]:flex-wrap max-[480px]:pt-1">
           <button type="button" onClick={() => setIsExpanded((prev) => !prev)} className="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted" title={isExpanded ? "Exit full screen" : "Full screen"}>
             {isExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
           </button>
@@ -1762,7 +1764,7 @@ export function Mt5HistoryWorkspace({
           </button>
         </div>
       ) : (
-        <div className="relative ml-auto" ref={compactActionsRef}>
+        <div className="relative ml-auto shrink-0" ref={compactActionsRef}>
           <button
             type="button"
             onClick={() => { setCompactActionsOpen((o) => !o); setCompactDrawOpen(false); }}

@@ -988,6 +988,7 @@ export function SyncedChartWorkspace({
 
   const toolbar = (
     <div className={`relative z-20 flex flex-wrap items-center gap-2 border-b border-border ${compact ? 'pb-1.5' : 'pb-3'}`}>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
       <div className="relative">
         <button
           ref={symbolButtonRef}
@@ -1175,7 +1176,7 @@ export function SyncedChartWorkspace({
       </div>
 
       {!compact ? (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {DRAW_TOOLS.map((tool) => (
             <button
               key={tool.id}
@@ -1461,9 +1462,10 @@ export function SyncedChartWorkspace({
           </>
         );
       })()}
+      </div>
 
       {!compact ? (
-        <div className="ml-auto flex items-center gap-2 max-[480px]:ml-0 max-[480px]:w-full max-[480px]:flex-wrap max-[480px]:pt-1">
+        <div className="ml-auto flex shrink-0 items-center gap-2 max-[480px]:ml-0 max-[480px]:w-full max-[480px]:flex-wrap max-[480px]:pt-1">
           <button
             type="button"
             onClick={() => setIsExpanded((prev) => !prev)}
@@ -1510,7 +1512,7 @@ export function SyncedChartWorkspace({
         </div>
       ) : (
         /* Compact mode: actions in a popover */
-        <div className="relative ml-auto" ref={compactActionsRef}>
+        <div className="relative ml-auto shrink-0" ref={compactActionsRef}>
           <button
             type="button"
             onClick={() => { setCompactActionsOpen((o) => !o); setCompactDrawOpen(false); }}
