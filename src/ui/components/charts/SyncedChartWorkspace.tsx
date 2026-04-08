@@ -1215,7 +1215,7 @@ export function SyncedChartWorkspace({
                   className={`h-7 items-center gap-1.5 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${
                     showDrawControls
                       ? "flex opacity-100"
-                      : "hidden pointer-events-none opacity-0 sm:flex"
+                      : "hidden pointer-events-none opacity-0"
                   }`}
                   aria-hidden={!showDrawControls}
                 >
@@ -1244,7 +1244,7 @@ export function SyncedChartWorkspace({
                   className={`h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${
                     showCalloutControls
                       ? "flex opacity-100"
-                      : "hidden pointer-events-none opacity-0 sm:flex"
+                      : "hidden pointer-events-none opacity-0"
                   }`}
                   aria-hidden={!showCalloutControls}
                 >
@@ -1297,7 +1297,7 @@ export function SyncedChartWorkspace({
                   className={`h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${
                     showLotsControls
                       ? "flex opacity-100"
-                      : "hidden pointer-events-none opacity-0 sm:flex"
+                      : "hidden pointer-events-none opacity-0"
                   }`}
                   aria-hidden={!showLotsControls}
                 >

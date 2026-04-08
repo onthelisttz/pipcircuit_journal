@@ -1671,16 +1671,16 @@ export function Mt5HistoryWorkspace({
             const showLotsControls = drawingTool === "LongShortPosition" || selectedDrawingTool === "LongShortPosition";
             return (
               <>
-                <div className={`h-7 items-center gap-1.5 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${showDrawControls ? "flex opacity-100" : "hidden pointer-events-none opacity-0 sm:flex"}`} aria-hidden={!showDrawControls}>
+                <div className={`h-7 items-center gap-1.5 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${showDrawControls ? "flex opacity-100" : "hidden pointer-events-none opacity-0"}`} aria-hidden={!showDrawControls}>
                   <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Draw color</span>
                   <input type="color" aria-label="Draw color" value={rectangleFillColor} onChange={(event) => setRectangleFillColor(event.target.value)} className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0" />
                   <input type="range" aria-label="Draw opacity" min={0} max={1} step={0.05} value={rectangleFillOpacity} onChange={(event) => setRectangleFillOpacity(Number(event.target.value))} className="h-1.5 w-14 accent-foreground" />
                 </div>
-                <div className={`h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${showLotsControls ? "flex opacity-100" : "hidden pointer-events-none opacity-0 sm:flex"}`} aria-hidden={!showLotsControls}>
+                <div className={`h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${showLotsControls ? "flex opacity-100" : "hidden pointer-events-none opacity-0"}`} aria-hidden={!showLotsControls}>
                   <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Lots</span>
                   <input type="number" inputMode="decimal" min={0.01} step={0.01} value={Number.isFinite(longShortLots) ? longShortLots : 1} onChange={(event) => setLongShortLots(Number(event.target.value))} className="h-5 w-14 rounded border border-border bg-background px-1.5 text-[10px] text-foreground" />
                 </div>
-                <div className={`h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${showCalloutControls ? "flex opacity-100" : "hidden pointer-events-none opacity-0 sm:flex"}`} aria-hidden={!showCalloutControls}>
+                <div className={`h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${showCalloutControls ? "flex opacity-100" : "hidden pointer-events-none opacity-0"}`} aria-hidden={!showCalloutControls}>
                   <textarea ref={calloutTextInputRef} value={calloutText} onChange={(event) => setCalloutText(event.target.value)} onKeyDown={handleCalloutTextKeyDown} placeholder="Text" rows={1} className="h-7 w-28 resize-none rounded border border-border bg-background px-1.5 py-1 text-[10px] leading-[1.2] text-foreground" />
                   <input type="color" value={calloutTextColor} onChange={(event) => setCalloutTextColor(event.target.value)} className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0" aria-label="Text color" />
                   <input type="color" value={calloutLineColor} onChange={(event) => setCalloutLineColor(event.target.value)} className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0" aria-label="Line and border color" />
