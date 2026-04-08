@@ -146,45 +146,52 @@ export class DexieChartBarRepository implements IChartBarRepository {
     timeframe: ChartTimeframe = "M1"
   ): Promise<{ firstBarDate: Date | null; lastBarDate: Date | null }> {
     try {
-      // Query all bars for this broker+symbol+timeframe combination
-      const bars = await db.chart_bars
-        .where("[broker+symbol+timeframe+timestamp]")
-        .between(
-          [broker, symbol, timeframe, 0],
-          [broker, symbol, timeframe, Number.MAX_SAFE_INTEGER],
-          true,
-          true
-        )
-        .toArray();
-
-      if (bars.length === 0) {
-        // Try fallback query without broker filter (for backward compatibility)
-        const fallbackBars = await db.chart_bars
-          .where("[symbol+timeframe+timestamp]")
+      const brokerQuery = () =>
+        db.chart_bars
+          .where("[broker+symbol+timeframe+timestamp]")
           .between(
-            [symbol, timeframe, 0],
-            [symbol, timeframe, Number.MAX_SAFE_INTEGER],
+            [broker, symbol, timeframe, 0],
+            [broker, symbol, timeframe, Number.MAX_SAFE_INTEGER],
             true,
             true
-          )
-          .filter((bar) => bar.broker === broker)
-          .toArray();
-        
-        if (fallbackBars.length === 0) {
+          );
+
+      const [firstBar, lastBar] = await Promise.all([
+        brokerQuery().first(),
+        brokerQuery().last(),
+      ]);
+
+      if (!firstBar || !lastBar) {
+        // Try fallback query without broker filter (for backward compatibility)
+        const fallbackQuery = () =>
+          db.chart_bars
+            .where("[symbol+timeframe+timestamp]")
+            .between(
+              [symbol, timeframe, 0],
+              [symbol, timeframe, Number.MAX_SAFE_INTEGER],
+              true,
+              true
+            )
+            .filter((bar) => bar.broker === broker);
+
+        const [fallbackFirstBar, fallbackLastBar] = await Promise.all([
+          fallbackQuery().first(),
+          fallbackQuery().last(),
+        ]);
+
+        if (!fallbackFirstBar || !fallbackLastBar) {
           return { firstBarDate: null, lastBarDate: null };
         }
-        
-        const timestamps = fallbackBars.map((bar) => bar.timestamp).sort((a, b) => a - b);
+
         return {
-          firstBarDate: new Date(timestamps[0]),
-          lastBarDate: new Date(timestamps[timestamps.length - 1]),
+          firstBarDate: new Date(fallbackFirstBar.timestamp),
+          lastBarDate: new Date(fallbackLastBar.timestamp),
         };
       }
 
-      const timestamps = bars.map((bar) => bar.timestamp).sort((a, b) => a - b);
       return {
-        firstBarDate: new Date(timestamps[0]),
-        lastBarDate: new Date(timestamps[timestamps.length - 1]),
+        firstBarDate: new Date(firstBar.timestamp),
+        lastBarDate: new Date(lastBar.timestamp),
       };
     } catch (error) {
       console.error(`[DexieChartRepo] Error getting date range for ${broker}:${symbol}:`, error);

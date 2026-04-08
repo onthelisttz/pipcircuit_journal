@@ -1,9 +1,10 @@
 import type { ICTraderAPI } from "@application/ports/services";
 import type { IChartBarRepository, ISymbolSyncProgressRepository } from "@application/ports/repositories";
-import type { ChartBar, SymbolSyncStatus } from "@domain/entities";
+import type { ChartBar, SymbolSyncProgress, SymbolSyncStatus } from "@domain/entities";
 import { CTRADER_M1_MAX_CHUNK_DAYS } from "@config/ctrader";
 import { CTraderMapper } from "@infrastructure/api/ctrader/CTraderMapper";
 import { progressEventEmitter } from "@infrastructure/sync/ProgressEventEmitter";
+import { defaultRetryCondition, retry } from "@infrastructure/sync/utils";
 
 export interface HybridSyncChartBarsParams {
   userId: string;
@@ -38,6 +39,15 @@ export interface HybridSyncChartBarsResult {
   error?: string;
 }
 
+interface LocalSyncSnapshot {
+  cachedTotalBars: number;
+  cachedFirstBarDate: Date | null;
+  cachedLastBarDate: Date | null;
+  existingProgress: SymbolSyncProgress | null;
+}
+
+const M1_BAR_MS = 60 * 1000;
+
 /**
  * HybridSyncChartBarsUseCase
  *
@@ -58,7 +68,6 @@ export class HybridSyncChartBarsUseCase {
     const {
       broker,
       symbol,
-      fromDate,
       toDate,
       forceFullSync = false,
     } = params;
@@ -66,56 +75,59 @@ export class HybridSyncChartBarsUseCase {
     
 
     try {
-      // Step 1: Check Dexie first (local)
       const progress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
-      const dexieBars = await this.dexieChartBarRepo.getByWindow(
-        symbol,
-        "M1",
-        fromDate.getTime(),
-        toDate.getTime(),
-        broker
-      );
+      const [cachedDateRange, cachedTotalBars] = await Promise.all([
+        this.dexieChartBarRepo.getDateRange
+          ? this.dexieChartBarRepo.getDateRange(broker, symbol, "M1")
+          : Promise.resolve({ firstBarDate: null, lastBarDate: null }),
+        this.dexieChartBarRepo.countBars
+          ? this.dexieChartBarRepo.countBars(broker, symbol, "M1")
+          : Promise.resolve(progress?.totalBars ?? 0),
+      ]);
 
-      if (dexieBars.length > 0 && !forceFullSync) {
-        // Only short-circuit to Dexie when this symbol already completed a local sync.
-        // Pending/failed/incomplete symbols may have partial bars cached and still need
-        // a full cTrader download to finish the requested range.
-        const isLocallyComplete = progress?.status === "completed";
+      const localSnapshot: LocalSyncSnapshot = {
+        cachedTotalBars,
+        cachedFirstBarDate: cachedDateRange.firstBarDate,
+        cachedLastBarDate: cachedDateRange.lastBarDate,
+        existingProgress: progress,
+      };
 
-        // Check if we need incremental update (check last sync timestamp)
-        const needsIncrementalUpdate = progress?.lastSyncTime 
-          ? new Date(progress.lastSyncTime) < toDate
-          : false;
+      if (!forceFullSync && cachedDateRange.lastBarDate) {
+        const resumeFromDate = new Date(cachedDateRange.lastBarDate.getTime() + M1_BAR_MS);
+        const hasFetchedThroughTarget =
+          cachedDateRange.lastBarDate.getTime() >= toDate.getTime() - M1_BAR_MS;
 
-        if (isLocallyComplete && !needsIncrementalUpdate) {
-          
+        if (progress?.status === "completed" && hasFetchedThroughTarget) {
           return {
             success: true,
-            totalBars: dexieBars.length,
+            totalBars: cachedTotalBars,
             barsSynced: 0,
             chunksProcessed: 0,
             source: "dexie",
           };
         }
 
-        // Need incremental update, or local cache is only partial/incomplete.
-        // In both cases continue with cTrader instead of stopping at the cached bars.
-        const lastSyncTime = progress?.lastSyncTime ? new Date(progress.lastSyncTime) : fromDate;
-        return await this.syncFromCTrader(
-          {
-            ...params,
-            fromDate:
-              isLocallyComplete && lastSyncTime > fromDate
-                ? lastSyncTime
-                : fromDate,
-          },
-          "ctrader"
-        );
+        if (resumeFromDate <= toDate) {
+          return await this.syncFromCTrader(
+            {
+              ...params,
+              fromDate: resumeFromDate,
+            },
+            "ctrader",
+            localSnapshot
+          );
+        }
+
+        return {
+          success: true,
+          totalBars: cachedTotalBars,
+          barsSynced: 0,
+          chunksProcessed: 0,
+          source: "dexie",
+        };
       }
 
-      // Step 2: Local cache is empty/stale, fetch from cTrader
-      
-      return await this.syncFromCTrader(params, "ctrader");
+      return await this.syncFromCTrader(params, "ctrader", localSnapshot);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error(`[HybridSync] Hybrid sync failed:`, error);
@@ -143,7 +155,8 @@ export class HybridSyncChartBarsUseCase {
    */
   private async syncFromCTrader(
     params: HybridSyncChartBarsParams,
-    source: "ctrader"
+    source: "ctrader",
+    localSnapshot?: LocalSyncSnapshot
   ): Promise<HybridSyncChartBarsResult> {
     const {
       broker,
@@ -159,7 +172,17 @@ export class HybridSyncChartBarsUseCase {
 
     
 
-    // Update status to syncing
+    const existingProgress = localSnapshot?.existingProgress
+      ?? await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
+    const cachedTotalBars = localSnapshot?.cachedTotalBars ?? 0;
+    const cachedFirstBarDate = localSnapshot?.cachedFirstBarDate ?? null;
+    const cachedLastBarDate = localSnapshot?.cachedLastBarDate ?? null;
+    const hasLocalHistory = cachedTotalBars > 0 && cachedLastBarDate !== null;
+    const isIncrementalSync =
+      existingProgress?.status === "completed" &&
+      cachedLastBarDate !== null &&
+      fromDate.getTime() >= cachedLastBarDate.getTime() - M1_BAR_MS;
+
     try {
       await Promise.race([
         this.progressRepo.updateStatus(broker, symbol, "syncing" as SymbolSyncStatus),
@@ -172,40 +195,21 @@ export class HybridSyncChartBarsUseCase {
     }
 
     try {
-      // Fetch existing progress for incremental sync (preserve firstBarDate and totalBars)
-      const existingProgress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
-      const existingLastBar = existingProgress?.lastBarDate
-        ? new Date(existingProgress.lastBarDate).getTime()
-        : 0;
-      const isIncrementalSync =
-        existingProgress?.status === "completed" &&
-        existingProgress?.firstBarDate &&
-        existingProgress?.lastBarDate &&
-        fromDate.getTime() >= existingLastBar - 86400000; // fromDate at or near lastBarDate = incremental
-
-      const baseTotalBars = isIncrementalSync && existingProgress ? existingProgress.totalBars : 0;
-      const preservedFirstBarDate: Date | null =
-        isIncrementalSync && existingProgress?.firstBarDate
-          ? new Date(existingProgress.firstBarDate)
-          : null;
-
-      if (isIncrementalSync) {
-        
-      }
-
       // Calculate chunks
       const totalDays = Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24));
       const totalChunks = Math.max(1, Math.ceil(totalDays / chunkDays));
       
       
 
-      let totalBars = baseTotalBars;
+      let totalBars = hasLocalHistory ? cachedTotalBars : 0;
       let barsSynced = 0;
       let chunksProcessed = 0;
-      let firstBarDate: Date | null = preservedFirstBarDate;
+      let firstBarDate: Date | null = existingProgress?.firstBarDate
+        ? new Date(existingProgress.firstBarDate)
+        : cachedFirstBarDate;
       let lastBarDate: Date | null = existingProgress?.lastBarDate
         ? new Date(existingProgress.lastBarDate)
-        : null;
+        : cachedLastBarDate;
 
       // Process in chunks
       for (let chunk = 0; chunk < totalChunks; chunk++) {
@@ -217,6 +221,11 @@ export class HybridSyncChartBarsUseCase {
             "pending" as SymbolSyncStatus,
             "Sync cancelled by user"
           );
+          await this.progressRepo.updateProgress(broker, symbol, {
+            currentFetchFrom: null,
+            currentFetchTo: null,
+            currentFetchStartedAt: null,
+          });
           return {
             success: false,
             totalBars,
@@ -239,24 +248,60 @@ export class HybridSyncChartBarsUseCase {
 
         const chunkFrom = chunkStart.getTime();
         const chunkTo = chunkEnd.getTime();
+        const chunkFetchStartedAt = new Date();
 
         try {
-          
-          
-          // Fetch bars from cTrader API (M1 only)
-          const apiBars = await this.api.getBars(
-            accessToken,
-            symbol,
-            "M1",
-            chunkFrom,
-            chunkTo,
-            accountNumber
+          await this.progressRepo.updateProgress(broker, symbol, {
+            currentFetchFrom: new Date(chunkFrom),
+            currentFetchTo: new Date(chunkTo),
+            currentFetchStartedAt: chunkFetchStartedAt,
+          });
+          const activeProgress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
+          if (activeProgress) {
+            progressEventEmitter.emit(activeProgress);
+          }
+
+          const fetchResult = await retry(
+            () =>
+              this.api.getBars(
+                accessToken,
+                symbol,
+                "M1",
+                chunkFrom,
+                chunkTo,
+                accountNumber
+              ),
+            {
+              maxAttempts: 3,
+              initialDelay: 1000,
+              maxDelay: 5000,
+              retryCondition: defaultRetryCondition,
+            }
           );
 
-          
+          if (!fetchResult.success) {
+            throw fetchResult.error ?? new Error("Failed to fetch bars");
+          }
+
+          const apiBars = fetchResult.result ?? [];
 
           if (apiBars.length === 0) {
             chunksProcessed++;
+            const progressPercent = Math.round((chunksProcessed / totalChunks) * 100);
+            await this.progressRepo.updateProgress(broker, symbol, {
+              totalBars,
+              firstBarDate,
+              lastBarDate,
+              progressPercent,
+              lastSyncTime: new Date(),
+              currentFetchFrom: new Date(chunkFrom),
+              currentFetchTo: new Date(chunkTo),
+              currentFetchStartedAt: chunkFetchStartedAt,
+            });
+            const currentProgress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
+            if (currentProgress) {
+              progressEventEmitter.emit(currentProgress);
+            }
             continue;
           }
 
@@ -276,14 +321,11 @@ export class HybridSyncChartBarsUseCase {
             const chunkFirstDate = new Date(sortedBars[0].timestamp);
             const chunkLastDate = new Date(sortedBars[sortedBars.length - 1].timestamp);
 
-            // For incremental sync, preserve firstBarDate (don't update it)
-            // Only update firstBarDate for full syncs
             if (!isIncrementalSync) {
               if (!firstBarDate || chunkFirstDate < firstBarDate) {
                 firstBarDate = chunkFirstDate;
               }
             }
-            // Always update lastBarDate (it moves forward with new data)
             if (!lastBarDate || chunkLastDate > lastBarDate) {
               lastBarDate = chunkLastDate;
             }
@@ -305,6 +347,9 @@ export class HybridSyncChartBarsUseCase {
             lastBarDate,
             progressPercent,
             lastSyncTime: new Date(),
+            currentFetchFrom: new Date(chunkFrom),
+            currentFetchTo: new Date(chunkTo),
+            currentFetchStartedAt: chunkFetchStartedAt,
           });
 
           // Emit progress event
@@ -335,6 +380,15 @@ export class HybridSyncChartBarsUseCase {
             "failed" as SymbolSyncStatus,
             chunkError
           );
+          await this.progressRepo.updateProgress(broker, symbol, {
+            totalBars,
+            firstBarDate,
+            lastBarDate,
+            progressPercent: Math.round((chunksProcessed / totalChunks) * 100),
+            currentFetchFrom: new Date(chunkFrom),
+            currentFetchTo: new Date(chunkTo),
+            currentFetchStartedAt: chunkFetchStartedAt,
+          });
 
           const failedProgress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
           if (failedProgress) {
@@ -366,10 +420,7 @@ export class HybridSyncChartBarsUseCase {
         : totalBars;
       
 
-      // For incremental sync, ensure we preserve the original firstBarDate
-      const finalFirstBarDate = isIncrementalSync && preservedFirstBarDate
-        ? preservedFirstBarDate
-        : firstBarDate;
+      const finalFirstBarDate = cachedFirstBarDate || firstBarDate;
 
       // Also recalculate date range from Dexie for accuracy
       const actualDateRange = this.dexieChartBarRepo.getDateRange
@@ -387,6 +438,9 @@ export class HybridSyncChartBarsUseCase {
         progressPercent: 100,
         lastSyncTime: new Date(),
         error: null,
+        currentFetchFrom: null,
+        currentFetchTo: null,
+        currentFetchStartedAt: null,
       });
 
       const updatedProgress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
@@ -410,6 +464,11 @@ export class HybridSyncChartBarsUseCase {
         "failed" as SymbolSyncStatus,
         errorMsg
       );
+      await this.progressRepo.updateProgress(broker, symbol, {
+        currentFetchFrom: null,
+        currentFetchTo: null,
+        currentFetchStartedAt: null,
+      });
 
       const failedProgress = await this.progressRepo.getByBrokerAndSymbol(broker, symbol);
       if (failedProgress) {

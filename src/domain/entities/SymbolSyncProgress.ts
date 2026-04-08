@@ -26,4 +26,10 @@ export interface SymbolSyncProgress {
   error?: string | null;
   /** Progress percentage (0-100) */
   progressPercent?: number;
+  /** Current chunk start being fetched */
+  currentFetchFrom?: Date | null;
+  /** Current chunk end being fetched */
+  currentFetchTo?: Date | null;
+  /** When the current chunk fetch started */
+  currentFetchStartedAt?: Date | null;
 }

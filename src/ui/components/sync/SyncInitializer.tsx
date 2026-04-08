@@ -326,9 +326,7 @@ export function SyncInitializer() {
               progressRepo
             );
 
-            const fromDate = progress.lastSyncTime
-              ? new Date(progress.lastSyncTime)
-              : progress.firstBarDate
+            const fromDate = progress.firstBarDate
               ? new Date(progress.firstBarDate)
               : new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
 

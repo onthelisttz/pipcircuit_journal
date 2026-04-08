@@ -594,6 +594,9 @@ export function ChartDataSyncSection() {
         lastSyncTime: null,
         error: null,
         progressPercent: 0,
+        currentFetchFrom: null,
+        currentFetchTo: null,
+        currentFetchStartedAt: null,
       });
 
       setDeleteConfirm(null);
@@ -619,6 +622,9 @@ export function ChartDataSyncSection() {
       await progressRepo.updateProgress(broker, symbol, {
         error: null,
         progressPercent: 0,
+        currentFetchFrom: null,
+        currentFetchTo: null,
+        currentFetchStartedAt: null,
       });
       setSyncingSymbols((prev) => {
         const next = new Set(prev);
@@ -676,10 +682,9 @@ export function ChartDataSyncSection() {
         progressRepo
       );
 
-      // Resume from last sync time or continue from current progress
-      const fromDate = symbolProgress.lastSyncTime 
-        ? new Date(symbolProgress.lastSyncTime) // Resume from last sync point
-        : symbolProgress.firstBarDate 
+      // Restart from the planned range; the sync use case will resume from the
+      // actual last local bar when partial history already exists.
+      const fromDate = symbolProgress.firstBarDate 
         ? new Date(symbolProgress.firstBarDate)
         : new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
       
