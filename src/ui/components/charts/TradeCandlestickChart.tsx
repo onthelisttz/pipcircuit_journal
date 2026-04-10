@@ -486,6 +486,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const entryLineRef = useRef<IPriceLine | null>(null);
     const stopLossLineRef = useRef<IPriceLine | null>(null);
     const exitLineRef = useRef<IPriceLine | null>(null);
+    const priceScaleUnlockFrameRef = useRef<number | null>(null);
     const [isChartReady, setIsChartReady] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
     const [timeGuideOverlay, setTimeGuideOverlay] = useState<{
@@ -1134,6 +1135,26 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         onVisibleRangeChangeRef.current = onVisibleRangeChange;
     }, [onVisibleRangeChange]);
 
+    const scheduleFreePriceScaleMode = useCallback(() => {
+        if (typeof window === "undefined") return;
+        if (priceScaleUnlockFrameRef.current != null) {
+            window.cancelAnimationFrame(priceScaleUnlockFrameRef.current);
+        }
+
+        priceScaleUnlockFrameRef.current = window.requestAnimationFrame(() => {
+            priceScaleUnlockFrameRef.current = window.requestAnimationFrame(() => {
+                const priceScale = seriesRef.current?.priceScale();
+                const visibleRange = priceScale?.getVisibleRange();
+                if (!priceScale || !visibleRange) return;
+                if (!Number.isFinite(visibleRange.from) || !Number.isFinite(visibleRange.to)) return;
+                if (visibleRange.from === visibleRange.to) return;
+
+                priceScale.setAutoScale(false);
+                priceScale.setVisibleRange(visibleRange);
+            });
+        });
+    }, []);
+
     const findNearestIndexByTimestamp = useCallback((bars: ChartBar[], timestamp: number): number => {
         if (bars.length === 0) return 0;
 
@@ -1274,6 +1295,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 },
             },
             rightPriceScale: {
+                autoScale: true,
                 borderColor: "#374151",
                 scaleMargins: { top: 0.15, bottom: 0.15 },
                 entireTextOnly: false,
@@ -1724,6 +1746,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 cancelAnimationFrame(overlayFrameRef.current);
                 overlayFrameRef.current = null;
             }
+            if (priceScaleUnlockFrameRef.current != null) {
+                cancelAnimationFrame(priceScaleUnlockFrameRef.current);
+                priceScaleUnlockFrameRef.current = null;
+            }
             resizeObserver?.disconnect();
             chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRange);
             entryLineRef.current = null;
@@ -2153,11 +2179,15 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         if (!seriesRef.current || !isChartReady || data.length === 0) return;
 
         const timeScale = chartRef.current?.timeScale();
+        const priceScale = seriesRef.current.priceScale();
         const drawingsBeforeDataUpdate =
             drawingTool == null && getLineToolsInternal()?._interactionManager?._currentToolCreating == null
                 ? exportCurrentDrawings()
                 : [];
         const previousBars = prevBarsRef.current;
+        if (previousBars.length === 0 || dataUpdateMode === "replace") {
+            priceScale.setAutoScale(true);
+        }
         const currentRange = !autoScrollOnData && timeScale ? timeScale.getVisibleLogicalRange() : null;
         const appendOnlyUpdate =
             !autoScrollOnData &&
@@ -2236,6 +2266,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                     }
                 }
             }
+            scheduleFreePriceScaleMode();
             if (drawingsBeforeDataUpdate.length > 0 && !appendOnlyUpdate) {
                 window.setTimeout(() => {
                     syncImportedDrawings(drawingsBeforeDataUpdate);
@@ -2256,13 +2287,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             suppressVisibleRangeUntilRef.current = Date.now() + 120;
             chartRef.current?.timeScale().fitContent();
         }
+        scheduleFreePriceScaleMode();
         if (drawingsBeforeDataUpdate.length > 0 && !appendOnlyUpdate) {
             window.setTimeout(() => {
                 syncImportedDrawings(drawingsBeforeDataUpdate);
             }, 0);
         }
         prevBarsRef.current = data;
-    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, dataUpdateMode, drawingTool, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, syncImportedDrawings, toCandlestickPoint, zoomOutMultiplier]);
+    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, dataUpdateMode, drawingTool, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, scheduleFreePriceScaleMode, syncImportedDrawings, toCandlestickPoint, zoomOutMultiplier]);
 
     useEffect(() => {
         const series = seriesRef.current;

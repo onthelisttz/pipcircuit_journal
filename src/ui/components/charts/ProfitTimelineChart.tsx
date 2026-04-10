@@ -57,6 +57,7 @@ export const ProfitTimelineChart = forwardRef<ProfitTimelineChartRef, ProfitTime
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const priceScaleUnlockFrameRef = useRef<number | null>(null);
     const maeLineRef = useRef<IPriceLine | null>(null);
     const mfeLineRef = useRef<IPriceLine | null>(null);
     const [isChartReady, setIsChartReady] = useState(false);
@@ -158,6 +159,26 @@ export const ProfitTimelineChart = forwardRef<ProfitTimelineChartRef, ProfitTime
         []
     );
 
+    const scheduleFreePriceScaleMode = useCallback(() => {
+        if (typeof window === "undefined") return;
+        if (priceScaleUnlockFrameRef.current != null) {
+            window.cancelAnimationFrame(priceScaleUnlockFrameRef.current);
+        }
+
+        priceScaleUnlockFrameRef.current = window.requestAnimationFrame(() => {
+            priceScaleUnlockFrameRef.current = window.requestAnimationFrame(() => {
+                const priceScale = seriesRef.current?.priceScale();
+                const visibleRange = priceScale?.getVisibleRange();
+                if (!priceScale || !visibleRange) return;
+                if (!Number.isFinite(visibleRange.from) || !Number.isFinite(visibleRange.to)) return;
+                if (visibleRange.from === visibleRange.to) return;
+
+                priceScale.setAutoScale(false);
+                priceScale.setVisibleRange(visibleRange);
+            });
+        });
+    }, []);
+
     // Initialize chart
     useEffect(() => {
         if (!containerRef.current || !visible) return;
@@ -175,6 +196,7 @@ export const ProfitTimelineChart = forwardRef<ProfitTimelineChartRef, ProfitTime
                 horzLines: { color: "#1f2937" },
             },
             rightPriceScale: {
+                autoScale: true,
                 borderColor: "#374151",
                 scaleMargins: { top: 0.2, bottom: 0.2 },
             },
@@ -242,6 +264,10 @@ export const ProfitTimelineChart = forwardRef<ProfitTimelineChartRef, ProfitTime
             window.removeEventListener("resize", handleResize);
             window.clearTimeout(timeoutId);
             cancelAnimationFrame(rafId);
+            if (priceScaleUnlockFrameRef.current != null) {
+                cancelAnimationFrame(priceScaleUnlockFrameRef.current);
+                priceScaleUnlockFrameRef.current = null;
+            }
             resizeObserver?.disconnect();
             chart.remove();
             chartRef.current = null;
@@ -254,11 +280,13 @@ export const ProfitTimelineChart = forwardRef<ProfitTimelineChartRef, ProfitTime
     useEffect(() => {
         if (!seriesRef.current || !isChartReady || data.length === 0) return;
 
+        seriesRef.current.priceScale().setAutoScale(true);
         const profitData = calculateProfitTimeline(data, trade);
         seriesRef.current.setData(profitData);
 
         chartRef.current?.timeScale().fitContent();
-    }, [data, trade, isChartReady, calculateProfitTimeline]);
+        scheduleFreePriceScaleMode();
+    }, [data, trade, isChartReady, calculateProfitTimeline, scheduleFreePriceScaleMode]);
 
     // Add MAE/MFE price lines (remove old before adding new to avoid accumulation)
     useEffect(() => {
