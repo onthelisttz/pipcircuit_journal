@@ -1,10 +1,20 @@
 "use client";
 
+import {
+  addMonths,
+  endOfMonth,
+  format,
+  isSameDay,
+  startOfMonth,
+} from "date-fns";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
+  Calendar,
   RefreshCw,
   Eraser,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CheckCircle2,
   Clock3,
   AlertTriangle,
@@ -13,6 +23,7 @@ import {
   Minimize2,
   Pencil,
   MoreVertical,
+  X,
 } from "lucide-react";
 import type { ChartTimeframe, Trade } from "@domain/entities";
 import { Direction, OrderType } from "@domain/enums";
@@ -61,6 +72,288 @@ const TIMEFRAMES: ChartTimeframe[] = ["M1", "M5", "M15", "H1"];
 const EDGE_FETCH_THRESHOLD = 10;
 const FETCH_THROTTLE_MS = 160;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function toDateInputValue(timestamp: number): string {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function parseDateInputValue(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+
+  const parsed = new Date(`${value}T00:00:00`);
+  if (!Number.isFinite(parsed.getTime())) return null;
+  if (toDateInputValue(parsed.getTime()) !== value) return null;
+
+  return parsed;
+}
+
+function fromDateInputValue(value: string): number {
+  return parseDateInputValue(value)?.getTime() ?? Number.NaN;
+}
+
+function buildMonthDays(month: Date): Date[] {
+  const start = startOfMonth(month);
+  const end = endOfMonth(month);
+  const days: Date[] = [];
+
+  for (let day = start.getDate(); day <= end.getDate(); day += 1) {
+    days.push(new Date(start.getFullYear(), start.getMonth(), day));
+  }
+
+  return days;
+}
+
+interface SingleDatePopoverProps {
+  value: Date;
+  min: Date;
+  max: Date;
+  onClose: () => void;
+  onApply: (date: Date) => void;
+}
+
+function SingleDatePopover({
+  value,
+  min,
+  max,
+  onClose,
+  onApply,
+}: SingleDatePopoverProps) {
+  const [tempDate, setTempDate] = useState<Date>(value);
+  const [visibleMonth, setVisibleMonth] = useState<Date>(startOfMonth(value));
+  const [inputValue, setInputValue] = useState(() => toDateInputValue(value.getTime()));
+  const [isApplyEnabled, setIsApplyEnabled] = useState(true);
+
+  const monthDays = useMemo(() => buildMonthDays(visibleMonth), [visibleMonth]);
+  const firstWeekday = new Date(visibleMonth).getDay();
+  const minMonth = startOfMonth(min);
+  const maxMonth = startOfMonth(max);
+  const minDateValue = toDateInputValue(min.getTime());
+  const maxDateValue = toDateInputValue(max.getTime());
+  const canGoPrev = visibleMonth.getTime() > minMonth.getTime();
+  const canGoNext = visibleMonth.getTime() < maxMonth.getTime();
+  const today = new Date();
+  const dateInputError =
+    inputValue.length === 0
+      ? "Enter a date."
+      : parseDateInputValue(inputValue) === null
+        ? "Use YYYY-MM-DD."
+        : inputValue < minDateValue || inputValue > maxDateValue
+          ? `Date must be between ${minDateValue} and ${maxDateValue}.`
+          : null;
+
+  const updateSelectedDate = (nextDate: Date) => {
+    setTempDate(nextDate);
+    setVisibleMonth(startOfMonth(nextDate));
+    setInputValue(toDateInputValue(nextDate.getTime()));
+    setIsApplyEnabled(true);
+  };
+
+  return (
+    <div className="fixed inset-x-2 bottom-2 top-16 z-30 overflow-y-auto rounded-xl border border-border bg-popover p-3 shadow-2xl animate-in fade-in-0 zoom-in-95 sm:absolute sm:left-0 sm:top-full sm:mt-2 sm:w-[320px] sm:max-w-[calc(100vw-2rem)] sm:inset-auto sm:p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-sm font-medium text-foreground">
+          {format(tempDate, "MMM d, yyyy")}
+        </span>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          onClick={onClose}
+          aria-label="Close date picker"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <div className="mb-3">
+        <label
+          htmlFor="synced-chart-go-to-date-input"
+          className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+        >
+          Go to date
+        </label>
+        <input
+          id="synced-chart-go-to-date-input"
+          type="text"
+          value={inputValue}
+          onChange={(event) => {
+            const nextValue = event.target.value.trim();
+            setInputValue(nextValue);
+
+            const parsedDate = parseDateInputValue(nextValue);
+            if (
+              parsedDate === null ||
+              nextValue < minDateValue ||
+              nextValue > maxDateValue
+            ) {
+              setIsApplyEnabled(false);
+              return;
+            }
+
+            setTempDate(parsedDate);
+            setVisibleMonth(startOfMonth(parsedDate));
+            setIsApplyEnabled(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") return;
+
+            event.preventDefault();
+            if (!isApplyEnabled || dateInputError) return;
+            onApply(tempDate);
+          }}
+          placeholder="YYYY-MM-DD"
+          autoComplete="off"
+          spellCheck={false}
+          className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60"
+          aria-invalid={dateInputError ? "true" : "false"}
+          aria-describedby="synced-chart-go-to-date-help"
+        />
+        <p
+          id="synced-chart-go-to-date-help"
+          className={`mt-1 text-[10px] ${
+            dateInputError ? "text-destructive" : "text-muted-foreground"
+          }`}
+        >
+          {dateInputError ?? ""}
+        </p>
+      </div>
+
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setVisibleMonth((prev) => addMonths(prev, -1));
+            setIsApplyEnabled(false);
+          }}
+          disabled={!canGoPrev}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="Previous month"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+
+        <div className="flex items-center gap-2">
+          <select
+            value={visibleMonth.getMonth()}
+            onChange={(event) => {
+              setVisibleMonth(
+                new Date(visibleMonth.getFullYear(), Number(event.target.value), 1)
+              );
+              setIsApplyEnabled(false);
+            }}
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+            aria-label="Select month"
+          >
+            {MONTH_NAMES.map((monthName, index) => (
+              <option key={monthName} value={index}>
+                {monthName}
+              </option>
+            ))}
+          </select>
+          <select
+            value={visibleMonth.getFullYear()}
+            onChange={(event) => {
+              setVisibleMonth(
+                new Date(Number(event.target.value), visibleMonth.getMonth(), 1)
+              );
+              setIsApplyEnabled(false);
+            }}
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+            aria-label="Select year"
+          >
+            {Array.from(
+              { length: max.getFullYear() - min.getFullYear() + 1 },
+              (_, index) => max.getFullYear() - index
+            ).map((year) => (
+              <option key={year} value={year}>
+                {year}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            setVisibleMonth((prev) => addMonths(prev, 1));
+            setIsApplyEnabled(false);
+          }}
+          disabled={!canGoNext}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="Next month"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="mb-2 grid grid-cols-7 gap-1 text-[10px] text-muted-foreground">
+        <span>S</span>
+        <span>M</span>
+        <span>T</span>
+        <span>W</span>
+        <span>T</span>
+        <span>F</span>
+        <span>S</span>
+      </div>
+
+      <div className="grid grid-cols-7 gap-1">
+        {Array.from({ length: firstWeekday }).map((_, index) => (
+          <span key={`blank-${index}`} />
+        ))}
+        {monthDays.map((day) => {
+          const isDisabled =
+            day.getTime() < min.getTime() || day.getTime() > max.getTime();
+          const isSelected = isSameDay(day, tempDate);
+          const isToday = isSameDay(day, today);
+
+          return (
+            <button
+              key={day.toISOString()}
+              type="button"
+              disabled={isDisabled}
+              onClick={() => updateSelectedDate(day)}
+              className={[
+                "h-8 w-8 rounded-full text-xs transition-colors",
+                isSelected
+                  ? "bg-primary font-semibold text-primary-foreground"
+                  : "hover:bg-accent/60",
+                isDisabled ? "cursor-not-allowed opacity-35 hover:bg-transparent" : "",
+                isToday ? "ring-1 ring-primary/70 ring-offset-1 ring-offset-popover" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              {day.getDate()}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => onApply(tempDate)}
+          disabled={!isApplyEnabled || Boolean(dateInputError)}
+          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Apply
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function readStoredSelection(): ChartSelection | null {
   if (typeof window === "undefined") return null;
@@ -174,8 +467,10 @@ function getDrawingWindowDays(
 interface SyncedChartWorkspaceProps {
   initialSymbol?: string;
   initialBroker?: string;
+  initialGoToDate?: string;
   onSymbolChange?: (symbol: string, broker: string) => void;
   onTimeframeChange?: (timeframe: string) => void;
+  onGoToDateChange?: (goToDate?: string) => void;
   onObservationApiChange?: (api: ChartObservationWorkspaceApi | null) => void;
   observationLoadRequest?: ChartObservationLoadRequest | null;
   onObservationLoadHandled?: (requestId: string) => void;
@@ -188,8 +483,10 @@ interface SyncedChartWorkspaceProps {
 export function SyncedChartWorkspace({
   initialSymbol,
   initialBroker,
+  initialGoToDate,
   onSymbolChange,
   onTimeframeChange,
+  onGoToDateChange,
   onObservationApiChange,
   observationLoadRequest,
   onObservationLoadHandled,
@@ -229,6 +526,12 @@ export function SyncedChartWorkspace({
   const [timeframe, setTimeframe] = useState<ChartTimeframe>(() =>
     readStoredTimeframe()
   );
+  const [goToDate, setGoToDate] = useState(initialGoToDate ?? "");
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+  const [focusTimestamp, setFocusTimestamp] = useState<number | null>(() => {
+    const parsed = fromDateInputValue(initialGoToDate ?? "");
+    return Number.isFinite(parsed) ? parsed : null;
+  });
   const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
   const [rectangleFillColor, setRectangleFillColor] = useState("#00ff66");
   const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
@@ -258,6 +561,8 @@ export function SyncedChartWorkspace({
   const lastVisibleRangeRef = useRef<{ from: number; to: number } | null>(null);
   const chartRef = useRef<TradeCandlestickChartRef | null>(null);
   const chartAreaRef = useRef<HTMLDivElement>(null);
+  const datePickerRef = useRef<HTMLDivElement | null>(null);
+  const pendingGoToTimestampRef = useRef<number | null>(null);
   const symbolButtonRef = useRef<HTMLButtonElement>(null);
   const symbolMenuRef = useRef<HTMLDivElement>(null);
   const timeframeButtonRef = useRef<HTMLButtonElement>(null);
@@ -372,6 +677,11 @@ export function SyncedChartWorkspace({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeframe]);
 
+  useEffect(() => {
+    onGoToDateChange?.(goToDate || undefined);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goToDate]);
+
   const observationApi = useMemo<ChartObservationWorkspaceApi>(
     () => ({
       workspaceMode: "synced",
@@ -476,6 +786,25 @@ export function SyncedChartWorkspace({
       window.removeEventListener("keydown", handleKey);
     };
   }, [tradesMenuOpen]);
+
+  useEffect(() => {
+    if (!isDatePickerOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!datePickerRef.current?.contains(target)) {
+        setIsDatePickerOpen(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsDatePickerOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [isDatePickerOpen]);
 
   useEffect(() => {
     if (!isExpanded) return;
@@ -602,11 +931,25 @@ export function SyncedChartWorkspace({
     if (matches.length > 0) return matches;
     return accountForBroker?.accountNumber ? [accountForBroker.accountNumber] : [];
   }, [accounts, accountForBroker, selection]);
+  const availableDateRange = useMemo(() => {
+    if (!selectedProgress?.firstBarDate || !selectedProgress?.lastBarDate) {
+      return null;
+    }
+
+    const from =
+      new Date(selectedProgress.firstBarDate).getTime() + SYNCED_CHART_DISPLAY_OFFSET_MS;
+    const to =
+      new Date(selectedProgress.lastBarDate).getTime() + SYNCED_CHART_DISPLAY_OFFSET_MS;
+
+    return from <= to ? { from, to } : null;
+  }, [selectedProgress?.firstBarDate, selectedProgress?.lastBarDate]);
 
   const chartTrade = useMemo<Trade | null>(() => {
     if (!selection) return null;
     const anchor =
-      timeframeRestoreAnchor.centerTimestamp != null
+      focusTimestamp != null
+        ? new Date(focusTimestamp - SYNCED_CHART_DISPLAY_OFFSET_MS)
+        : timeframeRestoreAnchor.centerTimestamp != null
         ? new Date(timeframeRestoreAnchor.centerTimestamp - SYNCED_CHART_DISPLAY_OFFSET_MS)
         : selectedProgress?.lastBarDate
           ? new Date(selectedProgress.lastBarDate)
@@ -624,7 +967,7 @@ export function SyncedChartWorkspace({
       createdAt: now,
       updatedAt: now,
     };
-  }, [accountForBroker, selection, selectedProgress, timeframeRestoreAnchor.centerTimestamp]);
+  }, [accountForBroker, focusTimestamp, selection, selectedProgress, timeframeRestoreAnchor.centerTimestamp]);
 
   const accessToken = useMemo(() => {
     if (!accountForBroker) return undefined;
@@ -700,6 +1043,32 @@ export function SyncedChartWorkspace({
   useEffect(() => {
     displayDataRef.current = displayData;
   }, [displayData]);
+
+  useEffect(() => {
+    if (!availableDateRange) {
+      if (goToDate) setGoToDate("");
+      if (focusTimestamp != null) setFocusTimestamp(null);
+      return;
+    }
+
+    const parsedGoToDate = fromDateInputValue(goToDate);
+    const preferredTimestamp =
+      focusTimestamp ??
+      (Number.isFinite(parsedGoToDate) ? parsedGoToDate : null) ??
+      availableDateRange.to;
+    const clampedTimestamp = Math.max(
+      availableDateRange.from,
+      Math.min(availableDateRange.to, preferredTimestamp)
+    );
+    const nextGoToDate = toDateInputValue(clampedTimestamp);
+
+    if (goToDate !== nextGoToDate) {
+      setGoToDate(nextGoToDate);
+    }
+    if (focusTimestamp !== clampedTimestamp) {
+      setFocusTimestamp(clampedTimestamp);
+    }
+  }, [availableDateRange, focusTimestamp, goToDate]);
 
   useEffect(() => {
     if (
@@ -916,6 +1285,31 @@ export function SyncedChartWorkspace({
     []
   );
 
+  const goToTimestamp = useCallback(
+    (targetTimestamp: number) => {
+      if (!availableDateRange) return;
+
+      const clampedTimestamp = Math.max(
+        availableDateRange.from,
+        Math.min(availableDateRange.to, targetTimestamp)
+      );
+      pendingGoToTimestampRef.current = clampedTimestamp;
+      setFocusTimestamp(clampedTimestamp);
+      setGoToDate(toDateInputValue(clampedTimestamp));
+      setIsDatePickerOpen(false);
+    },
+    [availableDateRange]
+  );
+
+  const applyGoToDate = useCallback(
+    (date: Date) => {
+      const targetTimestamp = fromDateInputValue(toDateInputValue(date.getTime()));
+      if (!Number.isFinite(targetTimestamp)) return;
+      goToTimestamp(targetTimestamp);
+    },
+    [goToTimestamp]
+  );
+
   const handleTradeHistoryPanelClose = useCallback(() => {
     setShowTradePanel(false);
   }, []);
@@ -963,6 +1357,18 @@ export function SyncedChartWorkspace({
     lastNextFetchRef.current = 0;
     lastVisibleRangeRef.current = null;
   }, [selection?.broker, selection?.symbol, timeframe]);
+
+  useEffect(() => {
+    if (displayData.length === 0 || isLoading) return;
+    const pendingTimestamp = pendingGoToTimestampRef.current;
+    if (pendingTimestamp == null) return;
+
+    pendingGoToTimestampRef.current = null;
+    window.setTimeout(() => {
+      chartRef.current?.scrollToTimestamp(pendingTimestamp);
+      lastVisibleRangeRef.current = null;
+    }, 80);
+  }, [displayData, isLoading]);
 
   const brokers = useMemo(() => {
     const map = new Map<string, typeof symbolProgress>();
@@ -1119,6 +1525,34 @@ export function SyncedChartWorkspace({
             ))}
           </div>
         )}
+      </div>
+
+      <div className="relative" ref={datePickerRef}>
+        <button
+          type="button"
+          onClick={() => {
+            setIsDatePickerOpen((open) => !open);
+            setSymbolMenuOpen(false);
+            setTimeframeMenuOpen(false);
+            setTradesMenuOpen(false);
+          }}
+          disabled={!availableDateRange || !goToDate}
+          className="flex h-7 items-center gap-2 rounded border border-border bg-background px-2 text-xs font-medium text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+          <span>{goToDate ? format(new Date(`${goToDate}T00:00:00`), "MMM d, yyyy") : "Select date"}</span>
+          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+        </button>
+        {isDatePickerOpen && availableDateRange && goToDate ? (
+          <SingleDatePopover
+            key={goToDate}
+            value={new Date(`${goToDate}T00:00:00`)}
+            min={new Date(availableDateRange.from)}
+            max={new Date(availableDateRange.to)}
+            onClose={() => setIsDatePickerOpen(false)}
+            onApply={applyGoToDate}
+          />
+        ) : null}
       </div>
 
       <TimeGuidesControls

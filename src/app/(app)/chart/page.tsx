@@ -431,14 +431,20 @@ export default function ChartPage() {
         handleTimeframeChangeForPane(tabId, index, timeframe);
       };
 
+      const onGoToDateChange = (goToDate?: string) => {
+        updatePaneField(tabId, index, { goToDate });
+      };
+
       if (mode === "synced") {
         return (
           <SyncedChartWorkspace
             key={pane.id}
             initialSymbol={pane.symbol || undefined}
             initialBroker={pane.broker || undefined}
+            initialGoToDate={pane.goToDate || undefined}
             onSymbolChange={onSyncedSymbolChange}
             onTimeframeChange={onTimeframeChange}
+            onGoToDateChange={onGoToDateChange}
             onObservationApiChange={
               tabIsVisible && (!isMulti || paneIsActive)
                 ? setActiveObservationWorkspace
@@ -466,8 +472,10 @@ export default function ChartPage() {
           key={pane.id}
           onAvailabilityTextChange={index === 0 ? setHistoryAvailabilityText : undefined}
           initialSymbol={pane.symbol || undefined}
+          initialGoToDate={pane.goToDate || undefined}
           onSymbolChange={onMt5SymbolChange}
           onTimeframeChange={onTimeframeChange}
+          onGoToDateChange={onGoToDateChange}
           onObservationApiChange={
             tabIsVisible && (!isMulti || paneIsActive)
               ? setActiveObservationWorkspace

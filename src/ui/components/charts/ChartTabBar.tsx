@@ -8,6 +8,7 @@ export interface ChartPane {
   symbol: string;
   broker?: string;
   timeframe?: string;
+  goToDate?: string;
 }
 
 export type LayoutType =

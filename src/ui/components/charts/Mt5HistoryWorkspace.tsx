@@ -361,8 +361,10 @@ interface SingleDatePopoverProps {
 interface Mt5HistoryWorkspaceProps {
   onAvailabilityTextChange?: (text: string | null) => void;
   initialSymbol?: string;
+  initialGoToDate?: string;
   onSymbolChange?: (symbol: string) => void;
   onTimeframeChange?: (timeframe: string) => void;
+  onGoToDateChange?: (goToDate?: string) => void;
   onObservationApiChange?: (api: ChartObservationWorkspaceApi | null) => void;
   observationLoadRequest?: ChartObservationLoadRequest | null;
   onObservationLoadHandled?: (requestId: string) => void;
@@ -612,8 +614,10 @@ function SingleDatePopover({
 export function Mt5HistoryWorkspace({
   onAvailabilityTextChange,
   initialSymbol,
+  initialGoToDate,
   onSymbolChange,
   onTimeframeChange,
+  onGoToDateChange,
   onObservationApiChange,
   observationLoadRequest,
   onObservationLoadHandled,
@@ -649,9 +653,12 @@ export function Mt5HistoryWorkspace({
 
   const [symbol, setSymbol] = useState<string>("");
   const [timeframe, setTimeframe] = useState<ChartTimeframe>("M1");
-  const [goToDate, setGoToDate] = useState("");
+  const [goToDate, setGoToDate] = useState(initialGoToDate ?? "");
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
-  const [focusTimestamp, setFocusTimestamp] = useState<number | null>(null);
+  const [focusTimestamp, setFocusTimestamp] = useState<number | null>(() => {
+    const parsed = fromDateInputValue(initialGoToDate ?? "");
+    return Number.isFinite(parsed) ? parsed : null;
+  });
   const [chartInstanceKey, setChartInstanceKey] = useState(0);
   const [chartUpdateMode, setChartUpdateMode] = useState<HistoryChartUpdateMode>("replace");
   const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
@@ -1048,6 +1055,11 @@ export function Mt5HistoryWorkspace({
     if (timeframe) onTimeframeChange?.(timeframe);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeframe]);
+
+  useEffect(() => {
+    onGoToDateChange?.(goToDate || undefined);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goToDate]);
 
   const observationApi = useMemo<ChartObservationWorkspaceApi>(
     () => ({
