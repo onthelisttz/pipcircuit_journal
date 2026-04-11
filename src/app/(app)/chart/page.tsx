@@ -18,7 +18,7 @@ import type {
   LayoutType,
 } from "@ui/components/charts";
 import { useChartObservationPanel, useChartTradeHistoryPanel } from "@ui/providers";
-import type { Observation } from "@domain/entities";
+import type { Observation, ObservationChartArea } from "@domain/entities";
 
 type ChartMode = "synced" | "history";
 
@@ -46,7 +46,7 @@ function makeTab(symbol = "", broker?: string): ChartTab {
 
 function makeObservationTab(
   mode: ChartMode,
-  context: NonNullable<Observation["chartContext"]>
+  context: ObservationChartArea
 ): ChartTab {
   return {
     id: generateId(),
@@ -118,7 +118,7 @@ function createInitialModeState(mode: ChartMode): { tabs: ChartTab[]; activeId: 
 function paneMatchesObservation(
   pane: ChartPane,
   mode: ChartMode,
-  context: NonNullable<Observation["chartContext"]>
+  context: ObservationChartArea
 ): boolean {
   if (!context.symbol || pane.symbol !== context.symbol) return false;
   if (mode === "synced" && context.broker) {
@@ -130,7 +130,7 @@ function paneMatchesObservation(
 function findTabForObservation(
   tabs: ChartTab[],
   mode: ChartMode,
-  context: NonNullable<Observation["chartContext"]>
+  context: ObservationChartArea
 ): { tabId: string; paneIndex: number } | null {
   for (const tab of tabs) {
     const paneIndex = tab.panes.findIndex((pane) => paneMatchesObservation(pane, mode, context));
@@ -210,8 +210,11 @@ export default function ChartPage() {
     };
   }, [handleTradePanelChange]);
 
-  const handleLoadObservation = useCallback((observation: Observation) => {
-    const context = observation.chartContext;
+  const handleLoadObservation = useCallback((
+    observation: Observation,
+    contextOverride?: ObservationChartArea | null
+  ) => {
+    const context = contextOverride ?? observation.chartContext;
     if (!context) return;
     const targetMode = context.workspaceMode ?? mode;
     const targetTabs = targetMode === "synced" ? syncedTabs : historyTabs;

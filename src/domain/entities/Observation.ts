@@ -14,7 +14,7 @@ export interface ObservationChartDrawing {
   options?: Record<string, unknown>;
 }
 
-export interface ObservationChartContext {
+export interface ObservationChartArea {
   workspaceMode?: "synced" | "history" | null;
   broker?: string | null;
   symbol?: string | null;
@@ -22,6 +22,10 @@ export interface ObservationChartContext {
   centerTimestamp?: number | null;
   windowSeconds?: number | null;
   drawings?: ObservationChartDrawing[];
+}
+
+export interface ObservationChartContext extends ObservationChartArea {
+  linkedContexts?: ObservationChartArea[];
 }
 
 export interface Observation {

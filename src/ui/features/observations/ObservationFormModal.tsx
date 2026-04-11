@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { RichTextEditor } from "@ui/components/common";
 
@@ -27,6 +27,9 @@ interface ObservationFormModalProps {
   extraActionLabel?: string;
   onExtraAction?: () => void;
   extraActionDisabled?: boolean;
+  supplementalContent?: ReactNode;
+  panelClassName?: string;
+  panelStyle?: CSSProperties;
 }
 
 function resizeTitleField(element: HTMLTextAreaElement | null) {
@@ -58,6 +61,9 @@ export function ObservationFormModal({
   extraActionLabel,
   onExtraAction,
   extraActionDisabled = false,
+  supplementalContent,
+  panelClassName,
+  panelStyle,
 }: ObservationFormModalProps) {
   const titleRef = useRef<HTMLTextAreaElement>(null);
 
@@ -73,7 +79,11 @@ export function ObservationFormModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-border bg-card shadow-2xl"
+        className={[
+          "w-full max-h-[90vh] overflow-y-auto rounded-xl border border-border bg-card shadow-2xl",
+          panelClassName ?? "max-w-lg",
+        ].join(" ")}
+        style={panelStyle}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 flex items-center justify-between border-b border-border bg-card px-4 py-3">
@@ -186,6 +196,8 @@ export function ObservationFormModal({
               minHeight="160px"
             />
           </div>
+
+          {supplementalContent}
 
           <div className="sticky bottom-0 -mx-4 border-t border-border bg-card px-4 pb-1 pt-3">
             <div className="flex gap-2">

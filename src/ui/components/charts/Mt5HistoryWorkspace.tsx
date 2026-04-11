@@ -635,6 +635,7 @@ export function Mt5HistoryWorkspace({
   const loadGenerationRef = useRef(0);
   const suppressEdgeLoadingUntilRef = useRef(0);
   const shouldCenterOnNextDataRef = useRef(false);
+  const skipAutoFitOnNextDataRef = useRef(false);
   const fetchingPrevRef = useRef(false);
   const fetchingNextRef = useRef(false);
   const pendingPrevFetchRef = useRef(false);
@@ -1120,6 +1121,8 @@ export function Mt5HistoryWorkspace({
       windowSeconds: request.context.windowSeconds ?? null,
     };
 
+    skipAutoFitOnNextDataRef.current = true;
+
     if (nextSymbol && nextSymbol !== symbol) {
       setSymbol(nextSymbol);
       onSymbolChange?.(nextSymbol);
@@ -1335,6 +1338,10 @@ export function Mt5HistoryWorkspace({
   useEffect(() => {
     if (!shouldCenterOnNextDataRef.current || bars.length === 0) return;
     shouldCenterOnNextDataRef.current = false;
+    if (skipAutoFitOnNextDataRef.current) {
+      skipAutoFitOnNextDataRef.current = false;
+      return;
+    }
     window.setTimeout(() => {
       chartRef.current?.fitContent();
       lastVisibleRangeRef.current = null;

@@ -9,6 +9,7 @@ export type { TradeNote } from "./TradeNote";
 export type {
   Observation,
   ObservationSource,
+  ObservationChartArea,
   ObservationChartContext,
   ObservationChartDrawing,
   ObservationChartDrawingPoint,

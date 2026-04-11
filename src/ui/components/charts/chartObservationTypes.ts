@@ -1,6 +1,6 @@
 "use client";
 
-import type { Observation, ObservationChartContext } from "@domain/entities";
+import type { Observation, ObservationChartArea, ObservationChartContext } from "@domain/entities";
 
 export interface ChartObservationWorkspaceApi {
   workspaceMode: "synced" | "history";
@@ -13,11 +13,14 @@ export interface ChartObservationWorkspaceApi {
 export interface ChartObservationLoadRequest {
   requestId: string;
   observationId?: number | null;
-  context: ObservationChartContext;
+  context: ObservationChartArea;
 }
 
 export interface ChartObservationPanelData {
   workspace: ChartObservationWorkspaceApi | null;
-  onLoadObservation: (observation: Observation) => void;
+  onLoadObservation: (
+    observation: Observation,
+    contextOverride?: ObservationChartArea | null
+  ) => void;
   onClose: () => void;
 }

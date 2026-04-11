@@ -2,9 +2,27 @@
 
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { format } from "date-fns";
-import { ChevronLeft, ChevronRight, Loader2, Pencil, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  Loader2,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Search,
+  Star,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import type { Observation, ObservationChartContext, ObservationSource } from "@domain/entities";
+import type {
+  Observation,
+  ObservationChartArea,
+  ObservationChartContext,
+  ObservationSource,
+} from "@domain/entities";
 import { ConfirmDialog } from "@ui/components/common";
 import { ObservationFormModal } from "@ui/features/observations";
 import { useObservationCategories } from "@ui/hooks/useObservationCategories";
@@ -31,21 +49,132 @@ function truncate(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength)}...`;
 }
 
-function formatObservationMeta(observation: Observation): string {
-  const context = observation.chartContext;
-  if (!context) return "Observation";
+function hasChartAreaContent(area: ObservationChartArea | null | undefined): area is ObservationChartArea {
+  if (!area) return false;
 
-  return [context.broker, context.symbol, context.timeframe].filter(Boolean).join(" - ");
+  return Boolean(
+    area.workspaceMode ||
+      area.broker ||
+      area.symbol ||
+      area.timeframe ||
+      area.centerTimestamp != null ||
+      area.windowSeconds != null ||
+      (area.drawings?.length ?? 0) > 0
+  );
+}
+
+function normalizeChartArea(
+  area: ObservationChartArea | ObservationChartContext | null | undefined
+): ObservationChartArea | null {
+  if (!hasChartAreaContent(area)) return null;
+
+  return {
+    workspaceMode: area.workspaceMode ?? null,
+    broker: area.broker ?? null,
+    symbol: area.symbol ?? null,
+    timeframe: area.timeframe ?? null,
+    centerTimestamp: area.centerTimestamp ?? null,
+    windowSeconds: area.windowSeconds ?? null,
+    drawings: Array.isArray(area.drawings) ? area.drawings : undefined,
+  };
+}
+
+function getLinkedChartAreas(
+  context: ObservationChartContext | null | undefined
+): ObservationChartArea[] {
+  if (!context) return [];
+
+  const rawAreas =
+    Array.isArray(context.linkedContexts) && context.linkedContexts.length > 0
+      ? context.linkedContexts
+      : [context];
+
+  return rawAreas
+    .map((area) => normalizeChartArea(area))
+    .filter((area): area is ObservationChartArea => area !== null);
+}
+
+function getPrimaryChartArea(
+  context: ObservationChartContext | null | undefined
+): ObservationChartArea | null {
+  return getLinkedChartAreas(context)[0] ?? null;
+}
+
+function buildChartContextFromAreas(
+  areas: ObservationChartArea[],
+  primaryIndex = 0
+): ObservationChartContext | null {
+  const normalizedAreas = areas
+    .map((area) => normalizeChartArea(area))
+    .filter((area): area is ObservationChartArea => area !== null);
+
+  if (normalizedAreas.length === 0) return null;
+
+  const safePrimaryIndex = Math.min(
+    normalizedAreas.length - 1,
+    Math.max(0, primaryIndex)
+  );
+  const primary = normalizedAreas[safePrimaryIndex];
+  const orderedAreas = [
+    primary,
+    ...normalizedAreas.filter((_, index) => index !== safePrimaryIndex),
+  ];
+
+  return {
+    ...primary,
+    linkedContexts: orderedAreas,
+  };
+}
+
+function getChartAreaWorkspaceLabel(area: ObservationChartArea | null | undefined): string {
+  if (!area) return "Chart area";
+  return area.workspaceMode === "history" ? "MT5 History" : "Synced Chart";
+}
+
+function formatChartAreaMeta(area: ObservationChartArea | null | undefined): string {
+  if (!area) return "Chart area";
+
+  const header = [area.broker, area.symbol, area.timeframe].filter(Boolean).join(" - ");
+  const location =
+    area.centerTimestamp != null
+      ? format(new Date(area.centerTimestamp), "MMM d, yyyy HH:mm")
+      : null;
+
+  return [header || getChartAreaWorkspaceLabel(area), location].filter(Boolean).join(" @ ");
+}
+
+function formatObservationMeta(observation: Observation): string {
+  const primaryArea = getPrimaryChartArea(observation.chartContext);
+  const linkedAreas = getLinkedChartAreas(observation.chartContext);
+  if (!primaryArea) return "Observation";
+
+  const meta = [primaryArea.broker, primaryArea.symbol, primaryArea.timeframe]
+    .filter(Boolean)
+    .join(" - ");
+  const suffix = linkedAreas.length > 1 ? ` +${linkedAreas.length - 1} more` : "";
+
+  return `${meta || getChartAreaWorkspaceLabel(primaryArea)}${suffix}`;
+}
+
+function getObservationSource(observation: Observation): ObservationSource {
+  return observation.chartContext ? "chart" : observation.source ?? "manual";
 }
 
 function getObservationWorkspaceLabel(observation: Observation): string {
-  if ((observation.source ?? "manual") === "manual") {
+  if (getObservationSource(observation) === "manual") {
     return "Manual";
   }
 
-  return observation.chartContext?.workspaceMode === "history"
-    ? "MT5 History"
-    : "Synced Chart";
+  const areas = getLinkedChartAreas(observation.chartContext);
+  const workspaceModes = Array.from(
+    new Set(areas.map((area) => area.workspaceMode ?? "synced"))
+  );
+
+  if (workspaceModes.length > 1) {
+    return "Mixed workspaces";
+  }
+
+  return workspaceModes[0] === "history" ? "MT5 History" : "Synced Chart";
 }
 
 function CategoryManagerModal({
@@ -170,6 +299,8 @@ export function ChartObservationPanel({
   const [activeObservationId, setActiveObservationId] = useState<number | null>(null);
   const [pendingScrollObservationId, setPendingScrollObservationId] = useState<number | null>(null);
   const [positionInput, setPositionInput] = useState("1");
+  const [cardChartAreaIndexes, setCardChartAreaIndexes] = useState<Record<number, number>>({});
+  const [cardChartAreaInputs, setCardChartAreaInputs] = useState<Record<number, string>>({});
   const [isDesktop, setIsDesktop] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.innerWidth >= DESKTOP_BREAKPOINT_PX;
@@ -245,14 +376,17 @@ export function ChartObservationPanel({
     const normalizedSearch = searchQuery.trim().toLowerCase();
 
     return observations.filter((observation) => {
-      if (sourceFilter !== "all" && (observation.source ?? "manual") !== sourceFilter) {
+      const linkedAreas = getLinkedChartAreas(observation.chartContext);
+      const source = getObservationSource(observation);
+
+      if (sourceFilter !== "all" && source !== sourceFilter) {
         return false;
       }
 
       if (
         sourceFilter === "chart" &&
         workspaceFilter !== "all" &&
-        observation.chartContext?.workspaceMode !== workspaceFilter
+        !linkedAreas.some((area) => (area.workspaceMode ?? "synced") === workspaceFilter)
       ) {
         return false;
       }
@@ -266,12 +400,14 @@ export function ChartObservationPanel({
           observation.categoryId != null
             ? categories.find((item) => item.id === observation.categoryId)?.name ?? ""
             : "";
+        const chartAreaMeta = linkedAreas.map((area) => formatChartAreaMeta(area)).join(" ");
         const haystack = [
           observation.title,
           stripHtml(observation.content || ""),
           formatObservationMeta(observation),
           getObservationWorkspaceLabel(observation),
           categoryName,
+          chartAreaMeta,
         ]
           .join(" ")
           .toLowerCase();
@@ -337,12 +473,13 @@ export function ChartObservationPanel({
   }, [filteredObservations, pendingScrollObservationId]);
 
   const activateObservation = useCallback(
-    (observation: Observation | null) => {
+    (observation: Observation | null, contextOverride?: ObservationChartArea | null) => {
       if (!observation) return;
       setActiveObservationId(observation.id ?? null);
       setPendingScrollObservationId(observation.id ?? null);
-      if (observation.chartContext) {
-        onLoadObservation(observation);
+      const context = contextOverride ?? getPrimaryChartArea(observation.chartContext);
+      if (context) {
+        onLoadObservation(observation, context);
       }
     },
     [onLoadObservation]
@@ -367,7 +504,7 @@ export function ChartObservationPanel({
     setDraftTitle("");
     setDraftCategoryId(categories[0]?.id ?? null);
     setDraftContent("");
-    setDraftChartContext(capturedContext);
+    setDraftChartContext(buildChartContextFromAreas([capturedContext]));
     setShowAddCategory(false);
     setNewCategoryName("");
     setShowModal(true);
@@ -378,7 +515,7 @@ export function ChartObservationPanel({
     setDraftTitle(observation.title);
     setDraftCategoryId(observation.categoryId ?? null);
     setDraftContent(observation.content || "<p></p>");
-    setDraftChartContext(observation.chartContext ?? null);
+    setDraftChartContext(buildChartContextFromAreas(getLinkedChartAreas(observation.chartContext)));
     setShowAddCategory(false);
     setNewCategoryName("");
     setShowModal(true);
@@ -530,6 +667,212 @@ export function ChartObservationPanel({
     if (!nextObservation) return;
     activateObservation(nextObservation);
   }, [activateObservation, activeObservationIndex, filteredObservations, positionInput]);
+
+  const setCardChartAreaPosition = useCallback((observationId: number, index: number) => {
+    setCardChartAreaIndexes((previous) => ({
+      ...previous,
+      [observationId]: index,
+    }));
+    setCardChartAreaInputs((previous) => ({
+      ...previous,
+      [observationId]: String(index + 1),
+    }));
+  }, []);
+
+  const handleNavigateCardChartArea = useCallback(
+    (observation: Observation, linkedAreas: ObservationChartArea[], index: number) => {
+      const observationId = observation.id;
+      if (observationId == null || linkedAreas.length === 0) return;
+
+      const nextIndex = Math.min(linkedAreas.length - 1, Math.max(0, index));
+      const nextArea = linkedAreas[nextIndex] ?? null;
+
+      setCardChartAreaPosition(observationId, nextIndex);
+      if (nextArea) {
+        activateObservation(observation, nextArea);
+      }
+    },
+    [activateObservation, setCardChartAreaPosition]
+  );
+
+  const handleApplyCardChartAreaPosition = useCallback(
+    (observation: Observation, linkedAreas: ObservationChartArea[]) => {
+      const observationId = observation.id;
+      if (observationId == null || linkedAreas.length === 0) return;
+
+      const currentIndex = Math.min(
+        linkedAreas.length - 1,
+        Math.max(0, cardChartAreaIndexes[observationId] ?? 0)
+      );
+      const parsed = Number(cardChartAreaInputs[observationId] ?? String(currentIndex + 1));
+      if (!Number.isFinite(parsed)) {
+        setCardChartAreaPosition(observationId, currentIndex);
+        return;
+      }
+
+      const nextIndex = Math.min(
+        linkedAreas.length - 1,
+        Math.max(0, Math.round(parsed) - 1)
+      );
+      handleNavigateCardChartArea(observation, linkedAreas, nextIndex);
+    },
+    [
+      cardChartAreaIndexes,
+      cardChartAreaInputs,
+      handleNavigateCardChartArea,
+      setCardChartAreaPosition,
+    ]
+  );
+
+  const draftChartAreas = useMemo(
+    () => getLinkedChartAreas(draftChartContext),
+    [draftChartContext]
+  );
+
+  const handleAddCurrentChartArea = useCallback(() => {
+    const capturedContext = normalizeChartArea(workspace?.captureObservationContext() ?? null);
+    if (!capturedContext) return;
+
+    setDraftChartContext((current) => {
+      const currentAreas = getLinkedChartAreas(current);
+      return buildChartContextFromAreas([...currentAreas, capturedContext]);
+    });
+  }, [workspace]);
+
+  const handleSetPrimaryChartArea = useCallback((index: number) => {
+    setDraftChartContext((current) =>
+      buildChartContextFromAreas(getLinkedChartAreas(current), index)
+    );
+  }, []);
+
+  const handleRemoveChartArea = useCallback((index: number) => {
+    setDraftChartContext((current) => {
+      const currentAreas = getLinkedChartAreas(current);
+      if (currentAreas.length <= 1) {
+        return current;
+      }
+      return buildChartContextFromAreas(
+        currentAreas.filter((_, areaIndex) => areaIndex !== index)
+      );
+    });
+  }, []);
+
+  const handleViewDraftChartArea = useCallback(
+    (area: ObservationChartArea) => {
+      if (!editingObservation) return;
+      setShowModal(false);
+      activateObservation(editingObservation, area);
+    },
+    [activateObservation, editingObservation]
+  );
+
+  const chartLinksSection = useMemo(() => {
+    if (!showModal) return null;
+
+    return (
+      <div className="space-y-3 rounded-xl border border-border bg-background/60 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium text-foreground">Linked chart areas</h3>
+          </div>
+          <button
+            type="button"
+            onClick={handleAddCurrentChartArea}
+            disabled={!workspace}
+            className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Add current chart
+          </button>
+        </div>
+
+        {draftChartAreas.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border px-3 py-4 text-xs text-muted-foreground">
+            No chart areas linked yet. Capture the current chart to link it to this observation.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {draftChartAreas.map((area, index) => (
+              <div
+                key={`${area.workspaceMode ?? "chart"}-${area.symbol ?? "symbol"}-${area.centerTimestamp ?? index}-${index}`}
+                className="rounded-lg border border-border bg-card px-3 py-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-foreground">
+                        {formatChartAreaMeta(area)}
+                      </span>
+                      {index === 0 ? (
+                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                          Default
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {getChartAreaWorkspaceLabel(area)}
+                      {(area.drawings?.length ?? 0) > 0
+                        ? ` · ${(area.drawings?.length ?? 0)} drawing${(area.drawings?.length ?? 0) === 1 ? "" : "s"}`
+                        : ""}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleViewDraftChartArea(area)}
+                      disabled={!editingObservation}
+                      className="rounded-lg border border-border p-2 text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                      title="View linked chart area"
+                      aria-label="View linked chart area"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                    </button>
+                    {index > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => handleSetPrimaryChartArea(index)}
+                        className="rounded-lg border border-border p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        title="Make default"
+                        aria-label="Make default"
+                      >
+                        <Star className="h-3.5 w-3.5" />
+                      </button>
+                    ) : (
+                      <span
+                        className="rounded-lg border border-primary/30 bg-primary/10 p-2 text-primary"
+                        title="Default chart area"
+                        aria-label="Default chart area"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveChartArea(index)}
+                      disabled={draftChartAreas.length <= 1}
+                      className="rounded-lg border border-destructive/40 p-2 text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-40"
+                      title="Remove linked chart area"
+                      aria-label="Remove linked chart area"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }, [
+    draftChartAreas,
+    handleAddCurrentChartArea,
+    handleRemoveChartArea,
+    handleSetPrimaryChartArea,
+    handleViewDraftChartArea,
+    editingObservation,
+    showModal,
+    workspace,
+  ]);
 
   const currentContextLabel = useMemo(() => {
     if (!workspace) return "Chart observations";
@@ -745,10 +1088,19 @@ export function ChartObservationPanel({
                     ? categories.find((item) => item.id === observation.categoryId)
                     : null;
                 const preview = truncate(stripHtml(observation.content || ""), 110);
-                const source = observation.source ?? "manual";
+                const source = getObservationSource(observation);
                 const workspaceLabel = getObservationWorkspaceLabel(observation);
+                const linkedAreas = getLinkedChartAreas(observation.chartContext);
+                const observationId = observation.id ?? 0;
+                const currentAreaIndex = Math.min(
+                  Math.max(0, cardChartAreaIndexes[observationId] ?? 0),
+                  Math.max(0, linkedAreas.length - 1)
+                );
+                const currentArea = linkedAreas[currentAreaIndex] ?? null;
+                const currentAreaInput =
+                  cardChartAreaInputs[observationId] ?? String(currentAreaIndex + 1);
                 const isActive = observation.id != null && observation.id === activeObservationId;
-                const canLoadObservation = Boolean(observation.chartContext);
+                const canLoadObservation = linkedAreas.length > 0;
 
                 return (
                   <div
@@ -764,21 +1116,19 @@ export function ChartObservationPanel({
                         : "border-border"
                     }`}
                   >
-                    <div className="flex items-start gap-2 px-3 py-3">
+                    <div className="px-3 py-3">
                       <button
                         type="button"
-                        onClick={() => activateObservation(observation)}
-                        className={`min-w-0 flex-1 text-left transition-colors ${
+                        onClick={() => activateObservation(observation, currentArea)}
+                        className={`block w-full min-w-0 text-left transition-colors ${
                           canLoadObservation ? "cursor-pointer hover:text-foreground" : "cursor-default"
                         }`}
                       >
                         <div className="truncate text-sm font-semibold text-foreground">
                           {observation.title || "Untitled"}
                         </div>
-                        <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                          {formatObservationMeta(observation)}
-                        </p>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
                           <span
                             className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
                               source === "chart"
@@ -789,37 +1139,148 @@ export function ChartObservationPanel({
                             {source === "chart" ? "Chart" : "Manual"}
                           </span>
                           {category ? (
-                            <span style={{ color: category.color }}>{category.name}</span>
+                            <span
+                              style={{ color: category.color }}
+                              className="rounded-full border border-border/70 px-2 py-0.5 text-[10px] font-medium"
+                            >
+                              {category.name}
+                            </span>
                           ) : null}
                           <span className="text-muted-foreground">{workspaceLabel}</span>
+                          {linkedAreas.length > 0 ? (
+                            <span className="text-muted-foreground">
+                              {linkedAreas.length} linked area{linkedAreas.length === 1 ? "" : "s"}
+                            </span>
+                          ) : null}
                         </div>
+
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                          <p className="min-w-0 truncate text-[11px] text-muted-foreground">
+                            {formatObservationMeta(observation)}
+                          </p>
+                        </div>
+
                         {preview ? (
-                          <p className="mt-2 text-xs text-muted-foreground">{preview}</p>
+                          <p className="mt-3 line-clamp-3 text-xs leading-5 text-muted-foreground">
+                            {preview}
+                          </p>
                         ) : null}
                       </button>
-                      <div className="flex shrink-0 items-center gap-1 self-start pt-5">
-                        <div className="text-right text-[11px] text-muted-foreground">
+
+                      <div className="mt-2 flex items-center justify-between gap-3">
+                        <div className="min-w-0 text-[11px] text-muted-foreground">
                           {format(new Date(observation.updatedAt), "MMM d, yyyy")}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEdit(observation)}
-                          className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                          aria-label={`Edit ${observation.title || "observation"}`}
-                          title="Edit observation"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setObservationDeleteId(observation.id ?? null)}
-                          className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                          aria-label={`Delete ${observation.title || "observation"}`}
-                          title="Delete observation"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEdit(observation)}
+                            className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            aria-label={`View ${observation.title || "observation"}`}
+                            title="View observation"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEdit(observation)}
+                            className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            aria-label={`Edit ${observation.title || "observation"}`}
+                            title="Edit observation"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setObservationDeleteId(observation.id ?? null)}
+                            className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                            aria-label={`Delete ${observation.title || "observation"}`}
+                            title="Delete observation"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </div>
+
+                      {currentArea ? (
+                        <div className="mt-3 flex items-center gap-3 border-t border-border/60 pt-3">
+                          <button
+                            type="button"
+                            onClick={() => activateObservation(observation, currentArea)}
+                            className="min-w-0 flex-1 text-left transition-colors hover:text-foreground"
+                          >
+                            <p className="truncate text-[11px] font-medium text-foreground">
+                              {formatChartAreaMeta(currentArea)}
+                            </p>
+                            <p className="mt-1 text-[10px] text-muted-foreground">
+                              {getChartAreaWorkspaceLabel(currentArea)}
+                            </p>
+                          </button>
+
+                          {linkedAreas.length > 1 ? (
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleNavigateCardChartArea(
+                                    observation,
+                                    linkedAreas,
+                                    Math.max(0, currentAreaIndex - 1)
+                                  )
+                                }
+                                disabled={currentAreaIndex <= 0}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                aria-label="Previous linked chart area"
+                              >
+                                <ChevronLeft className="h-3.5 w-3.5" />
+                              </button>
+                              <div className="flex items-center gap-1 rounded-md border border-border/70 px-2 py-1">
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={currentAreaInput}
+                                  onChange={(event) => {
+                                    const nextValue =
+                                      event.target.value.replace(/[^\d]/g, "") || "1";
+                                    setCardChartAreaInputs((previous) => ({
+                                      ...previous,
+                                      [observationId]: nextValue,
+                                    }));
+                                  }}
+                                  onBlur={() =>
+                                    handleApplyCardChartAreaPosition(observation, linkedAreas)
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key !== "Enter") return;
+                                    event.preventDefault();
+                                    handleApplyCardChartAreaPosition(observation, linkedAreas);
+                                  }}
+                                  className="w-8 bg-transparent text-center text-[11px] font-medium text-foreground outline-none"
+                                  aria-label="Linked chart area position"
+                                />
+                                <span className="text-[11px] text-muted-foreground">
+                                  / {linkedAreas.length}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleNavigateCardChartArea(
+                                    observation,
+                                    linkedAreas,
+                                    Math.min(linkedAreas.length - 1, currentAreaIndex + 1)
+                                  )
+                                }
+                                disabled={currentAreaIndex >= linkedAreas.length - 1}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                aria-label="Next linked chart area"
+                              >
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -904,18 +1365,9 @@ export function ChartObservationPanel({
         onSubmit={handleSubmit}
         saving={saving}
         isEdit={editingObservation != null}
-        extraActionLabel={editingObservation ? "Update chart" : undefined}
-        onExtraAction={
-          editingObservation
-            ? async () => {
-                const capturedContext = workspace?.captureObservationContext() ?? draftChartContext;
-                if (!capturedContext) return;
-                setDraftChartContext(capturedContext);
-                await persistObservation(capturedContext);
-              }
-            : undefined
-        }
-        extraActionDisabled={!workspace}
+        supplementalContent={chartLinksSection}
+        panelClassName="max-w-none"
+        panelStyle={{ width: "min(750px, calc(100vw - 2rem))" }}
       />
 
       <CategoryManagerModal
