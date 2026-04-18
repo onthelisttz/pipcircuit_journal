@@ -8,6 +8,7 @@ const PKGS = [
   "lightweight-charts-line-tools-core",
   "lightweight-charts-line-tools-rectangle",
   "lightweight-charts-line-tools-lines",
+  "lightweight-charts-line-tools-freehand",
   "lightweight-charts-line-tools-path",
   "lightweight-charts-line-tools-long-short-position",
 ];
@@ -32,4 +33,3 @@ for (const pkg of PKGS) {
     process.exit(1);
   }
 }
-

@@ -17,8 +17,10 @@ import {
 import type { DrawingToolType } from "./TradeCandlestickChart";
 
 const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
+    { id: "Brush", label: "Brush" },
     { id: "Path", label: "Path" },
     { id: "TrendLine", label: "Trendline" },
+    { id: "HorizontalRay", label: "H-Ray" },
     { id: "Rectangle", label: "Rectangle" },
     { id: "Callout", label: "Text" },
     { id: "LongShortPosition", label: "Long/Short" },
@@ -48,6 +50,8 @@ export interface ChartControlsProps {
     onLongShortLotsChange?: (lots: number) => void;
     onRectangleFillColorChange?: (color: string) => void;
     onRectangleFillOpacityChange?: (opacity: number) => void;
+    continuousDrawingEnabled?: boolean;
+    onContinuousDrawingChange?: (enabled: boolean) => void;
     showDrawExtras?: boolean;
 }
 
@@ -75,6 +79,8 @@ export function ChartControls({
     onLongShortLotsChange,
     onRectangleFillColorChange,
     onRectangleFillOpacityChange,
+    continuousDrawingEnabled,
+    onContinuousDrawingChange,
     showDrawExtras = true,
 }: ChartControlsProps) {
     const [menuOpen, setMenuOpen] = useState(false);
@@ -251,11 +257,15 @@ export function ChartControls({
         showDrawExtras &&
         Boolean(onRectangleFillColorChange && onRectangleFillOpacityChange) &&
         (drawMenuOpen ||
+            drawingTool === "Brush" ||
             drawingTool === "Rectangle" ||
             drawingTool === "TrendLine" ||
+            drawingTool === "HorizontalRay" ||
             drawingTool === "Path" ||
+            drawingSelection === "Brush" ||
             drawingSelection === "Rectangle" ||
             drawingSelection === "TrendLine" ||
+            drawingSelection === "HorizontalRay" ||
             drawingSelection === "Path");
 
     const showLongShortControls =
@@ -281,6 +291,20 @@ export function ChartControls({
                     {label}
                 </button>
             ))}
+            {onContinuousDrawingChange && (
+                <>
+                    <div className="my-1 border-t border-border" />
+                    <label className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+                        <input
+                            type="checkbox"
+                            checked={Boolean(continuousDrawingEnabled)}
+                            onChange={(event) => onContinuousDrawingChange(event.target.checked)}
+                            className="h-3.5 w-3.5 rounded border-border accent-primary"
+                        />
+                        <span>Continuous draw</span>
+                    </label>
+                </>
+            )}
             {showRectangleControls && (
                 <>
                     <div className="my-1 border-t border-border" />

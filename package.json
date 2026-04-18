@@ -39,6 +39,7 @@
     "framer-motion": "^12.29.2",
     "lightweight-charts": "^5.1.0",
     "lightweight-charts-line-tools-core": "github:difurious/lightweight-charts-line-tools-core",
+    "lightweight-charts-line-tools-freehand": "github:difurious/lightweight-charts-line-tools-freehand",
     "lightweight-charts-line-tools-lines": "github:difurious/lightweight-charts-line-tools-lines",
     "lightweight-charts-line-tools-long-short-position": "github:difurious/lightweight-charts-line-tools-long-short-position",
     "lightweight-charts-line-tools-path": "github:difurious/lightweight-charts-line-tools-path",

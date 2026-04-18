@@ -89,6 +89,7 @@ const LOAD_LIMIT = 20_000;
 const EDGE_FETCH_THRESHOLD = 10;
 const FETCH_THROTTLE_MS = 160;
 const HISTORY_TIME_GUIDES_KEY = "chartTimeGuides_history";
+const CHART_CONTINUOUS_DRAWING_KEY = "chartContinuousDrawingEnabled_v1";
 const MAX_RENDERED_BARS: Record<ChartTimeframe, number> = {
   M1: 15_000,
   M5: 30_000,
@@ -99,8 +100,10 @@ const MAX_RENDERED_BARS: Record<ChartTimeframe, number> = {
   D1: 100_000,
 };
 const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
+  { id: "Brush", label: "Brush" },
   { id: "Path", label: "Path" },
   { id: "TrendLine", label: "Trendline" },
+  { id: "HorizontalRay", label: "H-Ray" },
   { id: "Rectangle", label: "Rectangle" },
   { id: "Callout", label: "Text" },
   { id: "LongShortPosition", label: "Long/Short" },
@@ -663,6 +666,10 @@ export function Mt5HistoryWorkspace({
   const [chartInstanceKey, setChartInstanceKey] = useState(0);
   const [chartUpdateMode, setChartUpdateMode] = useState<HistoryChartUpdateMode>("replace");
   const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
+  const [continuousDrawingEnabled, setContinuousDrawingEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(CHART_CONTINUOUS_DRAWING_KEY) === "true";
+  });
   const [rectangleFillColor, setRectangleFillColor] = useState("#8b5cf6");
   const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
   const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
@@ -818,6 +825,14 @@ export function Mt5HistoryWorkspace({
   }, [timeGuides]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      CHART_CONTINUOUS_DRAWING_KEY,
+      continuousDrawingEnabled ? "true" : "false"
+    );
+  }, [continuousDrawingEnabled]);
+
+  useEffect(() => {
     let cancelled = false;
 
     const loadRootPath = async () => {
@@ -957,6 +972,14 @@ export function Mt5HistoryWorkspace({
       if (key === "r") {
         event.preventDefault();
         toggleTool("Rectangle");
+      }
+      if (key === "b") {
+        event.preventDefault();
+        toggleTool("Brush");
+      }
+      if (key === "h") {
+        event.preventDefault();
+        toggleTool("HorizontalRay");
       }
       if (key === "p") {
         event.preventDefault();
@@ -1685,11 +1708,30 @@ export function Mt5HistoryWorkspace({
             </button>
           ))}
           {(() => {
-            const showDrawControls = drawingTool === "Rectangle" || drawingTool === "TrendLine" || drawingTool === "Path" || selectedDrawingTool === "Rectangle" || selectedDrawingTool === "TrendLine" || selectedDrawingTool === "Path";
+            const showDrawControls =
+              drawingTool === "Rectangle" ||
+              drawingTool === "TrendLine" ||
+              drawingTool === "HorizontalRay" ||
+              drawingTool === "Path" ||
+              drawingTool === "Brush" ||
+              selectedDrawingTool === "Rectangle" ||
+              selectedDrawingTool === "TrendLine" ||
+              selectedDrawingTool === "HorizontalRay" ||
+              selectedDrawingTool === "Path" ||
+              selectedDrawingTool === "Brush";
             const showCalloutControls = drawingTool === "Callout" || selectedDrawingTool === "Callout";
             const showLotsControls = drawingTool === "LongShortPosition" || selectedDrawingTool === "LongShortPosition";
             return (
               <>
+                <label className="flex h-7 items-center gap-2 rounded-md border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={continuousDrawingEnabled}
+                    onChange={(event) => setContinuousDrawingEnabled(event.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-border accent-primary"
+                  />
+                  <span className="whitespace-nowrap font-medium">Cts draw</span>
+                </label>
                 <div className={`h-7 items-center gap-1.5 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${showDrawControls ? "flex opacity-100" : "hidden pointer-events-none opacity-0"}`} aria-hidden={!showDrawControls}>
                   <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Draw color</span>
                   <input type="color" aria-label="Draw color" value={rectangleFillColor} onChange={(event) => setRectangleFillColor(event.target.value)} className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0" />
@@ -1731,6 +1773,15 @@ export function Mt5HistoryWorkspace({
                     {tool.label}
                   </button>
                 ))}
+                <label className="mt-1 flex items-center gap-2 rounded-md px-1 py-1 text-[11px] text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={continuousDrawingEnabled}
+                    onChange={(event) => setContinuousDrawingEnabled(event.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-border accent-primary"
+                  />
+           <span>Cts draw</span>
+                </label>
               </div>
             </div>
           )}
@@ -1738,7 +1789,17 @@ export function Mt5HistoryWorkspace({
       )}
 
       {compact && (() => {
-        const showDrawControls = drawingTool === "Rectangle" || drawingTool === "TrendLine" || drawingTool === "Path" || selectedDrawingTool === "Rectangle" || selectedDrawingTool === "TrendLine" || selectedDrawingTool === "Path";
+        const showDrawControls =
+          drawingTool === "Rectangle" ||
+          drawingTool === "TrendLine" ||
+          drawingTool === "HorizontalRay" ||
+          drawingTool === "Path" ||
+          drawingTool === "Brush" ||
+          selectedDrawingTool === "Rectangle" ||
+          selectedDrawingTool === "TrendLine" ||
+          selectedDrawingTool === "HorizontalRay" ||
+          selectedDrawingTool === "Path" ||
+          selectedDrawingTool === "Brush";
         const showCalloutControls = drawingTool === "Callout" || selectedDrawingTool === "Callout";
         const showLotsControls = drawingTool === "LongShortPosition" || selectedDrawingTool === "LongShortPosition";
         return (
@@ -1845,6 +1906,7 @@ export function Mt5HistoryWorkspace({
           height={isExpanded ? expandedHeight : chartAreaHeight}
           isLoading={isBarsLoading}
           drawingTool={drawingTool}
+          continuousDrawing={continuousDrawingEnabled}
           drawingLineColor={rectangleFillColor}
           rectangleFillColor={drawingFillRgba}
           rectangleBorderColor={rectangleFillColor}
@@ -1854,7 +1916,15 @@ export function Mt5HistoryWorkspace({
           calloutLineColor={calloutLineColor}
           calloutBoxColor={calloutBoxColor}
           onDrawingSelectionChange={setSelectedDrawingTool}
-          onDrawingToolComplete={() => setDrawingTool(null)}
+          onDrawingToolComplete={() => {
+            if (!continuousDrawingEnabled) {
+              setDrawingTool(null);
+            }
+          }}
+          onDrawingToolCancel={() => {
+            setDrawingTool(null);
+            setSelectedDrawingTool(null);
+          }}
           onCalloutEditRequest={() => {
             window.setTimeout(() => {
               calloutTextInputRef.current?.focus();

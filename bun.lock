@@ -24,6 +24,7 @@
         "framer-motion": "^12.29.2",
         "lightweight-charts": "^5.1.0",
         "lightweight-charts-line-tools-core": "github:difurious/lightweight-charts-line-tools-core",
+        "lightweight-charts-line-tools-freehand": "github:difurious/lightweight-charts-line-tools-freehand",
         "lightweight-charts-line-tools-lines": "github:difurious/lightweight-charts-line-tools-lines",
         "lightweight-charts-line-tools-long-short-position": "github:difurious/lightweight-charts-line-tools-long-short-position",
         "lightweight-charts-line-tools-path": "github:difurious/lightweight-charts-line-tools-path",
@@ -62,6 +63,7 @@
   "trustedDependencies": [
     "sharp",
     "unrs-resolver",
+    "supabase",
   ],
   "packages": {
     "@alloc/quick-lru": ["@alloc/quick-lru@5.2.0", "", {}, "sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw=="],
@@ -1094,6 +1096,8 @@
 
     "lightweight-charts-line-tools-core": ["lightweight-charts-line-tools-core@github:difurious/lightweight-charts-line-tools-core#9cd62e5", { "dependencies": { "tslib": "^2.8.1", "typedoc": "^0.28.15" }, "peerDependencies": { "lightweight-charts": "^5.0.0" } }, "difurious-lightweight-charts-line-tools-core-9cd62e5"],
 
+    "lightweight-charts-line-tools-freehand": ["lightweight-charts-line-tools-freehand@github:difurious/lightweight-charts-line-tools-freehand#04c77b1", { "dependencies": { "lightweight-charts-line-tools-core": "github:difurious/lightweight-charts-line-tools-core", "tslib": "^2.8.1", "typedoc": "^0.28.15" }, "peerDependencies": { "lightweight-charts": "^5.0.0" } }, "difurious-lightweight-charts-line-tools-freehand-04c77b1"],
+
     "lightweight-charts-line-tools-lines": ["lightweight-charts-line-tools-lines@github:difurious/lightweight-charts-line-tools-lines#39dc77f", { "dependencies": { "lightweight-charts-line-tools-core": "github:difurious/lightweight-charts-line-tools-core", "tslib": "^2.8.1", "typedoc": "^0.28.15" }, "peerDependencies": { "lightweight-charts": "^5.0.0" } }, "difurious-lightweight-charts-line-tools-lines-39dc77f"],
 
     "lightweight-charts-line-tools-long-short-position": ["lightweight-charts-line-tools-long-short-position@github:difurious/lightweight-charts-line-tools-long-short-position#031c03c", { "dependencies": { "lightweight-charts-line-tools-core": "github:difurious/lightweight-charts-line-tools-core", "tslib": "^2.8.1", "typedoc": "^0.28.15" }, "peerDependencies": { "lightweight-charts": "^5.0.0" } }, "difurious-lightweight-charts-line-tools-long-short-position-031c03c"],
@@ -1557,6 +1561,8 @@
     "eslint-plugin-react/semver": ["semver@6.3.1", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA=="],
 
     "fast-glob/glob-parent": ["glob-parent@5.1.2", "", { "dependencies": { "is-glob": "^4.0.1" } }, "sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow=="],
+
+    "lightweight-charts-line-tools-freehand/lightweight-charts-line-tools-core": ["lightweight-charts-line-tools-core@github:difurious/lightweight-charts-line-tools-core#9cd62e5", { "dependencies": { "tslib": "^2.8.1", "typedoc": "^0.28.15" }, "peerDependencies": { "lightweight-charts": "^5.0.0" } }, "difurious-lightweight-charts-line-tools-core-9cd62e5"],
 
     "lru-cache/yallist": ["yallist@3.1.1", "", {}, "sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g=="],
 

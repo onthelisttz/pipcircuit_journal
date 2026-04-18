@@ -57,12 +57,15 @@ const CHART_TIMEFRAME_KEY = "chartTimeframe";
 const CHART_TIME_GUIDES_KEY = "chartTimeGuides_synced";
 const CHART_SHOW_TRADES_OVERLAY_KEY = "chartShowTrades_synced";
 const CHART_SHOW_TRADES_PANEL_KEY = "chartShowTradesPanel_synced";
+const CHART_CONTINUOUS_DRAWING_KEY = "chartContinuousDrawingEnabled_v1";
 const SYNCED_CHART_DISPLAY_OFFSET_MS = 3 * 60 * 60 * 1000;
 type ChartSelection = { broker: string; symbol: string };
 
 const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
+  { id: "Brush", label: "Brush" },
   { id: "Path", label: "Path" },
   { id: "TrendLine", label: "Trendline" },
+  { id: "HorizontalRay", label: "H-Ray" },
   { id: "Rectangle", label: "Rectangle" },
   { id: "Callout", label: "Text" },
   { id: "LongShortPosition", label: "Long/Short" },
@@ -533,6 +536,10 @@ export function SyncedChartWorkspace({
     return Number.isFinite(parsed) ? parsed : null;
   });
   const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
+  const [continuousDrawingEnabled, setContinuousDrawingEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(CHART_CONTINUOUS_DRAWING_KEY) === "true";
+  });
   const [rectangleFillColor, setRectangleFillColor] = useState("#00ff66");
   const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
   const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
@@ -612,6 +619,14 @@ export function SyncedChartWorkspace({
     if (typeof window === "undefined") return;
     window.localStorage.setItem(CHART_TIME_GUIDES_KEY, JSON.stringify(timeGuides));
   }, [timeGuides]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      CHART_CONTINUOUS_DRAWING_KEY,
+      continuousDrawingEnabled ? "true" : "false"
+    );
+  }, [continuousDrawingEnabled]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -871,6 +886,14 @@ export function SyncedChartWorkspace({
       if (key === "r") {
         event.preventDefault();
         toggleTool("Rectangle");
+      }
+      if (key === "b") {
+        event.preventDefault();
+        toggleTool("Brush");
+      }
+      if (key === "h") {
+        event.preventDefault();
+        toggleTool("HorizontalRay");
       }
       if (key === "p") {
         event.preventDefault();
@@ -1634,10 +1657,14 @@ export function SyncedChartWorkspace({
             const showDrawControls =
               drawingTool === "Rectangle" ||
               drawingTool === "TrendLine" ||
+              drawingTool === "HorizontalRay" ||
               drawingTool === "Path" ||
+              drawingTool === "Brush" ||
               selectedDrawingTool === "Rectangle" ||
               selectedDrawingTool === "TrendLine" ||
-              selectedDrawingTool === "Path";
+              selectedDrawingTool === "HorizontalRay" ||
+              selectedDrawingTool === "Path" ||
+              selectedDrawingTool === "Brush";
             const showCalloutControls =
               drawingTool === "Callout" || selectedDrawingTool === "Callout";
             const showLotsControls =
@@ -1645,6 +1672,15 @@ export function SyncedChartWorkspace({
               selectedDrawingTool === "LongShortPosition";
             return (
               <>
+                <label className="flex h-7 items-center gap-2 rounded-md border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={continuousDrawingEnabled}
+                    onChange={(event) => setContinuousDrawingEnabled(event.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-border accent-primary"
+                  />
+                  <span className="whitespace-nowrap font-medium">Cts draw</span>
+                </label>
                 <div
                   className={`h-7 items-center gap-1.5 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${
                     showDrawControls
@@ -1788,6 +1824,15 @@ export function SyncedChartWorkspace({
                     {tool.label}
                   </button>
                 ))}
+                <label className="mt-1 flex items-center gap-2 rounded-md px-1 py-1 text-[11px] text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={continuousDrawingEnabled}
+                    onChange={(event) => setContinuousDrawingEnabled(event.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-border accent-primary"
+                  />
+                  <span>Cts draw</span>
+                </label>
               </div>
             </div>
           )}
@@ -1799,10 +1844,14 @@ export function SyncedChartWorkspace({
         const showDrawControls =
           drawingTool === "Rectangle" ||
           drawingTool === "TrendLine" ||
+          drawingTool === "HorizontalRay" ||
           drawingTool === "Path" ||
+          drawingTool === "Brush" ||
           selectedDrawingTool === "Rectangle" ||
           selectedDrawingTool === "TrendLine" ||
-          selectedDrawingTool === "Path";
+          selectedDrawingTool === "HorizontalRay" ||
+          selectedDrawingTool === "Path" ||
+          selectedDrawingTool === "Brush";
         const showCalloutControls =
           drawingTool === "Callout" || selectedDrawingTool === "Callout";
         const showLotsControls =
@@ -2030,6 +2079,7 @@ export function SyncedChartWorkspace({
           height={isExpanded ? expandedHeight : chartAreaHeight}
           isLoading={isLoading}
           drawingTool={drawingTool}
+          continuousDrawing={continuousDrawingEnabled}
           drawingLineColor={rectangleFillColor}
           rectangleFillColor={drawingFillRgba}
           rectangleBorderColor={rectangleFillColor}
@@ -2039,7 +2089,15 @@ export function SyncedChartWorkspace({
           calloutLineColor={calloutLineColor}
           calloutBoxColor={calloutBoxColor}
           onDrawingSelectionChange={setSelectedDrawingTool}
-          onDrawingToolComplete={() => setDrawingTool(null)}
+          onDrawingToolComplete={() => {
+            if (!continuousDrawingEnabled) {
+              setDrawingTool(null);
+            }
+          }}
+          onDrawingToolCancel={() => {
+            setDrawingTool(null);
+            setSelectedDrawingTool(null);
+          }}
           onCalloutEditRequest={() => {
             window.setTimeout(() => {
               calloutTextInputRef.current?.focus();

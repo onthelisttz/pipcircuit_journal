@@ -19,6 +19,7 @@ import {
 } from "./timeGuides";
 
 const TRADE_CHART_TIME_GUIDES_KEY = "tradeChartTimeGuides";
+const CHART_CONTINUOUS_DRAWING_KEY = "chartContinuousDrawingEnabled_v1";
 const CTRADER_CHART_DISPLAY_OFFSET_MS = 3 * 60 * 60 * 1000;
 
 function formatProfit(value: number): string {
@@ -109,6 +110,10 @@ export function TradeChartView({
     const [showRiskRewardLabels, setShowRiskRewardLabels] = useState(true);
     const [internalExpanded, setInternalExpanded] = useState(false);
     const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
+    const [continuousDrawingEnabled, setContinuousDrawingEnabled] = useState(() => {
+        if (typeof window === "undefined") return false;
+        return window.localStorage.getItem(CHART_CONTINUOUS_DRAWING_KEY) === "true";
+    });
     const [rectangleFillColor, setRectangleFillColor] = useState("#8b5cf6");
     const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
     const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
@@ -314,6 +319,14 @@ export function TradeChartView({
         window.localStorage.setItem(TRADE_CHART_TIME_GUIDES_KEY, JSON.stringify(timeGuides));
     }, [timeGuides]);
 
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        window.localStorage.setItem(
+            CHART_CONTINUOUS_DRAWING_KEY,
+            continuousDrawingEnabled ? "true" : "false"
+        );
+    }, [continuousDrawingEnabled]);
+
     // Reset view - switch to M1, scroll to trade, fit charts, remove all drawing tools (delay to allow M1 data to load)
     const handleResetView = useCallback(() => {
         if (showsCandlestick) {
@@ -370,6 +383,14 @@ export function TradeChartView({
             if (key === "r") {
                 event.preventDefault();
                 toggleTool("Rectangle");
+            }
+            if (key === "b") {
+                event.preventDefault();
+                toggleTool("Brush");
+            }
+            if (key === "h") {
+                event.preventDefault();
+                toggleTool("HorizontalRay");
             }
             if (key === "p") {
                 event.preventDefault();
@@ -463,11 +484,15 @@ export function TradeChartView({
                         />
                         {(() => {
                             const showDrawControls =
+                                drawingTool === "Brush" ||
                                 drawingTool === "Rectangle" ||
                                 drawingTool === "TrendLine" ||
+                                drawingTool === "HorizontalRay" ||
                                 drawingTool === "Path" ||
+                                selectedDrawingTool === "Brush" ||
                                 selectedDrawingTool === "Rectangle" ||
                                 selectedDrawingTool === "TrendLine" ||
+                                selectedDrawingTool === "HorizontalRay" ||
                                 selectedDrawingTool === "Path";
                             const showCalloutControls =
                                 drawingTool === "Callout" ||
@@ -502,6 +527,15 @@ export function TradeChartView({
                                             />
                                         </div>
                                     ) : null}
+                                    <label className="flex h-7 items-center gap-2 rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                        <input
+                                            type="checkbox"
+                                            checked={continuousDrawingEnabled}
+                                            onChange={(event) => setContinuousDrawingEnabled(event.target.checked)}
+                                            className="h-3.5 w-3.5 rounded border-border accent-primary"
+                                        />
+                                        <span className="whitespace-nowrap font-medium">Continuous draw</span>
+                                    </label>
                                     {showLotsControls ? (
                                         <div className="flex h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5">
                                             <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -605,6 +639,8 @@ export function TradeChartView({
                     onLongShortLotsChange={setLongShortLots}
                     onRectangleFillColorChange={setRectangleFillColor}
                     onRectangleFillOpacityChange={setRectangleFillOpacity}
+                    continuousDrawingEnabled={continuousDrawingEnabled}
+                    onContinuousDrawingChange={setContinuousDrawingEnabled}
                     showDrawExtras={false}
                 />
             </div>
@@ -635,6 +671,7 @@ export function TradeChartView({
                         onVisibleRangeChange={handleVisibleRangeChange}
                         isLoading={isLoading}
                         drawingTool={drawingTool}
+                        continuousDrawing={continuousDrawingEnabled}
                         drawingLineColor={rectangleFillColor}
                         rectangleFillColor={drawingFillRgba}
                         rectangleBorderColor={rectangleFillColor}
@@ -644,7 +681,15 @@ export function TradeChartView({
                         calloutLineColor={calloutLineColor}
                         calloutBoxColor={calloutBoxColor}
                         onDrawingSelectionChange={setSelectedDrawingTool}
-                        onDrawingToolComplete={() => setDrawingTool(null)}
+                        onDrawingToolComplete={() => {
+                            if (!continuousDrawingEnabled) {
+                                setDrawingTool(null);
+                            }
+                        }}
+                        onDrawingToolCancel={() => {
+                            setDrawingTool(null);
+                            setSelectedDrawingTool(null);
+                        }}
                         onCalloutEditRequest={() => {
                             window.setTimeout(() => {
                                 calloutTextInputRef.current?.focus();

@@ -22,12 +22,20 @@ import { LineToolRectangle } from "lightweight-charts-line-tools-rectangle";
 import { registerLinesPlugin } from "lightweight-charts-line-tools-lines";
 import { registerPathPlugin } from "lightweight-charts-line-tools-path";
 import { StableLongShortPosition, defaultLongShortWidthSeconds } from "./plugins/StableLongShortPosition";
+import { PreciseBrushTool } from "./plugins/PreciseBrushTool";
 import {
     buildTimeGuides,
     type TimeGuideSettings,
 } from "./timeGuides";
 
-export type DrawingToolType = "Path" | "TrendLine" | "Rectangle" | "LongShortPosition" | "Callout";
+export type DrawingToolType =
+    | "Path"
+    | "Brush"
+    | "TrendLine"
+    | "HorizontalRay"
+    | "Rectangle"
+    | "LongShortPosition"
+    | "Callout";
 type LineToolsApi = ReturnType<typeof createLineToolsPlugin>;
 type DrawingPoint = { timestamp: number; price: number };
 type DrawingToolExport = {
@@ -61,6 +69,8 @@ function isDrawingToolType(toolType: string): toolType is DrawingToolType {
         toolType === "Rectangle" ||
         toolType === "TrendLine" ||
         toolType === "Path" ||
+        toolType === "Brush" ||
+        toolType === "HorizontalRay" ||
         toolType === "LongShortPosition" ||
         toolType === "Callout"
     );
@@ -375,6 +385,8 @@ export interface TradeCandlestickChartProps {
     isLoading?: boolean;
     /** Active drawing tool - when set, starts interactive drawing mode */
     drawingTool?: DrawingToolType | null;
+    /** Keep the active drawing tool armed after each completed drawing */
+    continuousDrawing?: boolean;
     /** Line color for Path/TrendLine tools (e.g., rgba or hex) */
     drawingLineColor?: string;
     /** Rectangle tool background color (e.g., rgba or hex) */
@@ -399,6 +411,8 @@ export interface TradeCandlestickChartProps {
     onDrawingSelectionChange?: (selectedTool: DrawingToolType | null) => void;
     /** Notify when interactive drawing finishes so parent can exit tool mode */
     onDrawingToolComplete?: (tool: DrawingToolType) => void;
+    /** Notify when drawing mode should be cancelled and return to normal cursor state */
+    onDrawingToolCancel?: () => void;
     /** Notify when a rectangle is selected/deselected */
     onRectangleSelectionChange?: (selected: boolean) => void;
     /** Notify when a Callout should enter edit mode in the parent UI */
@@ -459,6 +473,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     onVisibleRangeChange,
     isLoading = false,
     drawingTool = null,
+    continuousDrawing = false,
     drawingLineColor,
     rectangleFillColor,
     rectangleBorderColor,
@@ -471,6 +486,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     longShortSymbol,
     onDrawingSelectionChange,
     onDrawingToolComplete,
+    onDrawingToolCancel,
     onRectangleSelectionChange,
     onCalloutEditRequest,
     showRiskReward = true,
@@ -501,6 +517,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const onVisibleRangeChangeRef = useRef<typeof onVisibleRangeChange>(onVisibleRangeChange);
     const onDrawingSelectionChangeRef = useRef<typeof onDrawingSelectionChange>(onDrawingSelectionChange);
     const onDrawingToolCompleteRef = useRef<typeof onDrawingToolComplete>(onDrawingToolComplete);
+    const onDrawingToolCancelRef = useRef<typeof onDrawingToolCancel>(onDrawingToolCancel);
     const onRectangleSelectionChangeRef = useRef<typeof onRectangleSelectionChange>(onRectangleSelectionChange);
     const onCalloutEditRequestRef = useRef<typeof onCalloutEditRequest>(onCalloutEditRequest);
     const prevBarsRef = useRef<ChartBar[]>([]);
@@ -510,6 +527,9 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const tradeHistoryPluginsRef = useRef<RiskRewardPlugin[]>([]);
     const lineToolsRef = useRef<LineToolsApi | null>(null);
     const lastSelectedDrawingRef = useRef<{ id: string; toolType: DrawingToolType } | null>(null);
+    const drawingToolRef = useRef<DrawingToolType | null>(drawingTool);
+    const continuousDrawingRef = useRef<boolean>(continuousDrawing);
+    const skipNextCancelActiveDrawingRef = useRef(false);
     const drawingLineColorRef = useRef<string | undefined>(drawingLineColor);
     const rectangleFillColorRef = useRef<string | undefined>(rectangleFillColor);
     const rectangleBorderColorRef = useRef<string | undefined>(rectangleBorderColor);
@@ -556,6 +576,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         tradeHistoryPluginsRef.current = [];
     }, []);
+
+    useEffect(() => {
+        drawingToolRef.current = drawingTool;
+    }, [drawingTool]);
+
+    useEffect(() => {
+        continuousDrawingRef.current = continuousDrawing;
+    }, [continuousDrawing]);
 
     useEffect(() => {
         drawingLineColorRef.current = drawingLineColor;
@@ -748,6 +776,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     }, [onDrawingToolComplete]);
 
     useEffect(() => {
+        onDrawingToolCancelRef.current = onDrawingToolCancel;
+    }, [onDrawingToolCancel]);
+
+    useEffect(() => {
         onRectangleSelectionChangeRef.current = onRectangleSelectionChange;
     }, [onRectangleSelectionChange]);
 
@@ -756,6 +788,79 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     }, [onCalloutEditRequest]);
 
     const getLineToolsInternal = useCallback(() => lineToolsRef.current as LineToolsInternalApi | null, []);
+
+    const buildDrawingToolOptions = useCallback(
+        (toolType: DrawingToolType | null): Parameters<LineToolsApi["addLineTool"]>[2] | undefined => {
+            if (!toolType) return undefined;
+
+            const axisLabelOptions = {
+                showPriceAxisLabels: false,
+                showTimeAxisLabels: false,
+            } as Parameters<LineToolsApi["addLineTool"]>[2];
+
+            if (toolType === "LongShortPosition") {
+                return {
+                    showAutoText: true,
+                    showPriceAxisLabels: false,
+                    showTimeAxisLabels: false,
+                    initialWidthSeconds: defaultLongShortWidthSeconds(timeframe),
+                } as unknown as Parameters<LineToolsApi["addLineTool"]>[2];
+            }
+
+            if (toolType === "Rectangle") {
+                return {
+                    ...axisLabelOptions,
+                    rectangle: {
+                        ...(rectangleFillColorRef.current
+                            ? { background: { color: rectangleFillColorRef.current } }
+                            : {}),
+                        ...(rectangleBorderColorRef.current
+                            ? { border: { color: rectangleBorderColorRef.current } }
+                            : {}),
+                    },
+                } as Parameters<LineToolsApi["addLineTool"]>[2];
+            }
+
+            if (toolType === "Callout") {
+                return {
+                    ...axisLabelOptions,
+                    line: { color: calloutLineColorRef.current || "#00ff66" },
+                    text: buildCalloutTextOptions({
+                        text: calloutTextRef.current || "Text",
+                        fontSize: calloutFontSizeRef.current || 18,
+                        textColor: calloutTextColorRef.current || "#00ff66",
+                        boxColor: calloutBoxColorRef.current || "rgba(0,0,0,0.88)",
+                        lineColor: calloutLineColorRef.current || "#00ff66",
+                    }),
+                } as Parameters<LineToolsApi["addLineTool"]>[2];
+            }
+
+            if (toolType === "Brush") {
+                return {
+                    ...axisLabelOptions,
+                    ...(drawingLineColorRef.current
+                        ? { line: { color: drawingLineColorRef.current } }
+                        : {}),
+                } as Parameters<LineToolsApi["addLineTool"]>[2];
+            }
+
+            if (
+                toolType === "TrendLine" ||
+                toolType === "Path" ||
+                toolType === "HorizontalRay"
+            ) {
+                return drawingLineColorRef.current
+                    ? ({
+                          ...axisLabelOptions,
+                          line: { color: drawingLineColorRef.current },
+                      } as Parameters<LineToolsApi["addLineTool"]>[2])
+                    : axisLabelOptions;
+            }
+
+            return axisLabelOptions;
+        },
+        [timeframe]
+    );
 
     const cancelActiveDrawing = useCallback(() => {
         const lineTools = getLineToolsInternal();
@@ -1351,6 +1456,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const lineTools = createLineToolsPlugin(chart, series);
         lineTools.registerLineTool("Rectangle", LineToolRectangle);
         registerLinesPlugin(lineTools as Parameters<typeof registerLinesPlugin>[0]);
+        lineTools.registerLineTool("Brush", PreciseBrushTool);
         registerPathPlugin(lineTools as Parameters<typeof registerPathPlugin>[0]);
         lineTools.registerLineTool("LongShortPosition", StableLongShortPosition);
         lineToolsRef.current = lineTools;
@@ -1449,6 +1555,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
             if (
                 (toolType === "TrendLine" && params.stage === "lineToolFinished") ||
+                (toolType === "HorizontalRay" && params.stage === "lineToolFinished") ||
+                (toolType === "Brush" && params.stage === "lineToolFinished") ||
                 (toolType === "Path" && (params.stage === "pathFinished" || params.stage === "lineToolFinished")) ||
                 (toolType === "Callout" && params.stage === "lineToolFinished")
             ) {
@@ -1494,7 +1602,21 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                     } else {
                         queueSelectionUpdate();
                     }
+                    if (!continuousDrawingRef.current) {
+                        skipNextCancelActiveDrawingRef.current = true;
+                    }
                     onDrawingToolCompleteRef.current?.(toolType);
+                    if (
+                        continuousDrawingRef.current &&
+                        drawingToolRef.current === toolType &&
+                        lineToolsRef.current
+                    ) {
+                        lineToolsRef.current.addLineTool(
+                            toolType,
+                            undefined,
+                            buildDrawingToolOptions(toolType)
+                        );
+                    }
                 }, 0);
                 return;
             }
@@ -1532,7 +1654,9 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                     const match = selectedTools.find((tool) =>
                         tool.toolType === "Rectangle" ||
                         tool.toolType === "TrendLine" ||
+                        tool.toolType === "HorizontalRay" ||
                         tool.toolType === "Path" ||
+                        tool.toolType === "Brush" ||
                         tool.toolType === "Callout" ||
                         tool.toolType === "LongShortPosition"
                     ) as { id: string; toolType: DrawingToolType } | undefined;
@@ -1763,6 +1887,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             setIsChartReady(false);
         };
     }, [
+        buildDrawingToolOptions,
         clearAllDrawingSelections,
         duplicateDrawings,
         getChartPointFromClient,
@@ -1791,65 +1916,12 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
     useEffect(() => {
         if (!lineToolsRef.current || !drawingTool) return;
-        const axisLabelOptions = {
-            showPriceAxisLabels: false,
-            showTimeAxisLabels: false,
-        } as Parameters<LineToolsApi["addLineTool"]>[2];
-
-        const longShortOptions =
-            drawingTool === "LongShortPosition"
-                ? ({
-                      showAutoText: true,
-                      showPriceAxisLabels: false,
-                      showTimeAxisLabels: false,
-                      initialWidthSeconds: defaultLongShortWidthSeconds(timeframe),
-                  } as unknown as Parameters<LineToolsApi["addLineTool"]>[2])
-                : undefined;
-
-        const lineOptions =
-            (drawingTool === "TrendLine" || drawingTool === "Path" || drawingTool === "Callout") && drawingLineColor
-                ? ({
-                      ...axisLabelOptions,
-                      line: { color: drawingLineColor },
-                  } as Parameters<LineToolsApi["addLineTool"]>[2])
-                : undefined;
-
-        const rectangleOptions =
-            drawingTool === "Rectangle" && (rectangleFillColor || rectangleBorderColor)
-                ? ({
-                      ...axisLabelOptions,
-                      rectangle: {
-                          ...(rectangleFillColor ? { background: { color: rectangleFillColor } } : {}),
-                          ...(rectangleBorderColor ? { border: { color: rectangleBorderColor } } : {}),
-                      },
-                  } as Parameters<LineToolsApi["addLineTool"]>[2])
-                : undefined;
-
-        const calloutOptions =
-            drawingTool === "Callout"
-                ? ({
-                      ...axisLabelOptions,
-                      line: { color: calloutLineColorRef.current || "#00ff66" },
-                      text: buildCalloutTextOptions({
-                          text: calloutTextRef.current || "Text",
-                          fontSize: calloutFontSizeRef.current || 18,
-                          textColor: calloutTextColorRef.current || "#00ff66",
-                          boxColor: calloutBoxColorRef.current || "rgba(0,0,0,0.88)",
-                          lineColor: calloutLineColorRef.current || "#00ff66",
-                      }),
-                  } as Parameters<LineToolsApi["addLineTool"]>[2])
-                : undefined;
-
-        const toolOptions =
-            drawingTool === "Rectangle"
-                ? rectangleOptions
-                : drawingTool === "LongShortPosition"
-                    ? longShortOptions
-                    : drawingTool === "Callout"
-                        ? calloutOptions
-                    : lineOptions;
-        lineToolsRef.current.addLineTool(drawingTool, undefined, toolOptions);
-    }, [drawingTool, drawingLineColor, rectangleFillColor, rectangleBorderColor, timeframe]);
+        lineToolsRef.current.addLineTool(
+            drawingTool,
+            undefined,
+            buildDrawingToolOptions(drawingTool)
+        );
+    }, [buildDrawingToolOptions, drawingTool]);
 
     useEffect(() => {
         if (drawingTool !== "Callout" || !lineToolsRef.current) return;
@@ -1885,6 +1957,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
     useEffect(() => {
         if (drawingTool !== null) return;
+        if (skipNextCancelActiveDrawingRef.current) {
+            skipNextCancelActiveDrawingRef.current = false;
+            return;
+        }
         cancelActiveDrawing();
     }, [cancelActiveDrawing, drawingTool]);
 
@@ -1921,11 +1997,24 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
         };
 
+        const applyToBrush = (id: string) => {
+            if (!drawingLineColor) return;
+            lineToolsRef.current?.applyLineToolOptions({
+                id,
+                toolType: "Brush",
+                options: {
+                    ...(drawingLineColor ? { line: { color: drawingLineColor } } : {}),
+                },
+            } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
+        };
+
         const selectedTargets = selectedTools.filter(
             (tool) =>
                 tool.toolType === "Rectangle" ||
                 tool.toolType === "TrendLine" ||
+                tool.toolType === "HorizontalRay" ||
                 tool.toolType === "Path" ||
+                tool.toolType === "Brush" ||
                 tool.toolType === "Callout"
         );
 
@@ -1933,8 +2022,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             selectedTargets.forEach((tool) => {
                 if (tool.toolType === "Rectangle") {
                     applyToRectangle(tool.id);
+                } else if (tool.toolType === "Brush") {
+                    applyToBrush(tool.id);
                 } else if (
                     tool.toolType === "TrendLine" ||
+                    tool.toolType === "HorizontalRay" ||
                     tool.toolType === "Path" ||
                     tool.toolType === "Callout"
                 ) {
@@ -1952,8 +2044,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         if (lastSelected.toolType === "Rectangle") {
             applyToRectangle(lastSelected.id);
+        } else if (lastSelected.toolType === "Brush") {
+            applyToBrush(lastSelected.id);
         } else if (
             lastSelected.toolType === "TrendLine" ||
+            lastSelected.toolType === "HorizontalRay" ||
             lastSelected.toolType === "Path" ||
             lastSelected.toolType === "Callout"
         ) {
@@ -2001,6 +2096,23 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         if (!isChartReady || !lineToolsRef.current) return;
 
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                const target = e.target as HTMLElement;
+                if (
+                    target.tagName === "INPUT" ||
+                    target.tagName === "TEXTAREA" ||
+                    target.isContentEditable
+                ) {
+                    return;
+                }
+                e.preventDefault();
+                cancelActiveDrawing();
+                clearAllDrawingSelections();
+                window.setTimeout(() => {
+                    onDrawingToolCancelRef.current?.();
+                }, 0);
+                return;
+            }
             if (e.key === "Delete" && !e.ctrlKey && !e.metaKey && !e.altKey) {
                 // Only delete if not typing in an input/textarea
                 const target = e.target as HTMLElement;
@@ -2021,7 +2133,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         return () => {
             window.removeEventListener("keydown", handleKeyDown);
         };
-    }, [clearAllDrawingSelections, isChartReady]);
+    }, [cancelActiveDrawing, clearAllDrawingSelections, isChartReady]);
 
     // Keyboard navigation (scroll/zoom) when chart is hovered
     useEffect(() => {
@@ -2181,7 +2293,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const timeScale = chartRef.current?.timeScale();
         const priceScale = seriesRef.current.priceScale();
         const drawingsBeforeDataUpdate =
-            drawingTool == null && getLineToolsInternal()?._interactionManager?._currentToolCreating == null
+            drawingToolRef.current == null && getLineToolsInternal()?._interactionManager?._currentToolCreating == null
                 ? exportCurrentDrawings()
                 : [];
         const previousBars = prevBarsRef.current;
@@ -2294,7 +2406,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }, 0);
         }
         prevBarsRef.current = data;
-    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, dataUpdateMode, drawingTool, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, scheduleFreePriceScaleMode, syncImportedDrawings, toCandlestickPoint, zoomOutMultiplier]);
+    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, dataUpdateMode, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, scheduleFreePriceScaleMode, syncImportedDrawings, toCandlestickPoint, zoomOutMultiplier]);
 
     useEffect(() => {
         const series = seriesRef.current;
