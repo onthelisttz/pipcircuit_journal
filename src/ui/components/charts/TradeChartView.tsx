@@ -485,11 +485,13 @@ export function TradeChartView({
                         {(() => {
                             const showDrawControls =
                                 drawingTool === "Brush" ||
+                                drawingTool === "Gan" ||
                                 drawingTool === "Rectangle" ||
                                 drawingTool === "TrendLine" ||
                                 drawingTool === "HorizontalRay" ||
                                 drawingTool === "Path" ||
                                 selectedDrawingTool === "Brush" ||
+                                selectedDrawingTool === "Gan" ||
                                 selectedDrawingTool === "Rectangle" ||
                                 selectedDrawingTool === "TrendLine" ||
                                 selectedDrawingTool === "HorizontalRay" ||

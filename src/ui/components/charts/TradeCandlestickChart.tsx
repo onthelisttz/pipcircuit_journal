@@ -23,6 +23,7 @@ import { registerLinesPlugin } from "lightweight-charts-line-tools-lines";
 import { registerPathPlugin } from "lightweight-charts-line-tools-path";
 import { StableLongShortPosition, defaultLongShortWidthSeconds } from "./plugins/StableLongShortPosition";
 import { PreciseBrushTool } from "./plugins/PreciseBrushTool";
+import { GanLevelsTool } from "./plugins/GanLevelsTool";
 import {
     buildTimeGuides,
     type TimeGuideSettings,
@@ -31,6 +32,7 @@ import {
 export type DrawingToolType =
     | "Path"
     | "Brush"
+    | "Gan"
     | "TrendLine"
     | "HorizontalRay"
     | "Rectangle"
@@ -70,6 +72,7 @@ function isDrawingToolType(toolType: string): toolType is DrawingToolType {
         toolType === "TrendLine" ||
         toolType === "Path" ||
         toolType === "Brush" ||
+        toolType === "Gan" ||
         toolType === "HorizontalRay" ||
         toolType === "LongShortPosition" ||
         toolType === "Callout"
@@ -845,6 +848,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }
 
             if (
+                toolType === "Gan" ||
                 toolType === "TrendLine" ||
                 toolType === "Path" ||
                 toolType === "HorizontalRay"
@@ -1457,6 +1461,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         lineTools.registerLineTool("Rectangle", LineToolRectangle);
         registerLinesPlugin(lineTools as Parameters<typeof registerLinesPlugin>[0]);
         lineTools.registerLineTool("Brush", PreciseBrushTool);
+        lineTools.registerLineTool("Gan", GanLevelsTool);
         registerPathPlugin(lineTools as Parameters<typeof registerPathPlugin>[0]);
         lineTools.registerLineTool("LongShortPosition", StableLongShortPosition);
         lineToolsRef.current = lineTools;
@@ -2011,6 +2016,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const selectedTargets = selectedTools.filter(
             (tool) =>
                 tool.toolType === "Rectangle" ||
+                tool.toolType === "Gan" ||
                 tool.toolType === "TrendLine" ||
                 tool.toolType === "HorizontalRay" ||
                 tool.toolType === "Path" ||
@@ -2025,6 +2031,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 } else if (tool.toolType === "Brush") {
                     applyToBrush(tool.id);
                 } else if (
+                    tool.toolType === "Gan" ||
                     tool.toolType === "TrendLine" ||
                     tool.toolType === "HorizontalRay" ||
                     tool.toolType === "Path" ||
@@ -2047,6 +2054,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         } else if (lastSelected.toolType === "Brush") {
             applyToBrush(lastSelected.id);
         } else if (
+            lastSelected.toolType === "Gan" ||
             lastSelected.toolType === "TrendLine" ||
             lastSelected.toolType === "HorizontalRay" ||
             lastSelected.toolType === "Path" ||

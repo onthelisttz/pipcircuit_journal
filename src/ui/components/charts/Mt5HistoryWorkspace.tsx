@@ -102,6 +102,7 @@ const MAX_RENDERED_BARS: Record<ChartTimeframe, number> = {
 const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
   { id: "Brush", label: "Brush" },
   { id: "Path", label: "Path" },
+  { id: "Gan", label: "Gan" },
   { id: "TrendLine", label: "Trendline" },
   { id: "HorizontalRay", label: "H-Ray" },
   { id: "Rectangle", label: "Rectangle" },
@@ -139,6 +140,14 @@ function DrawingToolGlyph({ tool }: { tool: DrawingToolType }) {
       return (
         <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
           <path d="M3 12.5 13 4" />
+        </svg>
+      );
+    case "Gan":
+      return (
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+          <path d="M3 5h10" />
+          <path d="M3 8h10" />
+          <path d="M3 11h10" />
         </svg>
       );
     case "HorizontalRay":
@@ -1768,11 +1777,13 @@ export function Mt5HistoryWorkspace({
           {(() => {
             const showDrawControls =
               drawingTool === "Rectangle" ||
+              drawingTool === "Gan" ||
               drawingTool === "TrendLine" ||
               drawingTool === "HorizontalRay" ||
               drawingTool === "Path" ||
               drawingTool === "Brush" ||
               selectedDrawingTool === "Rectangle" ||
+              selectedDrawingTool === "Gan" ||
               selectedDrawingTool === "TrendLine" ||
               selectedDrawingTool === "HorizontalRay" ||
               selectedDrawingTool === "Path" ||
@@ -1849,11 +1860,13 @@ export function Mt5HistoryWorkspace({
       {compact && (() => {
         const showDrawControls =
           drawingTool === "Rectangle" ||
+          drawingTool === "Gan" ||
           drawingTool === "TrendLine" ||
           drawingTool === "HorizontalRay" ||
           drawingTool === "Path" ||
           drawingTool === "Brush" ||
           selectedDrawingTool === "Rectangle" ||
+          selectedDrawingTool === "Gan" ||
           selectedDrawingTool === "TrendLine" ||
           selectedDrawingTool === "HorizontalRay" ||
           selectedDrawingTool === "Path" ||

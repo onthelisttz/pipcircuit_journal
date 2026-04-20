@@ -19,6 +19,7 @@ import type { DrawingToolType } from "./TradeCandlestickChart";
 const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
     { id: "Brush", label: "Brush" },
     { id: "Path", label: "Path" },
+    { id: "Gan", label: "Gan" },
     { id: "TrendLine", label: "Trendline" },
     { id: "HorizontalRay", label: "H-Ray" },
     { id: "Rectangle", label: "Rectangle" },
@@ -258,11 +259,13 @@ export function ChartControls({
         Boolean(onRectangleFillColorChange && onRectangleFillOpacityChange) &&
         (drawMenuOpen ||
             drawingTool === "Brush" ||
+            drawingTool === "Gan" ||
             drawingTool === "Rectangle" ||
             drawingTool === "TrendLine" ||
             drawingTool === "HorizontalRay" ||
             drawingTool === "Path" ||
             drawingSelection === "Brush" ||
+            drawingSelection === "Gan" ||
             drawingSelection === "Rectangle" ||
             drawingSelection === "TrendLine" ||
             drawingSelection === "HorizontalRay" ||
