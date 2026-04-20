@@ -25,7 +25,7 @@ import {
   MoreVertical,
   X,
 } from "lucide-react";
-import type { ChartTimeframe, Trade } from "@domain/entities";
+import type { ChartBar, ChartTimeframe, Trade } from "@domain/entities";
 import { Direction, OrderType } from "@domain/enums";
 import { TradeCandlestickChart } from "@ui/components/charts";
 import type { DrawingToolType, TradeCandlestickChartRef } from "@ui/components/charts/TradeCandlestickChart";
