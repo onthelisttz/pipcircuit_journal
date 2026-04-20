@@ -118,6 +118,62 @@ const TIMEFRAME_WINDOWS_MS: Record<ChartTimeframe, number> = {
   D1: 5 * 365 * 24 * 60 * 60 * 1000,
 };
 
+function DrawingToolGlyph({ tool }: { tool: DrawingToolType }) {
+  switch (tool) {
+    case "Brush":
+      return (
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2.5 10.5c1.5-3 3-5 5.5-5 2 0 2.5 1 4 1 1 0 1.5-.5 1.5-.5" />
+          <path d="M2.5 12c1.5-1 2.5-1 4-.5" />
+        </svg>
+      );
+    case "Path":
+      return (
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2 11.5 5.5 8l2.5 2.5L14 4.5" />
+          <circle cx="2" cy="11.5" r="1" fill="currentColor" stroke="none" />
+          <circle cx="14" cy="4.5" r="1" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "TrendLine":
+      return (
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+          <path d="M3 12.5 13 4" />
+        </svg>
+      );
+    case "HorizontalRay":
+      return (
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2.5 8h10" />
+          <path d="m10.5 5.5 2.5 2.5-2.5 2.5" />
+        </svg>
+      );
+    case "Rectangle":
+      return (
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+          <rect x="3" y="4" width="10" height="8" rx="1" />
+        </svg>
+      );
+    case "Callout":
+      return (
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 4.5h10v6H8l-2.5 2v-2H3z" />
+        </svg>
+      );
+    case "LongShortPosition":
+      return (
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M5 12V4" />
+          <path d="m3.5 5.5 1.5-1.5 1.5 1.5" />
+          <path d="M11 4v8" />
+          <path d="m9.5 10.5 1.5 1.5 1.5-1.5" />
+        </svg>
+      );
+    default:
+      return <Pencil className="h-3.5 w-3.5" />;
+  }
+}
+
 function pad(value: number): string {
   return String(value).padStart(2, "0");
 }
@@ -1698,13 +1754,15 @@ export function Mt5HistoryWorkspace({
               type="button"
               onClick={() => setDrawingTool((current) => current === tool.id ? null : tool.id)}
               disabled={!selectedTimeframe}
-              className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
+              className={`flex h-7 w-7 items-center justify-center rounded-md border transition-colors ${
                 drawingTool === tool.id
                   ? "border-primary/60 bg-primary/10 text-primary"
                   : "border-border text-muted-foreground hover:bg-muted"
               }`}
+              title={tool.label}
+              aria-label={tool.label}
             >
-              {tool.label}
+              <DrawingToolGlyph tool={tool.id} />
             </button>
           ))}
           {(() => {
@@ -1832,15 +1890,17 @@ export function Mt5HistoryWorkspace({
 
       {!compact ? (
         <div className="ml-auto flex shrink-0 items-center gap-2 max-[480px]:ml-0 max-[480px]:w-full max-[480px]:flex-wrap max-[480px]:pt-1">
-          <button type="button" onClick={() => setIsExpanded((prev) => !prev)} className="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted" title={isExpanded ? "Exit full screen" : "Full screen"}>
+          <button type="button" onClick={() => setIsExpanded((prev) => !prev)} className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted" title={isExpanded ? "Exit full screen" : "Full screen"} aria-label={isExpanded ? "Exit full screen" : "Full screen"}>
             {isExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
           </button>
-          <button type="button" onClick={() => chartRef.current?.fitContent()} disabled={!selectedTimeframe} className="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted">Fit</button>
-          <button type="button" onClick={() => { chartRef.current?.removeAllDrawingTools(); setDrawingTool(null); setSelectedDrawingTool(null); }} disabled={!selectedTimeframe} className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted" title="Clear drawings">
-            <Eraser className="h-3.5 w-3.5" /> Clear
+          <button type="button" onClick={() => chartRef.current?.fitContent()} disabled={!selectedTimeframe} className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted" title="Fit chart content" aria-label="Fit chart content">
+            <Maximize2 className="h-3.5 w-3.5" />
           </button>
-          <button type="button" onClick={refreshCurrentView} disabled={!selectedTimeframe || isBarsLoading || isEdgeLoading} className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-60">
-            <RefreshCw className={`h-3.5 w-3.5 ${isBarsLoading || isEdgeLoading ? "animate-spin" : ""}`} /> Refresh
+          <button type="button" onClick={() => { chartRef.current?.removeAllDrawingTools(); setDrawingTool(null); setSelectedDrawingTool(null); }} disabled={!selectedTimeframe} className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted" title="Clear drawings" aria-label="Clear drawings">
+            <Eraser className="h-3.5 w-3.5" />
+          </button>
+          <button type="button" onClick={refreshCurrentView} disabled={!selectedTimeframe || isBarsLoading || isEdgeLoading} className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted disabled:opacity-60" title="Refresh chart" aria-label="Refresh chart">
+            <RefreshCw className={`h-3.5 w-3.5 ${isBarsLoading || isEdgeLoading ? "animate-spin" : ""}`} />
           </button>
         </div>
       ) : (

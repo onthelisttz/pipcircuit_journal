@@ -2695,7 +2695,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             {/* Chart container */}
             <div
                 ref={containerRef}
-                className="w-full rounded-lg bg-gray-900/50"
+                className="chart-crosshair-lock w-full rounded-lg bg-gray-900/50"
                 style={{ height }}
             />
 

@@ -103,17 +103,15 @@ export function TimeGuidesControls({
         type="button"
         onClick={() => setOpen((current) => !current)}
         disabled={disabled}
-        className={`flex h-7 items-center rounded border text-xs font-medium transition-colors ${
-          compact ? "w-7 justify-center px-0" : "gap-1.5 px-2"
-        } ${
+        className={`flex h-7 w-7 items-center justify-center rounded border text-xs font-medium transition-colors ${
           open
             ? "border-primary/60 bg-primary/10 text-primary"
             : "border-border text-muted-foreground hover:bg-muted"
         } disabled:cursor-not-allowed disabled:opacity-50`}
         title="Time guides"
+        aria-label="Time guides"
       >
         <Clock3 className="h-3.5 w-3.5" />
-        {!compact && <span>Guides</span>}
       </button>
 
       {open &&

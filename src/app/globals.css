@@ -179,3 +179,22 @@
 .recharts-surface *:focus-visible {
   outline: none !important;
 }
+
+/* Keep the TradingView-style crosshair only inside chart panes.
+   Preserve resize cursors on the rendered axis regions. */
+.chart-crosshair-lock tr:not(:last-child) td:nth-child(2),
+.chart-crosshair-lock tr:not(:last-child) td:nth-child(2) * {
+  cursor: crosshair !important;
+}
+
+.chart-crosshair-lock tr:not(:last-child) td:first-child,
+.chart-crosshair-lock tr:not(:last-child) td:first-child *,
+.chart-crosshair-lock tr:not(:last-child) td:last-child,
+.chart-crosshair-lock tr:not(:last-child) td:last-child * {
+  cursor: s-resize !important;
+}
+
+.chart-crosshair-lock tr:last-child td:nth-child(2),
+.chart-crosshair-lock tr:last-child td:nth-child(2) * {
+  cursor: e-resize !important;
+}
