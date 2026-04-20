@@ -1,11 +1,6 @@
 "use client";
 
-import type {
-  Coordinate,
-  IChartApiBase,
-  ISeriesApi,
-  SeriesType,
-} from "lightweight-charts";
+import type { Coordinate } from "lightweight-charts";
 import {
   AnchorPoint,
   BaseLineTool,
@@ -28,10 +23,14 @@ export class PreciseBrushPaneView<HorzScaleItem> extends LineToolPaneView<HorzSc
 
   public constructor(
     source: PreciseBrushTool<HorzScaleItem>,
-    chart: IChartApiBase<HorzScaleItem>,
-    series: ISeriesApi<SeriesType, HorzScaleItem>
+    chart: unknown,
+    series: unknown
   ) {
-    super(source as BaseLineTool<HorzScaleItem>, chart, series);
+    super(
+      source as unknown as BaseLineTool<any>,
+      chart as never,
+      series as never
+    );
   }
 
   protected _smoothArray(points: AnchorPoint[], iterations = 1): AnchorPoint[] {

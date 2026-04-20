@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  Coordinate,
   IChartApiBase,
   IHorzScaleBehavior,
   ISeriesApi,
@@ -13,6 +14,7 @@ import {
   type DeepPartial,
   FinalizationMethod,
   type HitTestResult,
+  LineEnd,
   type LineToolHitTestData,
   type LineToolOptionsInternal,
   type LineToolPoint,
@@ -24,7 +26,7 @@ import { GanLevelsPaneView } from "./GanLevelsPaneView";
 
 type GanLineToolOptions = LineToolOptionsInternal<"TrendLine">;
 
-export const GAN_LEVELS_DEFAULTS: GanLineToolOptions = {
+export const GAN_LEVELS_DEFAULTS = {
   visible: true,
   editable: true,
   defaultHoverCursor: PaneCursorType.Pointer,
@@ -40,11 +42,12 @@ export const GAN_LEVELS_DEFAULTS: GanLineToolOptions = {
     width: 1,
     color: "rgba(245, 158, 11, 1)",
     style: 0,
+    end: { left: LineEnd.Normal, right: LineEnd.Normal },
+    extend: { left: false, right: false },
   },
-};
+} as unknown as GanLineToolOptions;
 
 export class GanLevelsTool<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
-  public override readonly toolType = "Gan";
   public override readonly pointsCount = 2;
 
   public constructor(
@@ -66,7 +69,7 @@ export class GanLevelsTool<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
       horzScaleBehavior,
       finalOptions,
       points,
-      "Gan",
+      "Gan" as never,
       2,
       priceAxisLabelStackingManager
     );
@@ -93,6 +96,9 @@ export class GanLevelsTool<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
       return null;
     }
 
-    return renderer.hitTest(x, y) as HitTestResult<LineToolHitTestData> | null;
+    return renderer.hitTest(
+      x as Coordinate,
+      y as Coordinate
+    ) as HitTestResult<LineToolHitTestData> | null;
   }
 }

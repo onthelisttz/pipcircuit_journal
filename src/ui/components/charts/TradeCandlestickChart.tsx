@@ -1249,7 +1249,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         for (const tool of toolsToDuplicate) {
             const duplicatedId = lineToolsRef.current?.addLineTool(
-                tool.toolType,
+                tool.toolType as Parameters<LineToolsApi["addLineTool"]>[0],
                 tool.points.map((toolPoint) => ({
                     timestamp: toolPoint.timestamp + (offset?.timestamp ?? 0),
                     price: toolPoint.price + (offset?.price ?? 0),
@@ -1499,7 +1499,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         lineTools.registerLineTool("Rectangle", LineToolRectangle);
         registerLinesPlugin(lineTools as Parameters<typeof registerLinesPlugin>[0]);
         lineTools.registerLineTool("Brush", PreciseBrushTool);
-        lineTools.registerLineTool("Gan", GanLevelsTool);
+        lineTools.registerLineTool(
+            "Gan" as Parameters<LineToolsApi["registerLineTool"]>[0],
+            GanLevelsTool as Parameters<LineToolsApi["registerLineTool"]>[1]
+        );
         registerPathPlugin(lineTools as Parameters<typeof registerPathPlugin>[0]);
         lineTools.registerLineTool("LongShortPosition", StableLongShortPosition);
         lineToolsRef.current = lineTools;
@@ -1655,7 +1658,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                         lineToolsRef.current
                     ) {
                         lineToolsRef.current.addLineTool(
-                            toolType,
+                            toolType as Parameters<LineToolsApi["addLineTool"]>[0],
                             undefined,
                             buildDrawingToolOptions(toolType)
                         );
@@ -1960,7 +1963,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     useEffect(() => {
         if (!lineToolsRef.current || !drawingTool) return;
         lineToolsRef.current.addLineTool(
-            drawingTool,
+            drawingTool as Parameters<LineToolsApi["addLineTool"]>[0],
             undefined,
             buildDrawingToolOptions(drawingTool)
         );

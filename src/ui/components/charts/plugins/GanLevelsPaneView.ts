@@ -1,14 +1,13 @@
 "use client";
 
-import type {
-  IChartApiBase,
-  ISeriesApi,
-  SeriesType,
-} from "lightweight-charts";
 import { LineStyle } from "lightweight-charts";
 import {
+  AnchorPoint,
+  BaseLineTool,
   HitTestResult,
   HitTestType,
+  LineCap,
+  LineJoin,
   PaneCursorType,
   RectangleRenderer,
   SegmentRenderer,
@@ -29,10 +28,14 @@ export class GanLevelsPaneView<HorzScaleItem> extends LineToolPaneView<HorzScale
 
   public constructor(
     source: GanLevelsTool<HorzScaleItem>,
-    chart: IChartApiBase<HorzScaleItem>,
-    series: ISeriesApi<SeriesType, HorzScaleItem>
+    chart: unknown,
+    series: unknown
   ) {
-    super(source, chart, series);
+    super(
+      source as unknown as BaseLineTool<any>,
+      chart as never,
+      series as never
+    );
   }
 
   protected override _updateImpl(_height: number, _width: number): void {
@@ -47,17 +50,16 @@ export class GanLevelsPaneView<HorzScaleItem> extends LineToolPaneView<HorzScale
     }
 
     const [pointA, pointB] = this._points;
-    const minX = Math.min(pointA.x, pointB.x);
-    const maxX = Math.max(pointA.x, pointB.x);
-    const topY = Math.min(pointA.y, pointB.y);
-    const bottomY = Math.max(pointA.y, pointB.y);
+    const minX = Math.min(pointA.x, pointB.x) as typeof pointA.x;
+    const maxX = Math.max(pointA.x, pointB.x) as typeof pointA.x;
+    const topY = Math.min(pointA.y, pointB.y) as typeof pointA.y;
+    const bottomY = Math.max(pointA.y, pointB.y) as typeof pointA.y;
     const lineColor = options.line?.color || "#f59e0b";
+    const topLeft = new AnchorPoint(minX, topY, pointA.data, pointA.square);
+    const bottomRight = new AnchorPoint(maxX, bottomY, pointB.data, pointB.square);
 
     this._dragAreaRenderer.setData({
-      points: [
-        { ...pointA, x: minX, y: topY },
-        { ...pointB, x: maxX, y: bottomY },
-      ],
+      points: [topLeft, bottomRight],
       background: { color: "rgba(0, 0, 0, 0.001)" },
       border: { color: "rgba(0, 0, 0, 0)", width: 0, style: LineStyle.Solid },
       hitTestBackground: true,
@@ -67,17 +69,20 @@ export class GanLevelsPaneView<HorzScaleItem> extends LineToolPaneView<HorzScale
 
     GAN_LEVELS.forEach((level, index) => {
       const y = (topY + (bottomY - topY) * level) as typeof pointA.y;
+      const startPoint = new AnchorPoint(minX, y, pointA.data, pointA.square);
+      const endPoint = new AnchorPoint(maxX, y, pointB.data, pointB.square);
+      const baseLine = options.line;
       this._segmentRenderers[index].setData({
-        points: [
-          { ...pointA, x: minX, y },
-          { ...pointB, x: maxX, y },
-        ],
+        points: [startPoint, endPoint],
         line: {
+          ...baseLine,
           color: lineColor,
-          width: options.line?.width ?? 1,
+          width: baseLine?.width ?? 1,
+          join: LineJoin.Round,
+          cap: LineCap.Round,
           style:
             index === 1
-              ? options.line?.style ?? LineStyle.Solid
+              ? baseLine?.style ?? LineStyle.Solid
               : LineStyle.Dashed,
         },
         toolDefaultHoverCursor: options.defaultHoverCursor as PaneCursorType | undefined,
