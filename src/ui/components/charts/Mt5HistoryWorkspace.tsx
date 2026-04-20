@@ -85,6 +85,23 @@ type LoadedRange = {
 
 type HistoryChartUpdateMode = "replace" | "append" | "prepend";
 
+function areDrawingsCoveredByBars(
+  drawings: DrawingToolExport[],
+  bars: ChartBar[]
+): boolean {
+  if (drawings.length === 0 || bars.length === 0) return true;
+
+  const loadedFrom = bars[0].timestamp;
+  const loadedTo = bars[bars.length - 1].timestamp;
+
+  return drawings.every((drawing) =>
+    drawing.points.every((point) => {
+      const timestamp = drawingTimestampToMs(point.timestamp);
+      return timestamp >= loadedFrom && timestamp <= loadedTo;
+    })
+  );
+}
+
 const LOAD_LIMIT = 20_000;
 const EDGE_FETCH_THRESHOLD = 10;
 const FETCH_THROTTLE_MS = 160;
@@ -773,6 +790,7 @@ export function Mt5HistoryWorkspace({
   useEffect(() => {
     const pending = pendingRestoreRef.current;
     if (!pending || bars.length === 0 || isBarsLoading) return;
+    if (!areDrawingsCoveredByBars(pending.drawings, bars)) return;
     pendingRestoreRef.current = null;
     const timer = window.setTimeout(() => {
       if (pending.drawings.length > 0) {

@@ -532,6 +532,23 @@ function getDrawingWindowDays(
   return maxDistance > 0 ? Math.ceil(maxDistance / DAY_MS) + 1 : 0;
 }
 
+function areDrawingsCoveredByBars(
+  drawings: DrawingToolExport[],
+  bars: ChartBar[]
+): boolean {
+  if (drawings.length === 0 || bars.length === 0) return true;
+
+  const loadedFrom = bars[0].timestamp;
+  const loadedTo = bars[bars.length - 1].timestamp;
+
+  return drawings.every((drawing) =>
+    drawing.points.every((point) => {
+      const timestamp = drawingTimestampToMs(point.timestamp);
+      return timestamp >= loadedFrom && timestamp <= loadedTo;
+    })
+  );
+}
+
 interface SyncedChartWorkspaceProps {
   initialSymbol?: string;
   initialBroker?: string;
@@ -1172,6 +1189,7 @@ export function SyncedChartWorkspace({
   useEffect(() => {
     const pending = pendingRestoreRef.current;
     if (!pending || data.length === 0 || isLoading) return;
+    if (!areDrawingsCoveredByBars(pending.drawings, data)) return;
     pendingRestoreRef.current = null;
     // Small delay so chart processes the new data first
     const timer = window.setTimeout(() => {

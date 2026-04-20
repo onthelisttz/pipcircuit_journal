@@ -109,6 +109,27 @@ function buildCalloutTextOptions(config: {
     };
 }
 
+function timeframeToSeconds(timeframe?: ChartTimeframe): number {
+    switch (timeframe) {
+        case "M1":
+            return 60;
+        case "M5":
+            return 5 * 60;
+        case "M15":
+            return 15 * 60;
+        case "M30":
+            return 30 * 60;
+        case "H1":
+            return 60 * 60;
+        case "H4":
+            return 4 * 60 * 60;
+        case "D1":
+            return 24 * 60 * 60;
+        default:
+            return 60;
+    }
+}
+
 function timeToDate(time: unknown): Date | null {
     if (typeof time === "number") {
         return new Date(time * 1000);
@@ -969,6 +990,18 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             return normalizedSeconds;
         }
 
+        const timeframeSeconds = timeframeToSeconds(timeframe);
+        const alignedSeconds =
+            timeframeSeconds > 0
+                ? Math.round(normalizedSeconds / timeframeSeconds) * timeframeSeconds
+                : normalizedSeconds;
+        const firstSeconds = Math.round(data[0].timestamp / 1000);
+        const lastSeconds = Math.round(data[data.length - 1].timestamp / 1000);
+
+        if (alignedSeconds < firstSeconds || alignedSeconds > lastSeconds) {
+            return alignedSeconds;
+        }
+
         let left = 0;
         let right = data.length - 1;
 
@@ -992,10 +1025,15 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const leftSeconds = Math.round(data[leftIndex].timestamp / 1000);
         const rightSeconds = Math.round(data[rightIndex].timestamp / 1000);
 
-        return Math.abs(leftSeconds - normalizedSeconds) < Math.abs(rightSeconds - normalizedSeconds)
-            ? leftSeconds
-            : rightSeconds;
-    }, [data]);
+        const nearestSeconds =
+            Math.abs(leftSeconds - alignedSeconds) < Math.abs(rightSeconds - alignedSeconds)
+                ? leftSeconds
+                : rightSeconds;
+
+        return Math.abs(nearestSeconds - alignedSeconds) <= timeframeSeconds
+            ? nearestSeconds
+            : alignedSeconds;
+    }, [data, timeframe]);
 
     const normalizeDrawingForCurrentData = useCallback((drawing: DrawingToolExport): DrawingToolExport => ({
         ...drawing,
