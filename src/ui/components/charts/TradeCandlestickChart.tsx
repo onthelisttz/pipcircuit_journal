@@ -46,6 +46,12 @@ type DrawingToolExport = {
     points: DrawingPoint[];
     options?: Record<string, unknown>;
 };
+type SelectionBoxBounds = {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+};
 type InternalLineTool = {
     id: () => string;
     getExportData: () => DrawingToolExport;
@@ -153,6 +159,37 @@ function formatInChartTimezone(
         hour12: false,
         ...options,
     }).format(date);
+}
+
+function normalizeSelectionBox(
+    startPoint: { x: number; y: number },
+    endPoint: { x: number; y: number }
+): SelectionBoxBounds {
+    const left = Math.min(startPoint.x, endPoint.x);
+    const top = Math.min(startPoint.y, endPoint.y);
+    const right = Math.max(startPoint.x, endPoint.x);
+    const bottom = Math.max(startPoint.y, endPoint.y);
+
+    return {
+        left,
+        top,
+        width: right - left,
+        height: bottom - top,
+    };
+}
+
+function selectionBoxesIntersect(first: SelectionBoxBounds, second: SelectionBoxBounds): boolean {
+    return (
+        first.left <= second.left + second.width &&
+        first.left + first.width >= second.left &&
+        first.top <= second.top + second.height &&
+        first.top + first.height >= second.top
+    );
+}
+
+function drawingTimestampToChartTime(timestamp: number): Time {
+    const seconds = timestamp >= 1_000_000_000_000 ? timestamp / 1000 : timestamp;
+    return seconds as Time;
 }
 
 type TradeOverlayData = {
@@ -538,6 +575,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         height: null,
         verticalLines: [],
     });
+    const [selectionBox, setSelectionBox] = useState<SelectionBoxBounds | null>(null);
     const onVisibleRangeChangeRef = useRef<typeof onVisibleRangeChange>(onVisibleRangeChange);
     const onDrawingSelectionChangeRef = useRef<typeof onDrawingSelectionChange>(onDrawingSelectionChange);
     const onDrawingToolCompleteRef = useRef<typeof onDrawingToolComplete>(onDrawingToolComplete);
@@ -580,6 +618,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         ctrlOrMeta: boolean;
         selectedIds: string[];
     } | null>(null);
+    const selectionBoxDragRef = useRef<{
+        startPoint: { x: number; y: number };
+        currentPoint: { x: number; y: number };
+        additiveSelection: boolean;
+        initialSelection: string[];
+        active: boolean;
+    } | null>(null);
+    const getDrawingIdsWithinSelectionBoxRef = useRef<(box: SelectionBoxBounds) => string[]>(() => []);
     const priceFormat = useMemo(
         () => buildSeriesPriceFormat(longShortSymbol ?? trade?.symbol, data),
         [data, longShortSymbol, trade?.symbol]
@@ -1273,6 +1319,77 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         };
     }, []);
 
+    const getDrawingSelectionBounds = useCallback((drawing: DrawingToolExport): SelectionBoxBounds | null => {
+        const chart = chartRef.current;
+        const series = seriesRef.current;
+        if (!chart || !series || drawing.points.length === 0) return null;
+
+        let left = Number.POSITIVE_INFINITY;
+        let right = Number.NEGATIVE_INFINITY;
+        let top = Number.POSITIVE_INFINITY;
+        let bottom = Number.NEGATIVE_INFINITY;
+        let hasCoordinates = false;
+
+        for (const point of drawing.points) {
+            const x = chart.timeScale().timeToCoordinate(drawingTimestampToChartTime(point.timestamp));
+            const y = series.priceToCoordinate(point.price);
+            if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) {
+                continue;
+            }
+
+            hasCoordinates = true;
+            left = Math.min(left, x);
+            right = Math.max(right, x);
+            top = Math.min(top, y);
+            bottom = Math.max(bottom, y);
+        }
+
+        if (!hasCoordinates) {
+            return null;
+        }
+
+        return {
+            left,
+            top,
+            width: Math.max(4, right - left),
+            height: Math.max(4, bottom - top),
+        };
+    }, []);
+
+    const getDrawingIdsWithinSelectionBox = useCallback((box: SelectionBoxBounds) => {
+        const toolsMap = getLineToolsInternal()?._tools;
+        if (!toolsMap) return [];
+
+        const selectedIds: string[] = [];
+        for (const tool of toolsMap.values()) {
+            let exportData: DrawingToolExport;
+            try {
+                exportData = tool.getExportData();
+            } catch {
+                continue;
+            }
+
+            if (!isDrawingToolType(exportData.toolType)) {
+                continue;
+            }
+
+            const normalizedDrawing: DrawingToolExport = normalizeDrawingForCurrentData({
+                ...exportData,
+                id: tool.id(),
+            });
+            const drawingBounds = getDrawingSelectionBounds(normalizedDrawing);
+            if (drawingBounds && selectionBoxesIntersect(box, drawingBounds)) {
+                selectedIds.push(tool.id());
+            }
+        }
+
+        return selectedIds;
+    }, [getDrawingSelectionBounds, getLineToolsInternal, normalizeDrawingForCurrentData]);
+
+    useEffect(() => {
+        getDrawingIdsWithinSelectionBoxRef.current = getDrawingIdsWithinSelectionBox;
+    }, [getDrawingIdsWithinSelectionBox]);
+
     const queueSelectionUpdate = useCallback(() => {
         window.setTimeout(() => updateDrawingSelection(), 0);
         window.setTimeout(() => updateDrawingSelection(), 50);
@@ -1600,6 +1717,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }
 
             if (
+                (toolType === "Gan" && params.stage === "lineToolFinished") ||
                 (toolType === "TrendLine" && params.stage === "lineToolFinished") ||
                 (toolType === "HorizontalRay" && params.stage === "lineToolFinished") ||
                 (toolType === "Brush" && params.stage === "lineToolFinished") ||
@@ -1699,6 +1817,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                     const selectedTools = JSON.parse(selectedRaw) as Array<{ id: string; toolType: string }>;
                     const match = selectedTools.find((tool) =>
                         tool.toolType === "Rectangle" ||
+                        tool.toolType === "Gan" ||
                         tool.toolType === "TrendLine" ||
                         tool.toolType === "HorizontalRay" ||
                         tool.toolType === "Path" ||
@@ -1724,6 +1843,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             const hitToolId = point
                 ? getLineToolsInternal()?._interactionManager?._hitTest?.(point)?.tool?.id()
                 : undefined;
+            const toolCreating = Boolean(getLineToolsInternal()?._interactionManager?._currentToolCreating);
 
             pointerGestureRef.current = {
                 clientX: event.clientX,
@@ -1732,6 +1852,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 ctrlOrMeta: event.ctrlKey || event.metaKey,
                 selectedIds: [...selectedDrawingIdsRef.current],
             };
+            selectionBoxDragRef.current = null;
+            setSelectionBox(null);
 
             if (!point || event.button !== 0) {
                 selectionSnapshotRef.current = null;
@@ -1771,11 +1893,51 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 selectionSnapshotRef.current = null;
             }
 
+            if ((event.ctrlKey || event.metaKey) && !hitToolId && !toolCreating) {
+                selectionBoxDragRef.current = {
+                    startPoint: point,
+                    currentPoint: point,
+                    additiveSelection: event.ctrlKey || event.metaKey,
+                    initialSelection: [...selectedDrawingIdsRef.current],
+                    active: false,
+                };
+                event.preventDefault();
+                event.stopPropagation();
+                queueSelectionUpdate();
+                return;
+            }
+
             queueSelectionUpdate();
+        };
+        const handlePointerMove = (event: PointerEvent) => {
+            const gesture = pointerGestureRef.current;
+            const selectionDrag = selectionBoxDragRef.current;
+            if (!gesture || !selectionDrag || gesture.button !== 0) {
+                return;
+            }
+
+            const point = getChartPointFromClient(event.clientX, event.clientY);
+            if (!point) {
+                return;
+            }
+
+            selectionDrag.currentPoint = point;
+            const dragDistance = Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY);
+            if (!selectionDrag.active && dragDistance <= 5) {
+                return;
+            }
+
+            selectionDrag.active = true;
+            setSelectionBox(normalizeSelectionBox(selectionDrag.startPoint, point));
+            event.preventDefault();
+            event.stopPropagation();
         };
         const handlePointerUp = (event: PointerEvent) => {
             const gesture = pointerGestureRef.current;
             pointerGestureRef.current = null;
+            const selectionDrag = selectionBoxDragRef.current;
+            selectionBoxDragRef.current = null;
+            setSelectionBox(null);
 
             queueSelectionUpdate();
 
@@ -1784,6 +1946,26 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 selectionSnapshotRef.current = null;
                 duplicateDragPlanRef.current = null;
                 return;
+            }
+
+            if (selectionDrag?.active) {
+                const marqueeSelection = getDrawingIdsWithinSelectionBoxRef.current(
+                    normalizeSelectionBox(selectionDrag.startPoint, selectionDrag.currentPoint)
+                );
+                const nextSelection = selectionDrag.additiveSelection
+                    ? Array.from(new Set([...selectionDrag.initialSelection, ...marqueeSelection]))
+                    : marqueeSelection;
+                selectionSnapshotRef.current = null;
+                duplicateDragPlanRef.current = null;
+                syncSelectionByIds(nextSelection, nextSelection[nextSelection.length - 1] ?? null);
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+
+            if (selectionDrag) {
+                event.preventDefault();
+                event.stopPropagation();
             }
 
             const dragDistance = Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY);
@@ -1853,6 +2035,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }, 0);
         };
         chartContainer.addEventListener("pointerdown", handlePointerDown, true);
+        chartContainer.addEventListener("pointermove", handlePointerMove, true);
         chartContainer.addEventListener("pointerup", handlePointerUp, true);
 
         setIsChartReady(true);
@@ -1907,6 +2090,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             removeAllLineToolsSafely();
             chart.unsubscribeClick(handleChartClick);
             chartContainer.removeEventListener("pointerdown", handlePointerDown, true);
+            chartContainer.removeEventListener("pointermove", handlePointerMove, true);
             chartContainer.removeEventListener("pointerup", handlePointerUp, true);
             lineToolsRef.current = null;
             window.removeEventListener("resize", handleResize);
@@ -2747,6 +2931,20 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 className="chart-crosshair-lock w-full rounded-lg bg-gray-900/50"
                 style={{ height }}
             />
+
+            {selectionBox && (
+                <div className="pointer-events-none absolute inset-0 z-[2] overflow-hidden rounded-lg">
+                    <div
+                        className="absolute border border-sky-400/80 bg-sky-400/10"
+                        style={{
+                            left: `${selectionBox.left}px`,
+                            top: `${selectionBox.top}px`,
+                            width: `${selectionBox.width}px`,
+                            height: `${selectionBox.height}px`,
+                        }}
+                    />
+                </div>
+            )}
 
             {timeGuideOverlay.verticalLines.length > 0 && (
                 <div

@@ -77,8 +77,7 @@ async function main() {
   ].join(" ");
   await run("powershell", ["-NoProfile", "-Command", compressScript]);
 
-  console.log(`Created MT5 service bundle: ${bundleRoot}`);
-  console.log(`Created MT5 service zip: ${zipPath}`);
+
 }
 
 main().catch((error) => {

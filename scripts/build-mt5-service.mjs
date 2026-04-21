@@ -46,7 +46,7 @@ async function main() {
   await run("bun", ["build", "--compile", entryPath, "--outfile", serviceOutputPath]);
   await fs.copyFile(bridgeSourcePath, path.join(distBinDir, bridgeName));
 
-  console.log(`Built MT5 service executable: ${serviceOutputPath}`);
+
 }
 
 main().catch((error) => {

@@ -32,7 +32,7 @@ export class GanLevelsPaneView<HorzScaleItem> extends LineToolPaneView<HorzScale
     series: unknown
   ) {
     super(
-      source as unknown as BaseLineTool<any>,
+      source as unknown as BaseLineTool<unknown>,
       chart as never,
       series as never
     );

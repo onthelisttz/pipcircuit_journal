@@ -81,6 +81,14 @@ export class GanLevelsTool<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
     return FinalizationMethod.PointCount;
   }
 
+  public supportsClickDragCreation(): boolean {
+    return true;
+  }
+
+  public supportsShiftClickDragConstraint(): boolean {
+    return true;
+  }
+
   public override _internalHitTest(
     x: number,
     y: number
