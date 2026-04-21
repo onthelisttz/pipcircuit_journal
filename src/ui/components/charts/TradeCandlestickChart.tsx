@@ -192,6 +192,10 @@ function drawingTimestampToChartTime(timestamp: number): Time {
     return seconds as Time;
 }
 
+function isSelectionModifierPressed(event: Pick<PointerEvent, "ctrlKey" | "metaKey" | "shiftKey">): boolean {
+    return event.ctrlKey || event.metaKey || event.shiftKey;
+}
+
 type TradeOverlayData = {
     entryPrice: number;
     rewardPrice: number;
@@ -1849,7 +1853,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 clientX: event.clientX,
                 clientY: event.clientY,
                 button: event.button,
-                ctrlOrMeta: event.ctrlKey || event.metaKey,
+                ctrlOrMeta: isSelectionModifierPressed(event),
                 selectedIds: [...selectedDrawingIdsRef.current],
             };
             selectionBoxDragRef.current = null;
@@ -1862,7 +1866,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 return;
             }
 
-            if ((event.ctrlKey || event.metaKey) && hitToolId && selectedDrawingIdsRef.current.includes(hitToolId)) {
+            if (isSelectionModifierPressed(event) && hitToolId && selectedDrawingIdsRef.current.includes(hitToolId)) {
                 const selectedTools = selectedDrawingIdsRef.current
                     .map((id) => readDrawingToolById(id))
                     .filter((tool): tool is DrawingToolExport => tool !== null);
@@ -1893,11 +1897,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 selectionSnapshotRef.current = null;
             }
 
-            if ((event.ctrlKey || event.metaKey) && !hitToolId && !toolCreating) {
+            if (isSelectionModifierPressed(event) && !hitToolId && !toolCreating) {
                 selectionBoxDragRef.current = {
                     startPoint: point,
                     currentPoint: point,
-                    additiveSelection: event.ctrlKey || event.metaKey,
+                    additiveSelection: isSelectionModifierPressed(event),
                     initialSelection: [...selectedDrawingIdsRef.current],
                     active: false,
                 };
@@ -2010,7 +2014,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             selectionSnapshotRef.current = null;
             window.setTimeout(() => {
                 const hitToolId = getLineToolsInternal()?._interactionManager?._hitTest?.(point)?.tool?.id();
-                const ctrlOrMeta = event.ctrlKey || event.metaKey || gesture.ctrlOrMeta;
+                const ctrlOrMeta = isSelectionModifierPressed(event) || gesture.ctrlOrMeta;
                 duplicateDragPlanRef.current = null;
 
                 if (ctrlOrMeta) {
