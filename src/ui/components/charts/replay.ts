@@ -5,9 +5,11 @@ export const REPLAY_SPEED_OPTIONS = [
   { label: "0.5x", intervalMs: 600 },
   { label: "1x", intervalMs: 320 },
   { label: "2x", intervalMs: 180 },
+  { label: "3x", intervalMs: 120 },
+  { label: "4x", intervalMs: 90 },
 ] as const;
 
-export const DEFAULT_REPLAY_INTERVAL_MS = REPLAY_SPEED_OPTIONS[2].intervalMs;
+export const DEFAULT_REPLAY_INTERVAL_MS = REPLAY_SPEED_OPTIONS[1].intervalMs;
 
 export function clampReplayIndex(index: number, barsLength: number): number {
   if (barsLength <= 0) return 0;

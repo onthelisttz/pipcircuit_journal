@@ -12,6 +12,8 @@ import {
   Calendar,
   RefreshCw,
   Eraser,
+  Eye,
+  EyeOff,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -573,6 +575,8 @@ interface SyncedChartWorkspaceProps {
   onObservationLoadHandled?: (requestId: string) => void;
   isActive?: boolean;
   onTradePanelChange?: (panel: ChartTradeHistoryPanelData | null) => void;
+  arePageTabsVisible?: boolean;
+  onTogglePageTabsVisibility?: () => void;
   /** Hide drawing tools & action buttons for compact multi-pane layouts */
   compact?: boolean;
 }
@@ -589,6 +593,8 @@ export function SyncedChartWorkspace({
   onObservationLoadHandled,
   isActive = true,
   onTradePanelChange,
+  arePageTabsVisible = true,
+  onTogglePageTabsVisibility,
   compact = false,
 }: SyncedChartWorkspaceProps = {}) {
   const { activeAccount, accounts } = useAccount();
@@ -2446,6 +2452,19 @@ export function SyncedChartWorkspace({
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
           </button>
+          <button
+            type="button"
+            onClick={onTogglePageTabsVisibility}
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted"
+            title={arePageTabsVisible ? "Hide chart tabs" : "Show chart tabs"}
+            aria-label={arePageTabsVisible ? "Hide chart tabs" : "Show chart tabs"}
+          >
+            {arePageTabsVisible ? (
+              <EyeOff className="h-3.5 w-3.5" />
+            ) : (
+              <Eye className="h-3.5 w-3.5" />
+            )}
+          </button>
         </div>
       ) : (
         /* Compact mode: actions in a popover */
@@ -2498,6 +2517,14 @@ export function SyncedChartWorkspace({
               >
                 <RefreshCw className={`h-3 w-3 ${isLoading ? "animate-spin" : ""}`} />
                 Refresh
+              </button>
+              <button
+                type="button"
+                onClick={() => { onTogglePageTabsVisibility?.(); setCompactActionsOpen(false); }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent"
+              >
+                {arePageTabsVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                {arePageTabsVisible ? "Hide Tabs" : "Show Tabs"}
               </button>
             </div>
           )}

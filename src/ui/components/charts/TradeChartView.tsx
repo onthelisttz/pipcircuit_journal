@@ -507,9 +507,7 @@ export function TradeChartView({
                                 <>
                                     {showDrawControls ? (
                                         <div className="flex h-7 items-center gap-1.5 rounded-md border border-border px-1.5 py-0.5">
-                                            <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                                Draw color
-                                            </span>
+                                         
                                             <input
                                                 type="color"
                                                 aria-label="Draw color"

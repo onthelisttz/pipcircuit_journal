@@ -313,7 +313,7 @@ export function ChartControls({
                     <div className="my-1 border-t border-border" />
                     <div className="px-3 py-2">
                         <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
-                            <span>Draw color</span>
+                    
                             <span>{Math.round(rectangleFillOpacity * 100)}%</span>
                         </div>
                         <div className="mt-2 flex items-center gap-2">

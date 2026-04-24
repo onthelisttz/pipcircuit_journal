@@ -144,6 +144,7 @@ function findTabForObservation(
 
 export default function ChartPage() {
   const [mode, setMode] = useState<ChartMode>(() => readStoredMode());
+  const [showHeaderTabs, setShowHeaderTabs] = useState(true);
   const [historyAvailabilityText, setHistoryAvailabilityText] = useState<string | null>(null);
   const [syncTimeframes, setSyncTimeframes] = useState(false);
   const [isObservationPanelOpen, setIsObservationPanelOpen] = useState(false);
@@ -163,6 +164,9 @@ export default function ChartPage() {
   const [syncedActiveId, setSyncedActiveId] = useState<string>(() => syncedInitial.activeId);
   const [historyTabs, setHistoryTabs] = useState<ChartTab[]>(() => historyInitial.tabs);
   const [historyActiveId, setHistoryActiveId] = useState<string>(() => historyInitial.activeId);
+  const toggleHeaderTabsVisibility = useCallback(() => {
+    setShowHeaderTabs((previous) => !previous);
+  }, []);
 
   const tabs = mode === "synced" ? syncedTabs : historyTabs;
   const activeTabId = mode === "synced" ? syncedActiveId : historyActiveId;
@@ -465,6 +469,8 @@ export default function ChartPage() {
             }
             isActive={tabIsVisible && (!isMulti || paneIsActive)}
             onTradePanelChange={handleTradePanelChange}
+            arePageTabsVisible={showHeaderTabs}
+            onTogglePageTabsVisibility={toggleHeaderTabsVisibility}
             compact={isMulti}
           />
         );
@@ -495,6 +501,8 @@ export default function ChartPage() {
             )
           }
           isActive={tabIsVisible && (!isMulti || paneIsActive)}
+          arePageTabsVisible={showHeaderTabs}
+          onTogglePageTabsVisibility={toggleHeaderTabsVisibility}
           compact={isMulti}
         />
       );
@@ -504,6 +512,8 @@ export default function ChartPage() {
       handleTradePanelChange,
       mode,
       observationLoadRequest,
+      showHeaderTabs,
+      toggleHeaderTabsVisibility,
       updatePaneField,
     ]
   );
@@ -513,91 +523,95 @@ export default function ChartPage() {
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3" />
 
-        <div className="flex w-full flex-wrap items-center gap-2 md:gap-4">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setMode("synced")}
-              className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
-                mode === "synced"
-                  ? "border-primary/60 bg-primary/10 text-primary"
-                  : "border-border text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              Synced Chart
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("history")}
-              className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
-                mode === "history"
-                  ? "border-primary/60 bg-primary/10 text-primary"
-                  : "border-border text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              MT5 History
-            </button>
-          </div>
-          <div className="ml-auto min-w-0 basis-full md:basis-auto">
-            <p className="mt-1 text-sm text-muted-foreground md:mt-0 md:text-right">
-              {mode === "synced"
-                ? "workspace"
-                : historyAvailabilityText ?? "Loading MT5 history availability..."}
-            </p>
-          </div>
-        </div>
+        {showHeaderTabs ? (
+          <>
+            <div className="flex w-full flex-wrap items-center gap-2 md:gap-4">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMode("synced")}
+                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+                    mode === "synced"
+                      ? "border-primary/60 bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  Synced Chart
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("history")}
+                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+                    mode === "history"
+                      ? "border-primary/60 bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  MT5 History
+                </button>
+              </div>
+              <div className="ml-auto min-w-0 basis-full md:basis-auto">
+                <p className="mt-1 text-sm text-muted-foreground md:mt-0 md:text-right">
+                  {mode === "synced"
+                    ? "workspace"
+                    : historyAvailabilityText ?? "Loading MT5 history availability..."}
+                </p>
+              </div>
+            </div>
 
-        <div className="flex items-center gap-2">
-          <div className="min-w-0 flex-1">
-            <ChartTabBar
-              tabs={tabs}
-              activeTabId={activeTabId}
-              onTabSelect={handleTabSelect}
-              onTabClose={handleTabClose}
-              onTabAdd={handleTabAdd}
-              onTabDuplicate={handleTabDuplicate}
-              onTabReorder={handleTabReorder}
-            />
-          </div>
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <ChartTabBar
+                  tabs={tabs}
+                  activeTabId={activeTabId}
+                  onTabSelect={handleTabSelect}
+                  onTabClose={handleTabClose}
+                  onTabAdd={handleTabAdd}
+                  onTabDuplicate={handleTabDuplicate}
+                  onTabReorder={handleTabReorder}
+                />
+              </div>
 
-          {isMultiPane ? (
-            <button
-              type="button"
-              onClick={() => setSyncTimeframes((previous) => !previous)}
-              className={`flex h-7 items-center gap-1.5 rounded border px-2 text-xs font-medium transition-colors ${
-                syncTimeframes
-                  ? "border-primary/60 bg-primary/10 text-primary"
-                  : "border-border text-muted-foreground hover:bg-muted"
-              }`}
-              title={syncTimeframes ? "Timeframes synced across panes" : "Sync timeframes across panes"}
-            >
-              {syncTimeframes ? (
-                <Link2 className="h-3.5 w-3.5" />
-              ) : (
-                <Link2Off className="h-3.5 w-3.5" />
-              )}
-              <span className="hidden sm:inline">Sync TF</span>
-            </button>
-          ) : null}
+              {isMultiPane ? (
+                <button
+                  type="button"
+                  onClick={() => setSyncTimeframes((previous) => !previous)}
+                  className={`flex h-7 items-center gap-1.5 rounded border px-2 text-xs font-medium transition-colors ${
+                    syncTimeframes
+                      ? "border-primary/60 bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:bg-muted"
+                  }`}
+                  title={syncTimeframes ? "Timeframes synced across panes" : "Sync timeframes across panes"}
+                >
+                  {syncTimeframes ? (
+                    <Link2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <Link2Off className="h-3.5 w-3.5" />
+                  )}
+                  <span className="hidden sm:inline">Sync TF</span>
+                </button>
+              ) : null}
 
-          <ChartLayoutSelector
-            value={activeTab?.layout ?? "single"}
-            onChange={handleLayoutChange}
-          />
-          <button
-            type="button"
-            onClick={() => setIsObservationPanelOpen((previous) => !previous)}
-            className={`flex h-7 items-center gap-1.5 rounded border px-2 text-xs font-medium transition-colors ${
-              isObservationPanelOpen
-                ? "border-primary/60 bg-primary/10 text-primary"
-                : "border-border text-muted-foreground hover:bg-muted"
-            }`}
-            title="Toggle chart observations"
-          >
-            <FileText className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Observations</span>
-          </button>
-        </div>
+              <ChartLayoutSelector
+                value={activeTab?.layout ?? "single"}
+                onChange={handleLayoutChange}
+              />
+              <button
+                type="button"
+                onClick={() => setIsObservationPanelOpen((previous) => !previous)}
+                className={`flex h-7 items-center gap-1.5 rounded border px-2 text-xs font-medium transition-colors ${
+                  isObservationPanelOpen
+                    ? "border-primary/60 bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+                title="Toggle chart observations"
+              >
+                <FileText className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Observations</span>
+              </button>
+            </div>
+          </>
+        ) : null}
 
         {tabs.map((tab) => {
           const isVisible = tab.id === activeTabId;

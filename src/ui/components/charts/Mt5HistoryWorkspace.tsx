@@ -13,6 +13,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Eye,
+  EyeOff,
   Eraser,
   Maximize2,
   Minimize2,
@@ -466,6 +468,8 @@ interface Mt5HistoryWorkspaceProps {
   observationLoadRequest?: ChartObservationLoadRequest | null;
   onObservationLoadHandled?: (requestId: string) => void;
   isActive?: boolean;
+  arePageTabsVisible?: boolean;
+  onTogglePageTabsVisibility?: () => void;
   /** Hide drawing tools & action buttons for compact multi-pane layouts */
   compact?: boolean;
 }
@@ -719,6 +723,8 @@ export function Mt5HistoryWorkspace({
   observationLoadRequest,
   onObservationLoadHandled,
   isActive = true,
+  arePageTabsVisible = true,
+  onTogglePageTabsVisibility,
   compact = false,
 }: Mt5HistoryWorkspaceProps) {
   const { user } = useAuth();
@@ -2197,7 +2203,7 @@ export function Mt5HistoryWorkspace({
                   <span className="whitespace-nowrap font-medium">Cts draw</span>
                 </label>
                 <div className={`h-7 items-center gap-1.5 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${showDrawControls ? "flex opacity-100" : "hidden pointer-events-none opacity-0"}`} aria-hidden={!showDrawControls}>
-                  <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Draw color</span>
+             
                   <input type="color" aria-label="Draw color" value={rectangleFillColor} onChange={(event) => setRectangleFillColor(event.target.value)} className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0" />
                   <input type="range" aria-label="Draw opacity" min={0} max={1} step={0.05} value={rectangleFillOpacity} onChange={(event) => setRectangleFillOpacity(Number(event.target.value))} className="h-1.5 w-14 accent-foreground" />
                 </div>
@@ -2310,6 +2316,19 @@ export function Mt5HistoryWorkspace({
           <button type="button" onClick={refreshCurrentView} disabled={!selectedTimeframe || isBarsLoading || isEdgeLoading} className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted disabled:opacity-60" title="Refresh chart" aria-label="Refresh chart">
             <RefreshCw className={`h-3.5 w-3.5 ${isBarsLoading || isEdgeLoading ? "animate-spin" : ""}`} />
           </button>
+          <button
+            type="button"
+            onClick={onTogglePageTabsVisibility}
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted"
+            title={arePageTabsVisible ? "Hide chart tabs" : "Show chart tabs"}
+            aria-label={arePageTabsVisible ? "Hide chart tabs" : "Show chart tabs"}
+          >
+            {arePageTabsVisible ? (
+              <EyeOff className="h-3.5 w-3.5" />
+            ) : (
+              <Eye className="h-3.5 w-3.5" />
+            )}
+          </button>
         </div>
       ) : (
         <div className="relative ml-auto shrink-0" ref={compactActionsRef}>
@@ -2337,6 +2356,14 @@ export function Mt5HistoryWorkspace({
               </button>
               <button type="button" onClick={() => { refreshCurrentView(); setCompactActionsOpen(false); }} disabled={!selectedTimeframe || isBarsLoading || isEdgeLoading} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50">
                 <RefreshCw className={`h-3 w-3 ${isBarsLoading || isEdgeLoading ? "animate-spin" : ""}`} /> Refresh
+              </button>
+              <button
+                type="button"
+                onClick={() => { onTogglePageTabsVisibility?.(); setCompactActionsOpen(false); }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent"
+              >
+                {arePageTabsVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                {arePageTabsVisible ? "Hide Tabs" : "Show Tabs"}
               </button>
             </div>
           )}
