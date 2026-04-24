@@ -6,6 +6,7 @@ import {
     type IPriceLine,
     type ISeriesApi,
     type CandlestickData,
+    type WhitespaceData,
     type Time,
     ColorType,
     LineStyle,
@@ -28,6 +29,7 @@ import {
     buildTimeGuides,
     type TimeGuideSettings,
 } from "./timeGuides";
+import { findReplayStartIndex } from "./replay";
 
 export type DrawingToolType =
     | "Path"
@@ -39,6 +41,8 @@ export type DrawingToolType =
     | "LongShortPosition"
     | "Callout";
 type LineToolsApi = ReturnType<typeof createLineToolsPlugin>;
+type ChartMouseEventHandler = Parameters<IChartApi["subscribeClick"]>[0];
+type ChartMouseEventParam = ChartMouseEventHandler extends (param: infer P) => void ? P : never;
 type DrawingPoint = { timestamp: number; price: number };
 type DrawingToolExport = {
     id: string;
@@ -430,6 +434,8 @@ function sameTimeGuideOverlay(
 export interface TradeCandlestickChartProps {
     /** Chart bar data to display */
     data: ChartBar[];
+    /** Future timestamps to keep as blank space during replay */
+    replayFutureTimestamps?: number[];
     /** Timeframe of the current bar set */
     timeframe?: ChartTimeframe;
     /** Optional time-based guide settings */
@@ -494,6 +500,32 @@ export interface TradeCandlestickChartProps {
     dataUpdateMode?: "auto" | "replace" | "append" | "prepend";
     /** Restrict HTML time-guide overlays to the pane so they don't cover the price scale */
     clipTimeGuideOverlayToPane?: boolean;
+    /** When true, moving the crosshair previews a replay start position */
+    replayPlacementMode?: boolean;
+    /** Timestamp currently previewed for replay placement */
+    replayPlacementTimestamp?: number | null;
+    /** Notify parent when replay placement preview changes */
+    onReplayPlacementPreviewChange?: (timestamp: number | null) => void;
+    /** Notify parent when replay placement is selected via chart click */
+    onReplayPlacementSelect?: (timestamp: number) => void;
+}
+
+function sameReplayPlacementOverlay(
+    left: {
+        width: number | null;
+        height: number | null;
+        x: number | null;
+    },
+    right: {
+        width: number | null;
+        height: number | null;
+        x: number | null;
+    }
+): boolean {
+    const xMatches =
+        left.x === right.x ||
+        (left.x != null && right.x != null && Math.abs(left.x - right.x) <= 0.5);
+    return left.width === right.width && left.height === right.height && xMatches;
 }
 
 export interface TradeCandlestickChartRef {
@@ -505,6 +537,8 @@ export interface TradeCandlestickChartRef {
     importDrawings: (drawings: DrawingToolExport[]) => void;
     getViewportCenterTimestamp: () => number | null;
     getVisibleWindowSeconds: () => number | null;
+    getVisibleLogicalRange: () => { from: number; to: number } | null;
+    setVisibleLogicalRange: (range: { from: number; to: number }) => void;
     scrollToTimestamp: (timestamp: number, windowSeconds?: number) => void;
     getSelectedCalloutConfig: () => {
         text: string;
@@ -530,6 +564,7 @@ export interface TradeCandlestickChartRef {
  */
 export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeCandlestickChartProps>(function TradeCandlestickChart({
     data,
+    replayFutureTimestamps = [],
     timeframe,
     timeGuides,
     trade,
@@ -560,6 +595,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     zoomOutMultiplier = 3.2,
     dataUpdateMode = "auto",
     clipTimeGuideOverlayToPane = false,
+    replayPlacementMode = false,
+    replayPlacementTimestamp = null,
+    onReplayPlacementPreviewChange,
+    onReplayPlacementSelect,
 }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -579,6 +618,15 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         height: null,
         verticalLines: [],
     });
+    const [replayPlacementOverlay, setReplayPlacementOverlay] = useState<{
+        width: number | null;
+        height: number | null;
+        x: number | null;
+    }>({
+        width: null,
+        height: null,
+        x: null,
+    });
     const [selectionBox, setSelectionBox] = useState<SelectionBoxBounds | null>(null);
     const onVisibleRangeChangeRef = useRef<typeof onVisibleRangeChange>(onVisibleRangeChange);
     const onDrawingSelectionChangeRef = useRef<typeof onDrawingSelectionChange>(onDrawingSelectionChange);
@@ -586,7 +634,12 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const onDrawingToolCancelRef = useRef<typeof onDrawingToolCancel>(onDrawingToolCancel);
     const onRectangleSelectionChangeRef = useRef<typeof onRectangleSelectionChange>(onRectangleSelectionChange);
     const onCalloutEditRequestRef = useRef<typeof onCalloutEditRequest>(onCalloutEditRequest);
+    const onReplayPlacementPreviewChangeRef = useRef<typeof onReplayPlacementPreviewChange>(onReplayPlacementPreviewChange);
+    const onReplayPlacementSelectRef = useRef<typeof onReplayPlacementSelect>(onReplayPlacementSelect);
+    const replayPlacementModeRef = useRef<boolean>(replayPlacementMode);
+    const replayPlacementTimestampRef = useRef<number | null>(replayPlacementTimestamp);
     const prevBarsRef = useRef<ChartBar[]>([]);
+    const dataRef = useRef<ChartBar[]>(data);
     const suppressVisibleRangeUntilRef = useRef(0);
 
     const riskRewardPluginRef = useRef<RiskRewardPlugin | null>(null);
@@ -609,6 +662,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const heightRef = useRef<number>(height);
     const overlayFrameRef = useRef<number | null>(null);
     const scheduleTimeGuideOverlayRefreshRef = useRef<() => void>(() => {});
+    const scheduleReplayPlacementOverlayRefreshRef = useRef<() => void>(() => {});
     const selectedDrawingIdsRef = useRef<string[]>([]);
     const selectionSnapshotRef = useRef<Map<string, DrawingToolExport> | null>(null);
     const duplicateDragPlanRef = useRef<{
@@ -656,6 +710,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     }, [drawingTool]);
 
     useEffect(() => {
+        dataRef.current = data;
+    }, [data]);
+
+    useEffect(() => {
         continuousDrawingRef.current = continuousDrawing;
     }, [continuousDrawing]);
 
@@ -687,6 +745,19 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         longShortLotsRef.current = longShortLots;
         longShortSymbolRef.current = longShortSymbol;
     }, [longShortLots, longShortSymbol]);
+
+    useEffect(() => {
+        onReplayPlacementPreviewChangeRef.current = onReplayPlacementPreviewChange;
+        onReplayPlacementSelectRef.current = onReplayPlacementSelect;
+    }, [onReplayPlacementPreviewChange, onReplayPlacementSelect]);
+
+    useEffect(() => {
+        replayPlacementModeRef.current = replayPlacementMode;
+    }, [replayPlacementMode]);
+
+    useEffect(() => {
+        replayPlacementTimestampRef.current = replayPlacementTimestamp;
+    }, [replayPlacementTimestamp]);
 
     const computedTimeGuides = useMemo(
         () => buildTimeGuides(data, timeframe, timeGuides),
@@ -757,6 +828,55 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     useEffect(() => {
         scheduleTimeGuideOverlayRefreshRef.current = scheduleTimeGuideOverlayRefresh;
     }, [scheduleTimeGuideOverlayRefresh]);
+
+    const refreshReplayPlacementOverlay = useCallback(() => {
+        if (!replayPlacementMode || replayPlacementTimestamp == null) {
+            setReplayPlacementOverlay((current) =>
+                current.width === null && current.height === null && current.x === null
+                    ? current
+                    : { width: null, height: null, x: null }
+            );
+            return;
+        }
+
+        const chart = chartRef.current;
+        if (!chart) {
+            setReplayPlacementOverlay((current) =>
+                current.width === null && current.height === null && current.x === null
+                    ? current
+                    : { width: null, height: null, x: null }
+            );
+            return;
+        }
+
+        const paneSize = chart.paneSize();
+        const x = chart.timeScale().timeToCoordinate(drawingTimestampToChartTime(replayPlacementTimestamp));
+        const nextOverlay = {
+            width: clipTimeGuideOverlayToPane ? paneSize.width : null,
+            height: clipTimeGuideOverlayToPane ? paneSize.height : null,
+            x: x != null && Number.isFinite(x) ? x : null,
+        };
+
+        setReplayPlacementOverlay((current) =>
+            sameReplayPlacementOverlay(current, nextOverlay) ? current : nextOverlay
+        );
+    }, [clipTimeGuideOverlayToPane, replayPlacementMode, replayPlacementTimestamp]);
+
+    const scheduleReplayPlacementOverlayRefresh = useCallback(() => {
+        if (overlayFrameRef.current != null) {
+            cancelAnimationFrame(overlayFrameRef.current);
+        }
+        overlayFrameRef.current = requestAnimationFrame(() => {
+            overlayFrameRef.current = null;
+            refreshTimeGuideOverlay();
+            refreshReplayPlacementOverlay();
+        });
+    }, [refreshReplayPlacementOverlay, refreshTimeGuideOverlay]);
+
+    useEffect(() => {
+        scheduleReplayPlacementOverlayRefreshRef.current = scheduleReplayPlacementOverlayRefresh;
+        scheduleTimeGuideOverlayRefreshRef.current = scheduleReplayPlacementOverlayRefresh;
+    }, [scheduleReplayPlacementOverlayRefresh]);
 
     const formatMoney = (value: number) => {
         const sign = value >= 0 ? "+" : "-";
@@ -1446,6 +1566,37 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             : rightIndex;
     }, []);
 
+    const resolveReplayPlacementTimestamp = useCallback((param: ChartMouseEventParam): number | null => {
+        const bars = dataRef.current;
+        if (bars.length === 0) return null;
+
+        const hoveredSeries = seriesRef.current;
+        const hoveredSeriesData =
+            hoveredSeries && param.seriesData instanceof Map
+                ? param.seriesData.get(hoveredSeries)
+                : null;
+        if (
+            hoveredSeriesData &&
+            typeof hoveredSeriesData === "object" &&
+            "time" in hoveredSeriesData
+        ) {
+            const hoveredDate = timeToDate(hoveredSeriesData.time as Time);
+            if (hoveredDate) {
+                const replayStartIndex = findReplayStartIndex(bars, hoveredDate.getTime());
+                return bars[replayStartIndex]?.timestamp ?? null;
+            }
+        }
+
+        const rawTime =
+            param.time ??
+            (param.point ? chartRef.current?.timeScale().coordinateToTime(param.point.x) ?? null : null);
+        const date = timeToDate(rawTime);
+        if (!date) return null;
+
+        const replayStartIndex = findReplayStartIndex(bars, date.getTime());
+        return bars[replayStartIndex]?.timestamp ?? null;
+    }, []);
+
     const toCandlestickPoint = useCallback((bar: ChartBar): CandlestickData<Time> => ({
         time: (bar.timestamp / 1000) as Time,
         open: bar.open,
@@ -1502,9 +1653,19 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
     // Convert ChartBar data to Lightweight Charts format.
     // Data from MT5 history is already sorted and deduplicated, so skip the expensive sort+Map.
-    const formatData = useCallback((bars: ChartBar[]): CandlestickData<Time>[] => {
-        return bars.map(toCandlestickPoint);
-    }, [toCandlestickPoint]);
+    const formatData = useCallback((bars: ChartBar[]): Array<CandlestickData<Time> | WhitespaceData<Time>> => {
+        const formattedBars: Array<CandlestickData<Time> | WhitespaceData<Time>> = bars.map(toCandlestickPoint);
+        if (replayFutureTimestamps.length === 0) {
+            return formattedBars;
+        }
+
+        return [
+            ...formattedBars,
+            ...replayFutureTimestamps.map((timestamp) => ({
+                time: (timestamp / 1000) as Time,
+            })),
+        ];
+    }, [replayFutureTimestamps, toCandlestickPoint]);
 
     // Scroll chart to center on trade timeframe
     const scrollToTrade = useCallback((zoomOutMultiplier = 3.2) => {
@@ -1813,7 +1974,16 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }
             queueSelectionUpdate();
         };
-        const handleChartClick = () => {
+        const handleChartClick = (param: ChartMouseEventParam) => {
+            if (replayPlacementModeRef.current) {
+                const replayTimestamp =
+                    replayPlacementTimestampRef.current ?? resolveReplayPlacementTimestamp(param);
+                if (replayTimestamp != null) {
+                    onReplayPlacementSelectRef.current?.(replayTimestamp);
+                }
+                return;
+            }
+
             window.setTimeout(() => {
                 const selectedRaw = lineTools.getSelectedLineTools?.();
                 if (!selectedRaw) return;
@@ -1838,9 +2008,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 queueSelectionUpdate();
             }, 0);
         };
+        const handleCrosshairMove = (param: ChartMouseEventParam) => {
+            if (!replayPlacementModeRef.current) return;
+            onReplayPlacementPreviewChangeRef.current?.(resolveReplayPlacementTimestamp(param));
+        };
         lineTools.subscribeLineToolsAfterEdit?.(handleAfterEdit);
         lineTools.subscribeLineToolsDoubleClick?.(handleDoubleClick);
         chart.subscribeClick(handleChartClick);
+        chart.subscribeCrosshairMove(handleCrosshairMove);
 
         const handlePointerDown = (event: PointerEvent) => {
             const point = getChartPointFromClient(event.clientX, event.clientY);
@@ -2093,6 +2268,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             lineToolsRef.current?.unsubscribeLineToolsDoubleClick?.(handleDoubleClick);
             removeAllLineToolsSafely();
             chart.unsubscribeClick(handleChartClick);
+            chart.unsubscribeCrosshairMove(handleCrosshairMove);
             chartContainer.removeEventListener("pointerdown", handlePointerDown, true);
             chartContainer.removeEventListener("pointermove", handlePointerMove, true);
             chartContainer.removeEventListener("pointerup", handlePointerUp, true);
@@ -2143,10 +2319,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     useEffect(() => {
         if (!isChartReady) {
             setTimeGuideOverlay({ width: null, height: null, verticalLines: [] });
+            setReplayPlacementOverlay({ width: null, height: null, x: null });
             return;
         }
-        scheduleTimeGuideOverlayRefresh();
-    }, [isChartReady, scheduleTimeGuideOverlayRefresh, computedTimeGuides, height]);
+        scheduleReplayPlacementOverlayRefresh();
+    }, [isChartReady, scheduleReplayPlacementOverlayRefresh, computedTimeGuides, height]);
 
     useEffect(() => {
         if (!lineToolsRef.current || !drawingTool) return;
@@ -2496,6 +2673,18 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             if (!range) return null;
             return Math.max(1, (range.to as number) - (range.from as number));
         },
+        getVisibleLogicalRange: (): { from: number; to: number } | null => {
+            const timeScale = chartRef.current?.timeScale();
+            if (!timeScale) return null;
+            const range = timeScale.getVisibleLogicalRange();
+            if (!range) return null;
+            return { from: range.from, to: range.to };
+        },
+        setVisibleLogicalRange: (range: { from: number; to: number }) => {
+            const timeScale = chartRef.current?.timeScale();
+            if (!timeScale) return;
+            timeScale.setVisibleLogicalRange(range);
+        },
         scrollToTimestamp: (timestamp: number, windowSeconds?: number) => {
             const timeScale = chartRef.current?.timeScale();
             if (!timeScale) return;
@@ -2538,8 +2727,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             priceScale.setAutoScale(true);
         }
         const currentRange = !autoScrollOnData && timeScale ? timeScale.getVisibleLogicalRange() : null;
+        const hasReplayFutureSpace = replayFutureTimestamps.length > 0;
         const appendOnlyUpdate =
             !autoScrollOnData &&
+            !hasReplayFutureSpace &&
             (dataUpdateMode === "append" ||
                 (dataUpdateMode === "auto" && isAppendOnlyUpdate(previousBars, data)));
         const prependedBarCount =
@@ -2643,7 +2834,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }, 0);
         }
         prevBarsRef.current = data;
-    }, [data, isChartReady, formatData, trade, scrollToTrade, autoScrollOnData, dataUpdateMode, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, scheduleFreePriceScaleMode, syncImportedDrawings, toCandlestickPoint, zoomOutMultiplier]);
+    }, [data, isChartReady, formatData, replayFutureTimestamps, trade, scrollToTrade, autoScrollOnData, dataUpdateMode, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, scheduleFreePriceScaleMode, syncImportedDrawings, toCandlestickPoint, zoomOutMultiplier]);
 
     useEffect(() => {
         const series = seriesRef.current;
@@ -2947,6 +3138,42 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                             height: `${selectionBox.height}px`,
                         }}
                     />
+                </div>
+            )}
+
+            {replayPlacementOverlay.x != null && (
+                <div
+                    className={`pointer-events-none absolute z-[3] overflow-hidden ${
+                        clipTimeGuideOverlayToPane ? "left-0 top-0" : "inset-0 rounded-lg"
+                    }`}
+                    style={
+                        clipTimeGuideOverlayToPane &&
+                        replayPlacementOverlay.width != null &&
+                        replayPlacementOverlay.height != null
+                            ? {
+                                width: `${replayPlacementOverlay.width}px`,
+                                height: `${replayPlacementOverlay.height}px`,
+                            }
+                            : undefined
+                    }
+                >
+                    <div
+                        className="absolute bottom-0 top-0 bg-sky-400/12"
+                        style={{
+                            left: `${replayPlacementOverlay.x}px`,
+                            width: `calc(100% - ${replayPlacementOverlay.x}px)`,
+                        }}
+                    />
+                    <div
+                        className="absolute bottom-0 top-0 w-px bg-sky-400/95"
+                        style={{ left: `${replayPlacementOverlay.x}px` }}
+                    />
+                    <div
+                        className="absolute top-2 -translate-x-1/2 rounded bg-sky-500/90 px-2 py-0.5 text-[10px] font-medium text-white"
+                        style={{ left: `${replayPlacementOverlay.x}px` }}
+                    >
+                        Replay Start
+                    </div>
                 </div>
             )}
 

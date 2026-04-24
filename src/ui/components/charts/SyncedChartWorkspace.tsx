@@ -21,8 +21,13 @@ import {
   Circle,
   Maximize2,
   Minimize2,
+  Pause,
   Pencil,
+  Play,
   MoreVertical,
+  RotateCcw,
+  SkipBack,
+  SkipForward,
   X,
 } from "lucide-react";
 import type { ChartBar, ChartTimeframe, Trade } from "@domain/entities";
@@ -51,6 +56,13 @@ import {
   drawingTimestampToMs,
   filterDrawingsToVisibleWindow,
 } from "./chartObservationUtils";
+import {
+  clampReplayIndex,
+  DEFAULT_REPLAY_INTERVAL_MS,
+  findReplayStartIndex,
+  findNearestReplayIndex,
+  REPLAY_SPEED_OPTIONS,
+} from "./replay";
 
 const CHART_SELECTION_KEY = "chartSelection";
 const CHART_TIMEFRAME_KEY = "chartTimeframe";
@@ -637,6 +649,15 @@ export function SyncedChartWorkspace({
   const [timeGuides, setTimeGuides] = useState<TimeGuideSettings>(() =>
     readStoredTimeGuideSettings(CHART_TIME_GUIDES_KEY)
   );
+  const [isReplayMode, setIsReplayMode] = useState(false);
+  const [isReplayPlacementMode, setIsReplayPlacementMode] = useState(false);
+  const [isReplayPlaying, setIsReplayPlaying] = useState(false);
+  const [replayIndex, setReplayIndex] = useState<number | null>(null);
+  const [replayStartIndex, setReplayStartIndex] = useState<number | null>(null);
+  const [replayCursorTimestamp, setReplayCursorTimestamp] = useState<number | null>(null);
+  const [replayStartTimestamp, setReplayStartTimestamp] = useState<number | null>(null);
+  const [replayIntervalMs, setReplayIntervalMs] = useState<number>(DEFAULT_REPLAY_INTERVAL_MS);
+  const [replayPlacementTimestamp, setReplayPlacementTimestamp] = useState<number | null>(null);
   const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -671,6 +692,8 @@ export function SyncedChartWorkspace({
   });
   const compactDrawRef = useRef<HTMLDivElement>(null);
   const compactActionsRef = useRef<HTMLDivElement>(null);
+  const replayTimerRef = useRef<number | null>(null);
+  const pendingReplayViewportRef = useRef<{ from: number; to: number } | null>(null);
   const pendingRestoreRef = useRef<{
     drawings: DrawingToolExport[];
     centerTimestamp: number | null;
@@ -719,6 +742,26 @@ export function SyncedChartWorkspace({
     if (typeof window === "undefined") return;
     window.localStorage.setItem(CHART_SHOW_TRADES_PANEL_KEY, String(showTradePanel));
   }, [showTradePanel]);
+
+  useEffect(() => {
+    setIsReplayPlaying(false);
+    setIsReplayMode(false);
+    setIsReplayPlacementMode(false);
+    setReplayIndex(null);
+    setReplayStartIndex(null);
+    setReplayCursorTimestamp(null);
+    setReplayStartTimestamp(null);
+    setReplayPlacementTimestamp(null);
+    pendingReplayViewportRef.current = null;
+  }, [selection?.broker, selection?.symbol, timeframe]);
+
+  useEffect(() => {
+    return () => {
+      if (replayTimerRef.current != null) {
+        window.clearTimeout(replayTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!showTradeOverlay && !showTradePanel) {
@@ -817,6 +860,17 @@ export function SyncedChartWorkspace({
     onObservationApiChange(observationApi);
     return () => onObservationApiChange(null);
   }, [isActive, observationApi, onObservationApiChange]);
+
+  useEffect(() => {
+    if (isActive) return;
+
+    setIsReplayPlaying(false);
+    setIsReplayPlacementMode(false);
+    chartRef.current?.cancelActiveDrawing();
+    setDrawingTool(null);
+    setSelectedDrawingTool(null);
+    setCompactDrawOpen(false);
+  }, [isActive]);
 
   useEffect(() => {
     if (!symbolMenuOpen) return;
@@ -1096,7 +1150,7 @@ export function SyncedChartWorkspace({
     windowDays: requestedWindowDays,
     enabled: chartEnabled,
   });
-  const displayData = useMemo(
+  const fullDisplayData = useMemo(
     () =>
       data.map((bar) => ({
         ...bar,
@@ -1105,7 +1159,26 @@ export function SyncedChartWorkspace({
       })),
     [data]
   );
+  const effectiveReplayIndex = useMemo(() => {
+    if (!isReplayMode || replayIndex == null || fullDisplayData.length === 0) {
+      return null;
+    }
+    return clampReplayIndex(replayIndex, fullDisplayData.length);
+  }, [fullDisplayData.length, isReplayMode, replayIndex]);
+  const displayData = useMemo(() => {
+    if (effectiveReplayIndex == null) return fullDisplayData;
+    return fullDisplayData.slice(0, effectiveReplayIndex + 1);
+  }, [effectiveReplayIndex, fullDisplayData]);
+  const replayFutureTimestamps = useMemo(() => {
+    if (effectiveReplayIndex == null) return [];
+    return fullDisplayData
+      .slice(effectiveReplayIndex + 1)
+      .map((bar) => bar.timestamp);
+  }, [effectiveReplayIndex, fullDisplayData]);
   const displayDataRef = useRef(displayData);
+  const replayCanStepBack = effectiveReplayIndex != null && effectiveReplayIndex > 0;
+  const replayCanStepForward =
+    effectiveReplayIndex != null && effectiveReplayIndex < fullDisplayData.length - 1;
   const brokerSymbolTrades = useMemo(() => {
     if (!tradeFeaturesEnabled || !selection || brokerAccountNumbers.length === 0) {
       return [];
@@ -1149,6 +1222,102 @@ export function SyncedChartWorkspace({
     displayDataRef.current = displayData;
   }, [displayData]);
 
+  const exitReplay = useCallback(() => {
+    setIsReplayPlaying(false);
+    setIsReplayMode(false);
+    setIsReplayPlacementMode(false);
+    setReplayIndex(null);
+    setReplayStartIndex(null);
+    setReplayCursorTimestamp(null);
+    setReplayStartTimestamp(null);
+    setReplayPlacementTimestamp(null);
+    pendingReplayViewportRef.current = null;
+  }, []);
+
+  const startReplayAtTimestamp = useCallback(
+    (timestamp: number) => {
+      if (fullDisplayData.length === 0) return;
+      pendingReplayViewportRef.current = chartRef.current?.getVisibleLogicalRange() ?? null;
+      const anchorIndex = findReplayStartIndex(fullDisplayData, timestamp);
+      const anchorTimestamp = fullDisplayData[anchorIndex]?.timestamp ?? timestamp;
+      setIsReplayPlaying(false);
+      setIsReplayPlacementMode(false);
+      setReplayPlacementTimestamp(anchorTimestamp);
+      setIsReplayMode(true);
+      setReplayStartIndex(anchorIndex);
+      setReplayStartTimestamp(anchorTimestamp);
+      setReplayIndex(anchorIndex);
+      setReplayCursorTimestamp(anchorTimestamp);
+    },
+    [fullDisplayData]
+  );
+
+  const getReplayAnchorIndex = useCallback(() => {
+    if (fullDisplayData.length === 0) return 0;
+    const anchorTimestamp =
+      chartRef.current?.getViewportCenterTimestamp() ??
+      focusTimestamp ??
+      fullDisplayData[fullDisplayData.length - 1]?.timestamp ??
+      null;
+    return findNearestReplayIndex(fullDisplayData, anchorTimestamp);
+  }, [focusTimestamp, fullDisplayData]);
+
+  const handleReplayToggle = useCallback(() => {
+    if (isReplayMode) {
+      exitReplay();
+      return;
+    }
+
+    if (isReplayPlacementMode) {
+      setIsReplayPlacementMode(false);
+      setReplayPlacementTimestamp(null);
+      return;
+    }
+
+    if (fullDisplayData.length === 0) return;
+
+    const anchorIndex = getReplayAnchorIndex();
+    setIsReplayPlaying(false);
+    setIsReplayPlacementMode(true);
+    setReplayPlacementTimestamp(fullDisplayData[anchorIndex]?.timestamp ?? null);
+    setSymbolMenuOpen(false);
+    setTimeframeMenuOpen(false);
+    setTradesMenuOpen(false);
+    setCompactActionsOpen(false);
+    setCompactDrawOpen(false);
+  }, [
+    exitReplay,
+    fullDisplayData,
+    getReplayAnchorIndex,
+    isReplayMode,
+    isReplayPlacementMode,
+  ]);
+
+  const stepReplay = useCallback(
+    (delta: number) => {
+      if (fullDisplayData.length === 0) return;
+      setIsReplayPlaying(false);
+      const baseIndex = replayIndex ?? getReplayAnchorIndex();
+      const nextIndex = clampReplayIndex(baseIndex + delta, fullDisplayData.length);
+      setReplayIndex(nextIndex);
+      setReplayCursorTimestamp(fullDisplayData[nextIndex]?.timestamp ?? null);
+    },
+    [fullDisplayData, getReplayAnchorIndex, replayIndex]
+  );
+
+  const handleReplayReset = useCallback(() => {
+    if (fullDisplayData.length === 0) return;
+    const anchorTimestamp =
+      replayStartTimestamp ??
+      (replayStartIndex != null ? fullDisplayData[replayStartIndex]?.timestamp ?? null : null);
+    if (anchorTimestamp == null) return;
+    const anchorIndex = findReplayStartIndex(fullDisplayData, anchorTimestamp);
+    setIsReplayPlaying(false);
+    setReplayStartIndex(anchorIndex);
+    setReplayIndex(anchorIndex);
+    setReplayCursorTimestamp(fullDisplayData[anchorIndex]?.timestamp ?? anchorTimestamp);
+  }, [fullDisplayData, replayStartIndex, replayStartTimestamp]);
+
   useEffect(() => {
     if (!availableDateRange) {
       if (goToDate) setGoToDate("");
@@ -1185,6 +1354,100 @@ export function SyncedChartWorkspace({
     setSelectedTradeHistoryId(null);
   }, [brokerSymbolTrades, selectedTradeHistoryId]);
 
+  useEffect(() => {
+    if (!isReplayMode) return;
+    if (fullDisplayData.length === 0) {
+      setIsReplayPlaying(false);
+      setReplayIndex(null);
+      setReplayStartIndex(null);
+      setReplayCursorTimestamp(null);
+      setReplayStartTimestamp(null);
+      return;
+    }
+
+    const fallbackIndex = getReplayAnchorIndex();
+    const resolvedStartTimestamp =
+      replayStartTimestamp ?? fullDisplayData[fallbackIndex]?.timestamp ?? null;
+    const resolvedCursorTimestamp =
+      replayCursorTimestamp ?? resolvedStartTimestamp;
+
+    const nextStartIndex =
+      resolvedStartTimestamp == null
+        ? fallbackIndex
+        : findReplayStartIndex(fullDisplayData, resolvedStartTimestamp);
+    const nextCursorIndex =
+      resolvedCursorTimestamp == null
+        ? nextStartIndex
+        : findReplayStartIndex(fullDisplayData, resolvedCursorTimestamp);
+
+    setReplayStartIndex(nextStartIndex);
+    setReplayIndex(nextCursorIndex);
+    setReplayStartTimestamp(fullDisplayData[nextStartIndex]?.timestamp ?? resolvedStartTimestamp);
+    setReplayCursorTimestamp(fullDisplayData[nextCursorIndex]?.timestamp ?? resolvedCursorTimestamp);
+  }, [fullDisplayData, getReplayAnchorIndex, isReplayMode, replayCursorTimestamp, replayStartTimestamp]);
+
+  useEffect(() => {
+    if (!isReplayMode || !isReplayPlaying || effectiveReplayIndex == null) return;
+
+    if (effectiveReplayIndex >= fullDisplayData.length - 1) {
+      setIsReplayPlaying(false);
+      return;
+    }
+
+    replayTimerRef.current = window.setTimeout(() => {
+      const nextIndex = clampReplayIndex(effectiveReplayIndex + 1, fullDisplayData.length);
+      setReplayIndex(nextIndex);
+      setReplayCursorTimestamp(fullDisplayData[nextIndex]?.timestamp ?? null);
+    }, replayIntervalMs);
+
+    return () => {
+      if (replayTimerRef.current != null) {
+        window.clearTimeout(replayTimerRef.current);
+        replayTimerRef.current = null;
+      }
+    };
+  }, [
+    effectiveReplayIndex,
+    fullDisplayData,
+    isReplayMode,
+    isReplayPlaying,
+    replayIntervalMs,
+  ]);
+
+  useEffect(() => {
+    if (!isReplayMode || displayData.length === 0) return;
+    const pendingViewport = pendingReplayViewportRef.current;
+    if (!pendingViewport) return;
+
+    pendingReplayViewportRef.current = null;
+    const timer = window.setTimeout(() => {
+      chartRef.current?.setVisibleLogicalRange(pendingViewport);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [displayData.length, isReplayMode]);
+
+  useEffect(() => {
+    if (
+      !isReplayMode ||
+      !isReplayPlaying ||
+      effectiveReplayIndex == null ||
+      fullDisplayData.length === 0
+    ) {
+      return;
+    }
+
+    if (fullDisplayData.length - 1 - effectiveReplayIndex <= 10) {
+      void fetchNext();
+    }
+  }, [
+    effectiveReplayIndex,
+    fetchNext,
+    fullDisplayData.length,
+    isReplayMode,
+    isReplayPlaying,
+  ]);
+
   // Restore drawings and viewport after timeframe data loads
   useEffect(() => {
     const pending = pendingRestoreRef.current;
@@ -1217,6 +1480,7 @@ export function SyncedChartWorkspace({
     }
 
     lastHandledObservationRequestRef.current = request.requestId;
+    exitReplay();
     const nextSymbol = request.context.symbol ?? selection?.symbol ?? null;
     const nextBroker = request.context.broker ?? selection?.broker ?? null;
     const nextTimeframe = request.context.timeframe;
@@ -1266,6 +1530,7 @@ export function SyncedChartWorkspace({
     onObservationLoadHandled?.(request.requestId);
   }, [
     data.length,
+    exitReplay,
     isLoading,
     observationLoadRequest,
     onObservationLoadHandled,
@@ -1322,7 +1587,11 @@ export function SyncedChartWorkspace({
       const nearRight = rightIndex >= visibleBarsLength - EDGE_FETCH_THRESHOLD;
 
       let shouldFetchPrev = nearLeft;
-      let shouldFetchNext = nearRight;
+      let shouldFetchNext =
+        nearRight &&
+        (!isReplayMode ||
+          effectiveReplayIndex == null ||
+          effectiveReplayIndex >= fullDisplayData.length - 1);
 
       // When both edges are visible (fast drags / broad zoom), fetch only in pan direction.
       if (nearLeft && nearRight) {
@@ -1354,11 +1623,20 @@ export function SyncedChartWorkspace({
         }
       }
     },
-    [data.length, displayData.length, runQueuedNextFetch, runQueuedPreviousFetch]
+    [
+      data.length,
+      displayData.length,
+      effectiveReplayIndex,
+      fullDisplayData.length,
+      isReplayMode,
+      runQueuedNextFetch,
+      runQueuedPreviousFetch,
+    ]
   );
 
   const handleTradeHistorySelect = useCallback(
     (trade: Trade) => {
+      exitReplay();
       setSelectedTradeHistoryId(trade.id ?? null);
 
       const openTime = new Date(trade.openTime).getTime();
@@ -1388,13 +1666,14 @@ export function SyncedChartWorkspace({
         windowDays: getDrawingWindowDays(centerTimestamp, drawings),
       });
     },
-    []
+    [exitReplay]
   );
 
   const goToTimestamp = useCallback(
     (targetTimestamp: number) => {
       if (!availableDateRange) return;
 
+      exitReplay();
       const clampedTimestamp = Math.max(
         availableDateRange.from,
         Math.min(availableDateRange.to, targetTimestamp)
@@ -1404,7 +1683,7 @@ export function SyncedChartWorkspace({
       setGoToDate(toDateInputValue(clampedTimestamp));
       setIsDatePickerOpen(false);
     },
-    [availableDateRange]
+    [availableDateRange, exitReplay]
   );
 
   const applyGoToDate = useCallback(
@@ -1713,6 +1992,88 @@ export function SyncedChartWorkspace({
             </label>
           </div>
         ) : null}
+      </div>
+
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={handleReplayToggle}
+          disabled={!selection || fullDisplayData.length === 0}
+          className={`flex h-7 items-center gap-1.5 rounded border px-2 text-[11px] font-medium transition-colors ${
+            isReplayMode || isReplayPlacementMode
+              ? "border-primary/60 bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:bg-muted"
+          } disabled:cursor-not-allowed disabled:opacity-50`}
+          title={
+            isReplayMode
+              ? "Exit replay mode"
+              : isReplayPlacementMode
+                ? "Cancel replay placement"
+                : "Pick replay start on chart"
+          }
+        >
+          {isReplayMode ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+          <span>
+            {isReplayMode ? "Exit Replay" : isReplayPlacementMode ? "Cancel Pick" : "Replay"}
+          </span>
+        </button>
+
+        {isReplayMode ? (
+          <div className="flex h-7 items-center gap-1 rounded border border-border bg-background px-1.5">
+            <button
+              type="button"
+              onClick={handleReplayReset}
+              disabled={replayStartIndex == null}
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              title="Restart replay"
+            >
+              <RotateCcw className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => stepReplay(-1)}
+              disabled={!replayCanStepBack}
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              title="Previous bar"
+            >
+              <SkipBack className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsReplayPlaying((current) => !current)}
+              disabled={!replayCanStepForward}
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              title={isReplayPlaying ? "Pause replay" : "Play replay"}
+            >
+              {isReplayPlaying ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => stepReplay(1)}
+              disabled={!replayCanStepForward}
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              title="Next bar"
+            >
+              <SkipForward className="h-3 w-3" />
+            </button>
+            <select
+              value={replayIntervalMs}
+              onChange={(event) => setReplayIntervalMs(Number(event.target.value))}
+              className="h-5 rounded border border-border bg-background px-1 text-[10px] text-foreground"
+              aria-label="Replay speed"
+            >
+              {REPLAY_SPEED_OPTIONS.map((option) => (
+                <option key={option.intervalMs} value={option.intervalMs}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span className="hidden text-[10px] text-muted-foreground sm:inline">
+              {effectiveReplayIndex != null ? `${effectiveReplayIndex + 1}/${fullDisplayData.length}` : "0/0"}
+            </span>
+          </div>
+        ) : null}
+   
       </div>
 
       {!compact ? (
@@ -2164,6 +2525,7 @@ export function SyncedChartWorkspace({
         <TradeCandlestickChart
           ref={chartRef}
           data={displayData}
+          replayFutureTimestamps={replayFutureTimestamps}
           timeframe={timeframe}
           timeGuides={timeGuides}
           tradeHistory={displayTradeHistory}
@@ -2197,6 +2559,10 @@ export function SyncedChartWorkspace({
               calloutTextInputRef.current?.select();
             }, 0);
           }}
+          replayPlacementMode={isReplayPlacementMode}
+          replayPlacementTimestamp={replayPlacementTimestamp}
+          onReplayPlacementPreviewChange={setReplayPlacementTimestamp}
+          onReplayPlacementSelect={startReplayAtTimestamp}
           longShortLots={longShortLots}
           longShortSymbol={selection?.symbol}
           showRiskReward={false}
