@@ -304,7 +304,7 @@ export function ChartControls({
                             onChange={(event) => onContinuousDrawingChange(event.target.checked)}
                             className="h-3.5 w-3.5 rounded border-border accent-primary"
                         />
-                        <span>Continuous draw</span>
+                        <span>Cts draw</span>
                     </label>
                 </>
             )}

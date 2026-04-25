@@ -139,6 +139,7 @@ export function TradeChartView({
     const calloutTextInputRef = useRef<HTMLTextAreaElement>(null);
     const profitChartRef = useRef<{ fitContent: () => void } | null>(null);
     const skipNextCalloutApplyRef = useRef(false);
+    const pendingTradeCenterRef = useRef(true);
     const showsCandlestick = viewMode !== "pnl";
     const allowsProfitToggle = viewMode === "combined";
     const allowsProfitMarkers = viewMode !== "chart";
@@ -153,7 +154,7 @@ export function TradeChartView({
     }, [expanded, isExpanded, onExpandedChange]);
 
     // Fetch chart data using custom hook (broker enables Dexie/Supabase cache lookup)
-    const { data, isLoading, error, refetch } = useChartData({
+    const { data, dataUpdateMode, isLoading, error, refetch } = useChartData({
         trade,
         timeframe,
         accessToken,
@@ -184,6 +185,7 @@ export function TradeChartView({
 
     // Handle timeframe change
     const handleTimeframeChange = useCallback((newTimeframe: ChartTimeframe) => {
+        pendingTradeCenterRef.current = true;
         setTimeframe(newTimeframe);
     }, []);
 
@@ -315,6 +317,10 @@ export function TradeChartView({
     }, [initialLots, trade.id]);
 
     useEffect(() => {
+        pendingTradeCenterRef.current = true;
+    }, [trade.id, trade.openTime, trade.closeTime]);
+
+    useEffect(() => {
         if (typeof window === "undefined") return;
         window.localStorage.setItem(TRADE_CHART_TIME_GUIDES_KEY, JSON.stringify(timeGuides));
     }, [timeGuides]);
@@ -336,6 +342,7 @@ export function TradeChartView({
             setSelectedDrawingTool(null);
         }
 
+        pendingTradeCenterRef.current = true;
         setTimeframe("M1");
         setTimeout(() => {
             if (showsCandlestick) {
@@ -411,32 +418,18 @@ export function TradeChartView({
     }, [showsCandlestick]);
 
     useEffect(() => {
-        if (!showsCandlestick || !trade || isLoading) return;
+        if (!showsCandlestick || !trade || isLoading || displayData.length === 0) return;
+        if (!pendingTradeCenterRef.current) return;
 
-        // Keep selected trade centered after switching next/prev and after layout changes.
-        const firstPass = window.setTimeout(() => {
+        pendingTradeCenterRef.current = false;
+        const timer = window.setTimeout(() => {
             candlestickChartRef.current?.scrollToTrade(activeZoomOutMultiplier);
         }, 80);
-        const secondPass = window.setTimeout(() => {
-            candlestickChartRef.current?.scrollToTrade(activeZoomOutMultiplier);
-        }, isExpanded ? 260 : 170);
 
         return () => {
-            window.clearTimeout(firstPass);
-            window.clearTimeout(secondPass);
+            window.clearTimeout(timer);
         };
-    }, [
-        activeZoomOutMultiplier,
-        isExpanded,
-        isLoading,
-        showsCandlestick,
-        timeframe,
-        trade,
-        trade.id,
-        trade.openTime,
-        trade.closeTime,
-        displayData.length,
-    ]);
+    }, [activeZoomOutMultiplier, displayData.length, isLoading, showsCandlestick, trade]);
 
     // Handle visible range change for lazy loading
     const handleVisibleRangeChange = useCallback(
@@ -461,7 +454,7 @@ export function TradeChartView({
     const chartContent = (hideTimeframeInToolbar = false) => (
         <div className="flex min-h-0 flex-1 flex-col">
             <div
-                className={`sticky top-0 z-30 -mx-2 -mt-2 flex flex-nowrap items-center gap-2 overflow-visible border-b border-border/70 bg-card/95 px-2 py-1.5 backdrop-blur ${
+                className={`z-30 -mx-2 -mt-2 flex flex-nowrap items-center gap-2 overflow-visible border-b border-border/70 bg-card px-2 py-1.5 ${
                     hideTimeframeInToolbar ? "justify-end" : "justify-between"
                 }`}
             >
@@ -534,7 +527,7 @@ export function TradeChartView({
                                             onChange={(event) => setContinuousDrawingEnabled(event.target.checked)}
                                             className="h-3.5 w-3.5 rounded border-border accent-primary"
                                         />
-                                        <span className="whitespace-nowrap font-medium">Continuous draw</span>
+                                        <span className="whitespace-nowrap font-medium">Cts draw</span>
                                     </label>
                                     {showLotsControls ? (
                                         <div className="flex h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5">
@@ -664,11 +657,13 @@ export function TradeChartView({
                         timeGuides={timeGuides}
                         clipTimeGuideOverlayToPane
                         trade={displayTrade}
+                        dataUpdateMode={dataUpdateMode}
                         height={resolvedChartHeight}
                         zoomOutMultiplier={activeZoomOutMultiplier}
                         showEntryMarker={true}
                         showExitMarker={true}
                         onVisibleRangeChange={handleVisibleRangeChange}
+                        autoScrollOnData={false}
                         isLoading={isLoading}
                         drawingTool={drawingTool}
                         continuousDrawing={continuousDrawingEnabled}

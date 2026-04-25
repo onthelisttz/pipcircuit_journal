@@ -76,6 +76,8 @@ type LineToolsInternalApi = LineToolsApi & {
     requestUpdate?: () => void;
 };
 
+const EMPTY_REPLAY_FUTURE_TIMESTAMPS: number[] = [];
+
 function isDrawingToolType(toolType: string): toolType is DrawingToolType {
     return (
         toolType === "Rectangle" ||
@@ -564,7 +566,7 @@ export interface TradeCandlestickChartRef {
  */
 export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeCandlestickChartProps>(function TradeCandlestickChart({
     data,
-    replayFutureTimestamps = [],
+    replayFutureTimestamps = EMPTY_REPLAY_FUTURE_TIMESTAMPS,
     timeframe,
     timeGuides,
     trade,
@@ -2816,17 +2818,6 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             return;
         }
 
-        // Auto-scroll to trade location after data loads
-        if (trade) {
-            // Small delay to ensure chart has rendered
-            setTimeout(() => {
-                suppressVisibleRangeUntilRef.current = Date.now() + 120;
-                scrollToTrade(zoomOutMultiplier);
-            }, 50);
-        } else {
-            suppressVisibleRangeUntilRef.current = Date.now() + 120;
-            chartRef.current?.timeScale().fitContent();
-        }
         scheduleFreePriceScaleMode();
         if (drawingsBeforeDataUpdate.length > 0 && !appendOnlyUpdate) {
             window.setTimeout(() => {
@@ -2834,7 +2825,22 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }, 0);
         }
         prevBarsRef.current = data;
-    }, [data, isChartReady, formatData, replayFutureTimestamps, trade, scrollToTrade, autoScrollOnData, dataUpdateMode, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, scheduleFreePriceScaleMode, syncImportedDrawings, toCandlestickPoint, zoomOutMultiplier]);
+    }, [data, isChartReady, formatData, replayFutureTimestamps, autoScrollOnData, dataUpdateMode, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, scheduleFreePriceScaleMode, syncImportedDrawings, toCandlestickPoint]);
+
+    useEffect(() => {
+        if (!autoScrollOnData || !isChartReady || data.length === 0) return;
+
+        const timer = window.setTimeout(() => {
+            suppressVisibleRangeUntilRef.current = Date.now() + 120;
+            if (trade) {
+                scrollToTrade(zoomOutMultiplier);
+            } else {
+                chartRef.current?.timeScale().fitContent();
+            }
+        }, trade ? 50 : 0);
+
+        return () => window.clearTimeout(timer);
+    }, [autoScrollOnData, data, isChartReady, scrollToTrade, trade, zoomOutMultiplier]);
 
     useEffect(() => {
         const series = seriesRef.current;

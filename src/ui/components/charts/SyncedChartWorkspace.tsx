@@ -1166,11 +1166,20 @@ export function SyncedChartWorkspace({
     [data]
   );
   const effectiveReplayIndex = useMemo(() => {
-    if (!isReplayMode || replayIndex == null || fullDisplayData.length === 0) {
+    if (!isReplayMode || fullDisplayData.length === 0) {
       return null;
     }
+
+    if (replayCursorTimestamp != null) {
+      return findReplayStartIndex(fullDisplayData, replayCursorTimestamp);
+    }
+
+    if (replayIndex == null) {
+      return null;
+    }
+
     return clampReplayIndex(replayIndex, fullDisplayData.length);
-  }, [fullDisplayData.length, isReplayMode, replayIndex]);
+  }, [fullDisplayData, isReplayMode, replayCursorTimestamp, replayIndex]);
   const displayData = useMemo(() => {
     if (effectiveReplayIndex == null) return fullDisplayData;
     return fullDisplayData.slice(0, effectiveReplayIndex + 1);
@@ -1580,6 +1589,11 @@ export function SyncedChartWorkspace({
       if (data.length === 0) return;
       const visibleBarsLength = displayData.length;
       if (visibleBarsLength === 0) return;
+
+      if (isReplayMode) {
+        lastVisibleRangeRef.current = { from, to };
+        return;
+      }
 
       const previousRange = lastVisibleRangeRef.current;
       const currentCenter = (from + to) / 2;
