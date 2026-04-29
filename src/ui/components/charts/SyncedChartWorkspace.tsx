@@ -7,7 +7,7 @@ import {
   isSameDay,
   startOfMonth,
 } from "date-fns";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
   Calendar,
   RefreshCw,
@@ -39,12 +39,14 @@ import type { DrawingToolType, TradeCandlestickChartRef } from "@ui/components/c
 import type { ChartTradeHistoryPanelData } from "./ChartTradeHistoryPanel";
 type DrawingToolExport = ReturnType<TradeCandlestickChartRef["exportAllDrawings"]>[number];
 import { useChartData } from "@ui/hooks/useChartData";
+import { useCTraderLiveBar } from "@ui/hooks/useCTraderLiveBar";
 import { useSyncProgress } from "@ui/hooks/useSyncProgress";
 import { useTradesByQuery } from "@ui/hooks/useTradesByQuery";
 import { useAccount } from "@ui/hooks/useAccount";
 import { DexieSymbolSyncProgressRepository } from "@infrastructure/db/dexie/repositories";
 import { TokenStorage } from "@infrastructure/auth";
 import { hexToRgba } from "@lib/color";
+import { buildLocalServiceEndpoint } from "@lib/ctrader-live";
 import { TimeGuidesControls } from "./TimeGuidesControls";
 import {
   readStoredTimeGuideSettings,
@@ -72,6 +74,7 @@ const CHART_TIME_GUIDES_KEY = "chartTimeGuides_synced";
 const CHART_SHOW_TRADES_OVERLAY_KEY = "chartShowTrades_synced";
 const CHART_SHOW_TRADES_PANEL_KEY = "chartShowTradesPanel_synced";
 const CHART_CONTINUOUS_DRAWING_KEY = "chartContinuousDrawingEnabled_v1";
+const CHART_LIVE_MODE_KEY = "chartLiveModeEnabled_v1";
 const SYNCED_CHART_DISPLAY_OFFSET_MS = 3 * 60 * 60 * 1000;
 type ChartSelection = { broker: string; symbol: string };
 
@@ -91,6 +94,40 @@ const EDGE_FETCH_THRESHOLD = 10;
 const FETCH_THROTTLE_MS = 160;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+type LivePositionSnapshot = {
+  positionId: string;
+  symbol: string;
+  direction: "Buy" | "Sell";
+  volume: number;
+  lots: number;
+  openTimestamp: number | null;
+  entryPrice: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  trailingStopLoss: boolean;
+  label: string;
+  comment: string;
+  updatedAt: number | null;
+};
+
+type LiveOrderSnapshot = {
+  orderId: string;
+  symbol: string;
+  direction: "Buy" | "Sell";
+  orderType: string;
+  lots: number;
+  volume: number;
+  limitPrice: number | null;
+  stopPrice: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  createdAt: number | null;
+  expiresAt: number | null;
+  positionId: number | null;
+};
+
+type LiveOrderType = "MARKET" | "LIMIT" | "STOP";
 
 function DrawingToolGlyph({ tool }: { tool: DrawingToolType }) {
   switch (tool) {
@@ -177,6 +214,48 @@ function parseDateInputValue(value: string): Date | null {
 
 function fromDateInputValue(value: string): number {
   return parseDateInputValue(value)?.getTime() ?? Number.NaN;
+}
+
+function inferDisplayDecimals(price: number | null | undefined): number {
+  if (price == null || !Number.isFinite(price)) return 5;
+  if (price >= 100000) return 0;
+  if (price >= 10000) return 1;
+  if (price >= 1000) return 2;
+  if (price >= 100) return 3;
+  return 5;
+}
+
+function formatLivePrice(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "--";
+  const decimals = inferDisplayDecimals(value);
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function formatSpreadDisplay(bid: number | null | undefined, ask: number | null | undefined): string {
+  if (bid == null || ask == null || !Number.isFinite(bid) || !Number.isFinite(ask)) {
+    return "--";
+  }
+
+  const spread = Math.max(0, ask - bid);
+  const decimals = spread >= 1 ? 2 : spread >= 0.01 ? 3 : 5;
+  return spread.toFixed(decimals);
+}
+
+function parseOptionalNumberInput(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function normalizeTradeActionMessage(message: string): string {
+  if (message.includes("TRADE permission required")) {
+    return "cTrader trading permission is missing. Re-link your cTrader account and approve trading access.";
+  }
+  return message;
 }
 
 function buildMonthDays(month: Date): Date[] {
@@ -487,6 +566,15 @@ function readStoredShowTradePanel(): boolean {
   }
 }
 
+function readStoredLiveMode(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(CHART_LIVE_MODE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 const PLACEHOLDER_TRADE: Trade = {
   accountId: "",
   symbol: "",
@@ -577,6 +665,7 @@ interface SyncedChartWorkspaceProps {
   onTradePanelChange?: (panel: ChartTradeHistoryPanelData | null) => void;
   arePageTabsVisible?: boolean;
   onTogglePageTabsVisibility?: () => void;
+  onHeaderControlsChange?: (controls: ReactNode | null) => void;
   /** Hide drawing tools & action buttons for compact multi-pane layouts */
   compact?: boolean;
 }
@@ -595,6 +684,7 @@ export function SyncedChartWorkspace({
   onTradePanelChange,
   arePageTabsVisible = true,
   onTogglePageTabsVisibility,
+  onHeaderControlsChange,
   compact = false,
 }: SyncedChartWorkspaceProps = {}) {
   const { activeAccount, accounts } = useAccount();
@@ -651,6 +741,18 @@ export function SyncedChartWorkspace({
   const [longShortLots, setLongShortLots] = useState(1);
   const [showTradeOverlay, setShowTradeOverlay] = useState(() => readStoredShowTrades());
   const [showTradePanel, setShowTradePanel] = useState(() => readStoredShowTradePanel());
+  const [liveModeEnabled, setLiveModeEnabled] = useState(() => readStoredLiveMode());
+  const [livePositions, setLivePositions] = useState<LivePositionSnapshot[]>([]);
+  const [liveOrders, setLiveOrders] = useState<LiveOrderSnapshot[]>([]);
+  const [tradeActionError, setTradeActionError] = useState<string | null>(null);
+  const [tradeActionPending, setTradeActionPending] = useState(false);
+  const [isRichTradeOpen, setIsRichTradeOpen] = useState(false);
+  const [richTradeOrderType, setRichTradeOrderType] = useState<LiveOrderType>("MARKET");
+  const [richTradeSide, setRichTradeSide] = useState<"BUY" | "SELL">("BUY");
+  const [richTradePrice, setRichTradePrice] = useState("");
+  const [richTradeStopLoss, setRichTradeStopLoss] = useState("");
+  const [richTradeTakeProfit, setRichTradeTakeProfit] = useState("");
+  const [richTradeComment, setRichTradeComment] = useState("");
   const [selectedTradeHistoryId, setSelectedTradeHistoryId] = useState<number | null>(null);
   const [timeGuides, setTimeGuides] = useState<TimeGuideSettings>(() =>
     readStoredTimeGuideSettings(CHART_TIME_GUIDES_KEY)
@@ -685,6 +787,8 @@ export function SyncedChartWorkspace({
   const timeframeMenuRef = useRef<HTMLDivElement>(null);
   const tradesButtonRef = useRef<HTMLButtonElement>(null);
   const tradesMenuRef = useRef<HTMLDivElement>(null);
+  const richTradeButtonRef = useRef<HTMLButtonElement>(null);
+  const richTradePopupRef = useRef<HTMLDivElement | null>(null);
   const [chartAreaHeight, setChartAreaHeight] = useState(520);
   const [compactDrawOpen, setCompactDrawOpen] = useState(false);
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
@@ -748,6 +852,11 @@ export function SyncedChartWorkspace({
     if (typeof window === "undefined") return;
     window.localStorage.setItem(CHART_SHOW_TRADES_PANEL_KEY, String(showTradePanel));
   }, [showTradePanel]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CHART_LIVE_MODE_KEY, String(liveModeEnabled));
+  }, [liveModeEnabled]);
 
   useEffect(() => {
     setIsReplayPlaying(false);
@@ -1080,22 +1189,15 @@ export function SyncedChartWorkspace({
   }, [timeframe]);
 
   const accountForBroker = useMemo(() => {
-    if (!selection) return activeAccount ?? null;
-    return (
-      accounts.find((account) => account.broker === selection.broker) ??
-      activeAccount ??
-      null
-    );
-  }, [accounts, activeAccount, selection]);
+    if (!activeAccount) return null;
+    if (activeAccount.platform.toLowerCase() !== "ctrader") return null;
+    if (!selection) return activeAccount;
+    return activeAccount.broker === selection.broker ? activeAccount : null;
+  }, [activeAccount, selection]);
   const brokerAccountNumbers = useMemo(() => {
-    if (!selection) return [];
-    const matches = accounts
-      .filter((account) => account.broker === selection.broker)
-      .map((account) => account.accountNumber);
-
-    if (matches.length > 0) return matches;
-    return accountForBroker?.accountNumber ? [accountForBroker.accountNumber] : [];
-  }, [accounts, accountForBroker, selection]);
+    if (!selection || !accountForBroker) return [];
+    return [accountForBroker.accountNumber];
+  }, [accountForBroker, selection]);
   const availableDateRange = useMemo(() => {
     if (!selectedProgress?.firstBarDate || !selectedProgress?.lastBarDate) {
       return null;
@@ -1138,6 +1240,9 @@ export function SyncedChartWorkspace({
     if (!accountForBroker) return undefined;
     return TokenStorage.getGlobal()?.accessToken;
   }, [accountForBroker]);
+  const liveAccountNumber = accountForBroker?.accountNumber ?? null;
+  const liveVisualsEnabled =
+    liveModeEnabled && !isReplayMode && !isReplayPlacementMode;
 
   const chartEnabled = Boolean(selection && chartTrade);
   const requestedWindowDays = Math.max(windowDays, timeframeRestoreAnchor.windowDays);
@@ -1156,14 +1261,69 @@ export function SyncedChartWorkspace({
     windowDays: requestedWindowDays,
     enabled: chartEnabled,
   });
+  const {
+    currentBar: liveCurrentBar,
+    quote: liveQuote,
+    status: liveStatus,
+    error: liveError,
+    backfillCompletedAt,
+    sessionId: liveSessionId,
+    serviceUrl: liveServiceUrl,
+  } = useCTraderLiveBar({
+    enabled: liveVisualsEnabled && chartEnabled && isActive,
+    symbol: selection?.symbol,
+    broker: selection?.broker,
+    timeframe,
+    accessToken,
+    accountNumber: liveAccountNumber,
+  });
+  useEffect(() => {
+    if (!liveVisualsEnabled || backfillCompletedAt == null) return;
+    void refetch();
+  }, [backfillCompletedAt, liveVisualsEnabled, refetch]);
+  const liveMergedData = useMemo(() => {
+    if (!liveVisualsEnabled || !liveCurrentBar) return data;
+
+    const nextData = [...data];
+    const lastBar = nextData[nextData.length - 1];
+
+    if (!lastBar) {
+      return [liveCurrentBar];
+    }
+
+    if (liveCurrentBar.timestamp < lastBar.timestamp) {
+      return nextData;
+    }
+
+    if (liveCurrentBar.timestamp === lastBar.timestamp) {
+      nextData[nextData.length - 1] = {
+        ...lastBar,
+        ...liveCurrentBar,
+      };
+      return nextData;
+    }
+
+    nextData.push(liveCurrentBar);
+    return nextData;
+  }, [data, liveCurrentBar, liveVisualsEnabled]);
+  const liveDataUpdateMode = useMemo<"replace" | "append" | "prepend">(() => {
+    if (!liveVisualsEnabled || !liveCurrentBar || data.length === 0) {
+      return dataUpdateMode;
+    }
+
+    const lastBar = data[data.length - 1];
+    if (!lastBar) return dataUpdateMode;
+
+    return liveCurrentBar.timestamp >= lastBar.timestamp ? "append" : "replace";
+  }, [data, dataUpdateMode, liveCurrentBar, liveVisualsEnabled]);
   const fullDisplayData = useMemo(
     () =>
-      data.map((bar) => ({
+      liveMergedData.map((bar) => ({
         ...bar,
         // cTrader bars arrive 3 hours behind the MT5 chart session the user expects.
         timestamp: bar.timestamp + SYNCED_CHART_DISPLAY_OFFSET_MS,
       })),
-    [data]
+    [liveMergedData]
   );
   const effectiveReplayIndex = useMemo(() => {
     if (!isReplayMode || fullDisplayData.length === 0) {
@@ -1232,10 +1392,344 @@ export function SyncedChartWorkspace({
       return closeTime >= visibleStart && openTime <= visibleEnd;
     });
   }, [brokerSymbolTrades, displayData, showTradeOverlay]);
+  const liveStatusLabel = useMemo(() => {
+    if (!liveModeEnabled) return "Cached";
+    if (isReplayMode || isReplayPlacementMode) return "Live Paused";
+    if (liveStatus === "backfilling") return "Backfilling";
+    if (liveStatus === "connecting") return "Connecting";
+    if (liveStatus === "live") return "Live";
+    if (liveStatus === "error") return "Live Error";
+    return "Cached";
+  }, [isReplayMode, isReplayPlacementMode, liveModeEnabled, liveStatus]);
+  const liveStatusClassName = useMemo(() => {
+    if (!liveModeEnabled) return "border-border text-muted-foreground";
+    if (isReplayMode || isReplayPlacementMode) {
+      return "border-border text-muted-foreground";
+    }
+    if (liveStatus === "live") return "border-emerald-500/40 text-emerald-500";
+    if (liveStatus === "backfilling" || liveStatus === "connecting") {
+      return "border-amber-500/40 text-amber-500";
+    }
+    if (liveStatus === "error") return "border-destructive/40 text-destructive";
+    return "border-border text-muted-foreground";
+  }, [isReplayMode, isReplayPlacementMode, liveModeEnabled, liveStatus]);
+  const liveBidLabel = useMemo(
+    () => formatLivePrice(liveQuote?.bid ?? liveCurrentBar?.close ?? null),
+    [liveCurrentBar?.close, liveQuote?.bid]
+  );
+  const liveAskLabel = useMemo(
+    () => formatLivePrice(liveQuote?.ask ?? liveCurrentBar?.close ?? null),
+    [liveCurrentBar?.close, liveQuote?.ask]
+  );
+  const liveSpreadLabel = useMemo(
+    () => formatSpreadDisplay(liveQuote?.bid, liveQuote?.ask),
+    [liveQuote?.ask, liveQuote?.bid]
+  );
+  const canTradeLive = Boolean(
+    liveVisualsEnabled &&
+      liveSessionId &&
+      selection &&
+      accessToken &&
+      liveAccountNumber &&
+      !isReplayMode &&
+      !isReplayPlacementMode &&
+      liveStatus !== "error"
+  );
+
+  const refreshLivePositions = useCallback(async () => {
+    if (!liveSessionId || !liveVisualsEnabled) {
+      setLivePositions([]);
+      setLiveOrders([]);
+      return;
+    }
+
+    const response = await fetch(
+      buildLocalServiceEndpoint(
+        `/api/ctrader/live/positions?sessionId=${encodeURIComponent(liveSessionId)}`,
+        liveServiceUrl
+      )
+    );
+    const payload = (await response.json()) as {
+      positions?: LivePositionSnapshot[];
+      orders?: LiveOrderSnapshot[];
+      error?: string;
+    };
+
+    if (!response.ok) {
+      throw new Error(payload.error ?? `Failed to load live positions (${response.status})`);
+    }
+
+    setLivePositions(Array.isArray(payload.positions) ? payload.positions : []);
+    setLiveOrders(Array.isArray(payload.orders) ? payload.orders : []);
+  }, [liveServiceUrl, liveSessionId, liveVisualsEnabled]);
+
+  const submitTradeRequest = useCallback(async (body: Record<string, unknown>) => {
+    if (!liveSessionId) {
+      throw new Error("Live session is not ready.");
+    }
+
+    setTradeActionPending(true);
+    setTradeActionError(null);
+    try {
+      const response = await fetch(
+        buildLocalServiceEndpoint("/api/ctrader/live/orders", liveServiceUrl),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: liveSessionId,
+            ...body,
+          }),
+        }
+      );
+      const payload = (await response.json()) as {
+        positions?: LivePositionSnapshot[];
+        orders?: LiveOrderSnapshot[];
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(
+          normalizeTradeActionMessage(payload.error ?? `Trade request failed (${response.status})`)
+        );
+      }
+
+      setLivePositions(Array.isArray(payload.positions) ? payload.positions : []);
+      setLiveOrders(Array.isArray(payload.orders) ? payload.orders : []);
+      setIsRichTradeOpen(false);
+      setRichTradeComment("");
+    } catch (submitError) {
+      const message =
+        submitError instanceof Error
+          ? normalizeTradeActionMessage(submitError.message)
+          : "Trade request failed.";
+      setTradeActionError(message);
+      throw new Error(message);
+    } finally {
+      setTradeActionPending(false);
+    }
+  }, [liveServiceUrl, liveSessionId]);
+
+  const amendLivePosition = useCallback(async (positionId: string, stopLoss?: number, takeProfit?: number) => {
+    if (!liveSessionId) {
+      throw new Error("Live session is not ready.");
+    }
+
+    setTradeActionPending(true);
+    setTradeActionError(null);
+    try {
+      const response = await fetch(
+        buildLocalServiceEndpoint("/api/ctrader/live/positions/amend", liveServiceUrl),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: liveSessionId,
+            positionId,
+            ...(Number.isFinite(stopLoss) ? { stopLoss } : {}),
+            ...(Number.isFinite(takeProfit) ? { takeProfit } : {}),
+          }),
+        }
+      );
+      const payload = (await response.json()) as {
+        positions?: LivePositionSnapshot[];
+        orders?: LiveOrderSnapshot[];
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error ?? `Failed to amend live position (${response.status})`);
+      }
+      setLivePositions(Array.isArray(payload.positions) ? payload.positions : []);
+      setLiveOrders(Array.isArray(payload.orders) ? payload.orders : []);
+    } catch (amendError) {
+      const message =
+        amendError instanceof Error ? amendError.message : "Failed to amend live position.";
+      setTradeActionError(message);
+      throw amendError;
+    } finally {
+      setTradeActionPending(false);
+    }
+  }, [liveServiceUrl, liveSessionId]);
+
+  const closeLivePosition = useCallback(async (positionId: string) => {
+    if (!liveSessionId) {
+      throw new Error("Live session is not ready.");
+    }
+
+    setTradeActionPending(true);
+    setTradeActionError(null);
+    try {
+      const response = await fetch(
+        buildLocalServiceEndpoint("/api/ctrader/live/positions/close", liveServiceUrl),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: liveSessionId,
+            positionId,
+          }),
+        }
+      );
+      const payload = (await response.json()) as {
+        positions?: LivePositionSnapshot[];
+        orders?: LiveOrderSnapshot[];
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error ?? `Failed to close live position (${response.status})`);
+      }
+      setLivePositions(Array.isArray(payload.positions) ? payload.positions : []);
+      setLiveOrders(Array.isArray(payload.orders) ? payload.orders : []);
+    } catch (closeError) {
+      const message =
+        closeError instanceof Error ? closeError.message : "Failed to close live position.";
+      setTradeActionError(message);
+      throw closeError;
+    } finally {
+      setTradeActionPending(false);
+    }
+  }, [liveServiceUrl, liveSessionId]);
+
+  const amendLiveOrder = useCallback(async (
+    orderId: string,
+    patch: {
+      limitPrice?: number;
+      stopPrice?: number;
+      stopLoss?: number;
+      takeProfit?: number;
+    }
+  ) => {
+    if (!liveSessionId) {
+      throw new Error("Live session is not ready.");
+    }
+
+    setTradeActionPending(true);
+    setTradeActionError(null);
+    try {
+      const response = await fetch(
+        buildLocalServiceEndpoint("/api/ctrader/live/orders/amend", liveServiceUrl),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: liveSessionId,
+            orderId,
+            ...patch,
+          }),
+        }
+      );
+      const payload = (await response.json()) as {
+        positions?: LivePositionSnapshot[];
+        orders?: LiveOrderSnapshot[];
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error ?? `Failed to amend live order (${response.status})`);
+      }
+      setLivePositions(Array.isArray(payload.positions) ? payload.positions : []);
+      setLiveOrders(Array.isArray(payload.orders) ? payload.orders : []);
+    } catch (orderError) {
+      const message =
+        orderError instanceof Error ? orderError.message : "Failed to amend live order.";
+      setTradeActionError(message);
+      throw orderError;
+    } finally {
+      setTradeActionPending(false);
+    }
+  }, [liveServiceUrl, liveSessionId]);
+
+  const cancelLiveOrder = useCallback(async (orderId: string) => {
+    if (!liveSessionId) {
+      throw new Error("Live session is not ready.");
+    }
+
+    setTradeActionPending(true);
+    setTradeActionError(null);
+    try {
+      const response = await fetch(
+        buildLocalServiceEndpoint("/api/ctrader/live/orders/cancel", liveServiceUrl),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: liveSessionId,
+            orderId,
+          }),
+        }
+      );
+      const payload = (await response.json()) as {
+        positions?: LivePositionSnapshot[];
+        orders?: LiveOrderSnapshot[];
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error ?? `Failed to cancel live order (${response.status})`);
+      }
+      setLivePositions(Array.isArray(payload.positions) ? payload.positions : []);
+      setLiveOrders(Array.isArray(payload.orders) ? payload.orders : []);
+    } catch (orderError) {
+      const message =
+        orderError instanceof Error ? orderError.message : "Failed to cancel live order.";
+      setTradeActionError(message);
+      throw orderError;
+    } finally {
+      setTradeActionPending(false);
+    }
+  }, [liveServiceUrl, liveSessionId]);
 
   useEffect(() => {
     displayDataRef.current = displayData;
   }, [displayData]);
+
+  useEffect(() => {
+    if (!liveVisualsEnabled || !liveSessionId) {
+      setLivePositions([]);
+      setLiveOrders([]);
+      return;
+    }
+
+    void refreshLivePositions().catch((positionError) => {
+      const message =
+        positionError instanceof Error ? positionError.message : "Failed to load live positions.";
+      setTradeActionError(message);
+    });
+
+    const timer = window.setInterval(() => {
+      void refreshLivePositions().catch(() => {});
+    }, 4_000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [liveSessionId, liveVisualsEnabled, refreshLivePositions]);
+
+  useEffect(() => {
+    if (richTradeOrderType === "MARKET") {
+      setRichTradePrice("");
+      return;
+    }
+
+    const nextPrice = richTradeSide === "BUY" ? liveQuote?.ask : liveQuote?.bid;
+    if (nextPrice == null || !Number.isFinite(nextPrice)) return;
+    setRichTradePrice(String(nextPrice));
+  }, [liveQuote?.ask, liveQuote?.bid, richTradeOrderType, richTradeSide]);
+
+  useEffect(() => {
+    if (!isRichTradeOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (richTradePopupRef.current?.contains(target)) return;
+      if (richTradeButtonRef.current?.contains(target)) return;
+      setIsRichTradeOpen(false);
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [isRichTradeOpen]);
 
   const exitReplay = useCallback(() => {
     setIsReplayPlaying(false);
@@ -1797,6 +2291,155 @@ export function SyncedChartWorkspace({
     [rectangleFillColor, rectangleFillOpacity]
   );
 
+  const handleQuickTrade = useCallback(async (side: "BUY" | "SELL") => {
+    if (!canTradeLive) return;
+    setRichTradeSide(side);
+    await submitTradeRequest({
+      side,
+      orderType: "MARKET",
+      lots: longShortLots,
+    });
+  }, [canTradeLive, longShortLots, submitTradeRequest]);
+
+  const handleRichTradeSubmit = useCallback(async () => {
+    if (!liveSessionId) return;
+    await submitTradeRequest({
+      side: richTradeSide,
+      orderType: richTradeOrderType,
+      lots: longShortLots,
+      ...(Number.isFinite(parseOptionalNumberInput(richTradePrice))
+        ? richTradeOrderType === "LIMIT"
+          ? { limitPrice: parseOptionalNumberInput(richTradePrice) }
+          : richTradeOrderType === "STOP"
+            ? { stopPrice: parseOptionalNumberInput(richTradePrice) }
+            : {}
+        : {}),
+      ...(Number.isFinite(parseOptionalNumberInput(richTradeStopLoss))
+        ? { stopLoss: parseOptionalNumberInput(richTradeStopLoss) }
+        : {}),
+      ...(Number.isFinite(parseOptionalNumberInput(richTradeTakeProfit))
+        ? { takeProfit: parseOptionalNumberInput(richTradeTakeProfit) }
+        : {}),
+      ...(richTradeComment.trim() ? { comment: richTradeComment.trim() } : {}),
+    });
+  }, [
+    liveSessionId,
+    longShortLots,
+    richTradeComment,
+    richTradeOrderType,
+    richTradePrice,
+    richTradeSide,
+    richTradeStopLoss,
+    richTradeTakeProfit,
+    submitTradeRequest,
+  ]);
+
+  const handleLivePositionAdjust = useCallback(async (positionId: string, stopLoss?: number, takeProfit?: number) => {
+    await amendLivePosition(positionId, stopLoss, takeProfit);
+  }, [amendLivePosition]);
+
+  const handleLiveOrderAdjust = useCallback(async (
+    orderId: string,
+    patch: {
+      limitPrice?: number;
+      stopPrice?: number;
+      stopLoss?: number;
+      takeProfit?: number;
+    }
+  ) => {
+    await amendLiveOrder(orderId, patch);
+  }, [amendLiveOrder]);
+
+  const handleLivePositionClose = useCallback(async (positionId: string) => {
+    await closeLivePosition(positionId);
+  }, [closeLivePosition]);
+
+  const handleLiveOrderCancel = useCallback(async (orderId: string) => {
+    await cancelLiveOrder(orderId);
+  }, [cancelLiveOrder]);
+
+  const headerControls = useMemo(() => {
+    if (compact) return null;
+
+    return (
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => setLiveModeEnabled((previous) => !previous)}
+          disabled={!selection || !accessToken || !liveAccountNumber}
+          className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors disabled:opacity-50 ${
+            liveModeEnabled
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+              : "border-border text-muted-foreground hover:bg-muted"
+          }`}
+        >
+          <span>{liveModeEnabled ? "Live On" : "Live Off"}</span>
+        </button>
+        <div className={`rounded-md border px-2.5 py-1 text-[11px] font-medium ${liveStatusClassName}`}>
+          {liveStatusLabel}
+        </div>
+        {liveModeEnabled ? (
+          <div className="flex items-center gap-1.5 rounded-lg border border-border bg-card/70 px-1.5 py-1">
+            <button
+              type="button"
+              onClick={() => void handleQuickTrade("SELL")}
+              disabled={!canTradeLive || tradeActionPending}
+              className="flex min-w-[86px] flex-col rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-left text-rose-300 transition-colors hover:bg-rose-500/15 disabled:opacity-50"
+            >
+              <span className="text-[10px] font-semibold uppercase tracking-wide">Sell</span>
+              <span className="text-[13px] font-semibold tabular-nums">{liveBidLabel}</span>
+            </button>
+            <div className="flex min-w-[62px] flex-col items-center gap-1">
+              <span className="text-[10px] font-medium text-muted-foreground">Spread {liveSpreadLabel}</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0.01}
+                step={0.01}
+                value={Number.isFinite(longShortLots) ? longShortLots : 1}
+                onChange={(event) => setLongShortLots(Math.max(0.01, Number(event.target.value) || 0.01))}
+                className="h-7 w-[62px] rounded-md border border-border bg-background px-2 text-center text-[11px] tabular-nums text-foreground"
+                aria-label="Quick trade lot size"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleQuickTrade("BUY")}
+              disabled={!canTradeLive || tradeActionPending}
+              className="flex min-w-[86px] flex-col rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-left text-emerald-300 transition-colors hover:bg-emerald-500/15 disabled:opacity-50"
+            >
+              <span className="text-[10px] font-semibold uppercase tracking-wide">Buy</span>
+              <span className="text-[13px] font-semibold tabular-nums">{liveAskLabel}</span>
+            </button>
+          </div>
+        ) : null}
+      </div>
+    );
+  }, [
+    accessToken,
+    canTradeLive,
+    compact,
+    handleQuickTrade,
+    liveAccountNumber,
+    liveAskLabel,
+    liveBidLabel,
+    liveModeEnabled,
+    liveSpreadLabel,
+    liveStatusClassName,
+    liveStatusLabel,
+    longShortLots,
+    selection,
+    tradeActionPending,
+  ]);
+
+  useEffect(() => {
+    if (!onHeaderControlsChange || !isActive) return;
+    onHeaderControlsChange(headerControls);
+    return () => {
+      onHeaderControlsChange(null);
+    };
+  }, [headerControls, isActive, onHeaderControlsChange]);
+
   const toolbar = (
     <div className={`relative z-20 flex flex-wrap items-center gap-2 border-b border-border ${compact ? 'pb-1.5' : 'pb-3'}`}>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -2094,6 +2737,151 @@ export function SyncedChartWorkspace({
           </div>
         ) : null}
    
+      </div>
+
+      <div className="relative" ref={richTradePopupRef}>
+        <button
+          ref={richTradeButtonRef}
+          type="button"
+          onClick={() => {
+            setIsRichTradeOpen((open) => !open);
+            setSymbolMenuOpen(false);
+            setTimeframeMenuOpen(false);
+            setTradesMenuOpen(false);
+            setCompactActionsOpen(false);
+          }}
+          disabled={!liveModeEnabled || !liveSessionId}
+          className={`flex h-7 items-center gap-1.5 rounded border px-2 text-[11px] font-medium transition-colors ${
+            isRichTradeOpen
+              ? "border-primary/60 bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:bg-muted"
+          } disabled:cursor-not-allowed disabled:opacity-50`}
+          title="Rich trade placement"
+        >
+          <span>Trade</span>
+          <ChevronDown className="h-3 w-3" />
+        </button>
+
+        {isRichTradeOpen ? (
+          <div className="absolute left-0 top-full z-50 mt-1 w-[280px] rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-2xl">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setRichTradeSide("BUY")}
+                className={`rounded-md border px-3 py-2 text-left text-xs font-medium transition-colors ${
+                  richTradeSide === "BUY"
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                Buy
+              </button>
+              <button
+                type="button"
+                onClick={() => setRichTradeSide("SELL")}
+                className={`rounded-md border px-3 py-2 text-left text-xs font-medium transition-colors ${
+                  richTradeSide === "SELL"
+                    ? "border-rose-500/40 bg-rose-500/10 text-rose-400"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                Sell
+              </button>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Order
+                <select
+                  value={richTradeOrderType}
+                  onChange={(event) => setRichTradeOrderType(event.target.value as LiveOrderType)}
+                  className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                >
+                  <option value="MARKET">Market</option>
+                  <option value="LIMIT">Limit</option>
+                  <option value="STOP">Stop</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Lots
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0.01}
+                  step={0.01}
+                  value={Number.isFinite(longShortLots) ? longShortLots : 1}
+                  onChange={(event) => setLongShortLots(Math.max(0.01, Number(event.target.value) || 0.01))}
+                  className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                />
+              </label>
+              {richTradeOrderType !== "MARKET" ? (
+                <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Price
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="any"
+                    value={richTradePrice}
+                    onChange={(event) => setRichTradePrice(event.target.value)}
+                    className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                  />
+                </label>
+              ) : <div />}
+              <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Stop Loss
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="any"
+                  value={richTradeStopLoss}
+                  onChange={(event) => setRichTradeStopLoss(event.target.value)}
+                  className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Take Profit
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="any"
+                  value={richTradeTakeProfit}
+                  onChange={(event) => setRichTradeTakeProfit(event.target.value)}
+                  className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                />
+              </label>
+              <label className="col-span-2 flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Comment
+                <input
+                  type="text"
+                  value={richTradeComment}
+                  onChange={(event) => setRichTradeComment(event.target.value)}
+                  className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                />
+              </label>
+            </div>
+            {tradeActionError ? (
+              <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+                {tradeActionError}
+              </div>
+            ) : null}
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <div className="text-[11px] text-muted-foreground">
+                {liveQuote?.bid != null && liveQuote?.ask != null
+                  ? `${liveBidLabel} / ${liveAskLabel}`
+                  : liveCurrentBar
+                    ? liveAskLabel
+                    : "Waiting for live quote"}
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleRichTradeSubmit()}
+                disabled={tradeActionPending || !liveSessionId}
+                className="rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
+              >
+                {tradeActionPending ? "Placing..." : `Place ${richTradeSide === "BUY" ? "Buy" : "Sell"}`}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {!compact ? (
@@ -2562,6 +3350,18 @@ export function SyncedChartWorkspace({
         </div>
       )}
 
+      {liveError && (
+        <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+          Live mode issue: {liveError}
+        </div>
+      )}
+
+      {tradeActionError && !isRichTradeOpen && (
+        <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+          Trade action issue: {tradeActionError}
+        </div>
+      )}
+
       <div ref={chartAreaRef} className="mt-3 min-h-[420px] flex-1">
         <TradeCandlestickChart
           ref={chartRef}
@@ -2571,7 +3371,7 @@ export function SyncedChartWorkspace({
           timeGuides={timeGuides}
           tradeHistory={displayTradeHistory}
           clipTimeGuideOverlayToPane
-          dataUpdateMode={dataUpdateMode}
+          dataUpdateMode={liveVisualsEnabled ? liveDataUpdateMode : dataUpdateMode}
           height={isExpanded ? expandedHeight : chartAreaHeight}
           isLoading={isLoading}
           drawingTool={drawingTool}
@@ -2606,6 +3406,16 @@ export function SyncedChartWorkspace({
           onReplayPlacementSelect={startReplayAtTimestamp}
           longShortLots={longShortLots}
           longShortSymbol={selection?.symbol}
+          activeLivePositions={liveVisualsEnabled ? livePositions : []}
+          onActiveLivePositionChange={handleLivePositionAdjust}
+          onActiveLivePositionClose={handleLivePositionClose}
+          activeLiveOrders={liveVisualsEnabled ? liveOrders : []}
+          onActiveLiveOrderChange={handleLiveOrderAdjust}
+          onActiveLiveOrderCancel={handleLiveOrderCancel}
+          liveBidPrice={liveVisualsEnabled ? liveQuote?.bid ?? null : null}
+          liveAskPrice={liveVisualsEnabled ? liveQuote?.ask ?? null : null}
+          showCandleCountdown={liveVisualsEnabled && liveCurrentBar != null}
+          candleCountdownAnchorTimestamp={liveVisualsEnabled ? liveCurrentBar?.timestamp ?? null : null}
           showRiskReward={false}
           onVisibleRangeChange={handleVisibleRangeChange}
           autoScrollOnData={false}

@@ -13,7 +13,7 @@ export class CTraderAuthClient {
     const params = new URLSearchParams({
       client_id: this.clientId,
       redirect_uri: this.redirectUri,
-      scope: "accounts",
+      scope: "trading",
       product: "web",
     });
     if (state) {

@@ -13,7 +13,17 @@ import {
     CandlestickSeries,
     CrosshairMode,
 } from "lightweight-charts";
-import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle, useMemo } from "react";
+import {
+    useEffect,
+    useRef,
+    useCallback,
+    useState,
+    forwardRef,
+    useImperativeHandle,
+    useMemo,
+    type PointerEvent as ReactPointerEvent,
+    type MouseEvent as ReactMouseEvent,
+} from "react";
 import type { ChartBar, ChartTimeframe, Trade } from "@domain/entities";
 import { Direction } from "@domain/enums";
 import { estimateGrossProfit, volumeToLots, priceDiffToPips } from "@lib/pnl-estimate";
@@ -142,6 +152,26 @@ function timeframeToSeconds(timeframe?: ChartTimeframe): number {
     }
 }
 
+function formatCandleCountdown(remainingMs: number): string {
+    const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+        return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
+
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatPriceScaleLabel(price: number, precision: number): string {
+    return price.toLocaleString(undefined, {
+        minimumFractionDigits: precision,
+        maximumFractionDigits: precision,
+    });
+}
+
 function timeToDate(time: unknown): Date | null {
     if (typeof time === "number") {
         return new Date(time * 1000);
@@ -212,6 +242,100 @@ type TradeOverlayData = {
     useMae: boolean;
     labels: RiskRewardLabels;
 };
+
+export interface ActiveLivePosition {
+    positionId: string;
+    symbol: string;
+    direction: "Buy" | "Sell";
+    lots: number;
+    openTimestamp: number | null;
+    entryPrice: number | null;
+    stopLoss: number | null;
+    takeProfit: number | null;
+}
+
+export interface ActiveLiveOrder {
+    orderId: string;
+    symbol: string;
+    direction: "Buy" | "Sell";
+    orderType: string;
+    lots: number;
+    limitPrice: number | null;
+    stopPrice: number | null;
+    stopLoss: number | null;
+    takeProfit: number | null;
+    createdAt?: number | null;
+}
+
+const LIVE_TRADE_TOOL_ID_PREFIX = "live-trade:";
+
+function isLiveTradeToolId(id: string): boolean {
+    return id.startsWith(LIVE_TRADE_TOOL_ID_PREFIX);
+}
+
+type LiveTradeLineMeta =
+    | {
+          kind: "position-stopLoss" | "position-takeProfit";
+          positionId: string;
+      }
+    | {
+          kind: "order-entry" | "order-stopLoss" | "order-takeProfit";
+          orderId: string;
+          orderType: string;
+      };
+
+type LiveTradeLineSpec = {
+    id: string;
+    price: number;
+    title: string;
+    color: string;
+    lineStyle: LineStyle;
+    editable: boolean;
+    toolMeta?: LiveTradeLineMeta;
+};
+
+type LiveTradeOverlayItem = {
+    id: string;
+    kind: "position" | "order";
+    x: number;
+    y: number;
+    lotsLabel: string;
+    label: string;
+    entryToolId?: string;
+    positionId?: string;
+    orderId?: string;
+    hasStopLoss: boolean;
+    hasTakeProfit: boolean;
+    stopLossToolId?: string;
+    takeProfitToolId?: string;
+};
+
+type LiveTradeHtmlDragSession = {
+    toolId: string;
+};
+
+function formatLiveTradeTitle(lots: number, text: string): string {
+    const normalizedLots = Number.isFinite(lots) && lots > 0 ? lots.toFixed(2) : "0.00";
+    return `${normalizedLots} ${text}`;
+}
+
+function formatLiveTradeLotsLabel(lots: number): string {
+    if (!Number.isFinite(lots) || lots <= 0) return "0.00";
+    return lots.toLocaleString(undefined, {
+        minimumFractionDigits: lots >= 10 ? 0 : 2,
+        maximumFractionDigits: 2,
+    });
+}
+
+function formatLiveOrderLabel(direction: string, orderType: string): string {
+    const normalizedType = String(orderType ?? "").trim().toUpperCase();
+    const shortType = normalizedType.includes("LIMIT")
+        ? "Limit"
+        : normalizedType.includes("STOP")
+            ? "Stop"
+            : orderType;
+    return `${direction} ${shortType}`.trim();
+}
 
 function buildTradeOverlay(
     trade: Trade,
@@ -510,6 +634,34 @@ export interface TradeCandlestickChartProps {
     onReplayPlacementPreviewChange?: (timestamp: number | null) => void;
     /** Notify parent when replay placement is selected via chart click */
     onReplayPlacementSelect?: (timestamp: number) => void;
+    /** Active live positions rendered as chart-managed long/short tools */
+    activeLivePositions?: ActiveLivePosition[];
+    /** Called when a live position's SL/TP is dragged on chart */
+    onActiveLivePositionChange?: (positionId: string, stopLoss?: number, takeProfit?: number) => void;
+    /** Called when a live position should be closed from the chart overlay */
+    onActiveLivePositionClose?: (positionId: string) => void;
+    /** Active live pending orders rendered as draggable chart lines */
+    activeLiveOrders?: ActiveLiveOrder[];
+    /** Called when a live pending order line is dragged on chart */
+    onActiveLiveOrderChange?: (
+        orderId: string,
+        patch: {
+            limitPrice?: number;
+            stopPrice?: number;
+            stopLoss?: number;
+            takeProfit?: number;
+        }
+    ) => void;
+    /** Called when a live pending order should be cancelled from the chart overlay */
+    onActiveLiveOrderCancel?: (orderId: string) => void;
+    /** Optional live bid price line */
+    liveBidPrice?: number | null;
+    /** Optional live ask price line */
+    liveAskPrice?: number | null;
+    /** When true, show a live candle countdown overlay */
+    showCandleCountdown?: boolean;
+    /** Start timestamp for the currently forming candle */
+    candleCountdownAnchorTimestamp?: number | null;
 }
 
 function sameReplayPlacementOverlay(
@@ -528,6 +680,54 @@ function sameReplayPlacementOverlay(
         left.x === right.x ||
         (left.x != null && right.x != null && Math.abs(left.x - right.x) <= 0.5);
     return left.width === right.width && left.height === right.height && xMatches;
+}
+
+function sameCandleCountdownOverlay(
+    left: {
+        top: number | null;
+        right: number | null;
+    },
+    right: {
+        top: number | null;
+        right: number | null;
+    }
+): boolean {
+    const topMatches =
+        left.top === right.top ||
+        (left.top != null && right.top != null && Math.abs(left.top - right.top) <= 0.5);
+    return topMatches && left.right === right.right;
+}
+
+function sameLiveTradeOverlayItems(left: LiveTradeOverlayItem[], right: LiveTradeOverlayItem[]): boolean {
+    if (left.length !== right.length) return false;
+
+    for (let index = 0; index < left.length; index += 1) {
+        const previous = left[index];
+        const next = right[index];
+        if (
+            previous.id !== next.id ||
+            previous.kind !== next.kind ||
+            previous.label !== next.label ||
+            previous.lotsLabel !== next.lotsLabel ||
+            previous.entryToolId !== next.entryToolId ||
+            previous.positionId !== next.positionId ||
+            previous.orderId !== next.orderId ||
+            previous.hasStopLoss !== next.hasStopLoss ||
+            previous.hasTakeProfit !== next.hasTakeProfit ||
+            previous.stopLossToolId !== next.stopLossToolId ||
+            previous.takeProfitToolId !== next.takeProfitToolId
+        ) {
+            return false;
+        }
+
+        const xMatches = previous.x === next.x || Math.abs(previous.x - next.x) <= 0.5;
+        const yMatches = previous.y === next.y || Math.abs(previous.y - next.y) <= 0.5;
+        if (!xMatches || !yMatches) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 export interface TradeCandlestickChartRef {
@@ -601,6 +801,16 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     replayPlacementTimestamp = null,
     onReplayPlacementPreviewChange,
     onReplayPlacementSelect,
+    activeLivePositions = [],
+    onActiveLivePositionChange,
+    onActiveLivePositionClose,
+    activeLiveOrders = [],
+    onActiveLiveOrderChange,
+    onActiveLiveOrderCancel,
+    liveBidPrice = null,
+    liveAskPrice = null,
+    showCandleCountdown = false,
+    candleCountdownAnchorTimestamp = null,
 }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -608,9 +818,13 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const entryLineRef = useRef<IPriceLine | null>(null);
     const stopLossLineRef = useRef<IPriceLine | null>(null);
     const exitLineRef = useRef<IPriceLine | null>(null);
+    const liveBidLineRef = useRef<IPriceLine | null>(null);
+    const liveAskLineRef = useRef<IPriceLine | null>(null);
+    const liveTradePriceLinesRef = useRef<Map<string, IPriceLine>>(new Map());
     const priceScaleUnlockFrameRef = useRef<number | null>(null);
     const [isChartReady, setIsChartReady] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
+    const [countdownNow, setCountdownNow] = useState(() => Date.now());
     const [timeGuideOverlay, setTimeGuideOverlay] = useState<{
         width: number | null;
         height: number | null;
@@ -629,6 +843,16 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         height: null,
         x: null,
     });
+    const [candleCountdownOverlay, setCandleCountdownOverlay] = useState<{
+        top: number | null;
+        right: number | null;
+    }>({
+        top: null,
+        right: null,
+    });
+    const [liveTradeOverlayItems, setLiveTradeOverlayItems] = useState<LiveTradeOverlayItem[]>([]);
+    const [liveTradePreviewPrices, setLiveTradePreviewPrices] = useState<Record<string, number>>({});
+    const [liveTradeDragSession, setLiveTradeDragSession] = useState<LiveTradeHtmlDragSession | null>(null);
     const [selectionBox, setSelectionBox] = useState<SelectionBoxBounds | null>(null);
     const onVisibleRangeChangeRef = useRef<typeof onVisibleRangeChange>(onVisibleRangeChange);
     const onDrawingSelectionChangeRef = useRef<typeof onDrawingSelectionChange>(onDrawingSelectionChange);
@@ -686,6 +910,13 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         active: boolean;
     } | null>(null);
     const getDrawingIdsWithinSelectionBoxRef = useRef<(box: SelectionBoxBounds) => string[]>(() => []);
+    const liveTradeLineMetaRef = useRef<Map<string, LiveTradeLineMeta>>(new Map());
+    const liveTradeLineSpecsRef = useRef<Map<string, LiveTradeLineSpec>>(new Map());
+    const liveTradeAmendTimersRef = useRef<Map<string, number>>(new Map());
+    const onActiveLivePositionChangeRef = useRef<typeof onActiveLivePositionChange>(onActiveLivePositionChange);
+    const onActiveLivePositionCloseRef = useRef<typeof onActiveLivePositionClose>(onActiveLivePositionClose);
+    const onActiveLiveOrderChangeRef = useRef<typeof onActiveLiveOrderChange>(onActiveLiveOrderChange);
+    const onActiveLiveOrderCancelRef = useRef<typeof onActiveLiveOrderCancel>(onActiveLiveOrderCancel);
     const priceFormat = useMemo(
         () => buildSeriesPriceFormat(longShortSymbol ?? trade?.symbol, data),
         [data, longShortSymbol, trade?.symbol]
@@ -761,10 +992,94 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         replayPlacementTimestampRef.current = replayPlacementTimestamp;
     }, [replayPlacementTimestamp]);
 
+    useEffect(() => {
+        if (!showCandleCountdown || candleCountdownAnchorTimestamp == null) {
+            return;
+        }
+
+        setCountdownNow(Date.now());
+
+        const updateCountdown = () => {
+            setCountdownNow(Date.now());
+        };
+
+        const alignDelay = 1000 - (Date.now() % 1000);
+        let intervalId: number | null = null;
+        const timeoutId = window.setTimeout(() => {
+            updateCountdown();
+            intervalId = window.setInterval(updateCountdown, 1000);
+        }, alignDelay);
+
+        return () => {
+            window.clearTimeout(timeoutId);
+            if (intervalId != null) {
+                window.clearInterval(intervalId);
+            }
+        };
+    }, [candleCountdownAnchorTimestamp, showCandleCountdown]);
+
     const computedTimeGuides = useMemo(
         () => buildTimeGuides(data, timeframe, timeGuides),
         [data, timeframe, timeGuides]
     );
+
+    const candleCountdownLabel = useMemo(() => {
+        if (!showCandleCountdown || candleCountdownAnchorTimestamp == null || !timeframe) {
+            return null;
+        }
+
+        const timeframeSeconds = timeframeToSeconds(timeframe);
+        if (!Number.isFinite(timeframeSeconds) || timeframeSeconds <= 0) {
+            return null;
+        }
+
+        const candleEnd = candleCountdownAnchorTimestamp + timeframeSeconds * 1000;
+        const remainingMs = candleEnd - countdownNow;
+        if (remainingMs <= 0) {
+            return "00:00";
+        }
+
+        return formatCandleCountdown(remainingMs);
+    }, [candleCountdownAnchorTimestamp, countdownNow, showCandleCountdown, timeframe]);
+
+    const candleCountdownPrice = useMemo(() => {
+        if (!showCandleCountdown) {
+            return null;
+        }
+
+        if (liveBidPrice != null && Number.isFinite(liveBidPrice)) {
+            return liveBidPrice;
+        }
+
+        const lastBar = data[data.length - 1];
+        if (lastBar && Number.isFinite(lastBar.close)) {
+            return lastBar.close;
+        }
+
+        return null;
+    }, [data, liveBidPrice, showCandleCountdown]);
+
+    const candleCountdownLabelWidth = useMemo(() => {
+        if (candleCountdownPrice == null) {
+            return 44;
+        }
+
+        const formattedPrice = formatPriceScaleLabel(candleCountdownPrice, priceFormat.precision);
+        return Math.max(38, formattedPrice.length * 6.8 + 8);
+    }, [candleCountdownPrice, priceFormat.precision]);
+
+    const candleCountdownPriceLabel = useMemo(() => {
+        if (candleCountdownPrice == null) {
+            return null;
+        }
+
+        return formatPriceScaleLabel(candleCountdownPrice, priceFormat.precision);
+    }, [candleCountdownPrice, priceFormat.precision]);
+
+    const useCustomLivePriceStack =
+        showCandleCountdown &&
+        candleCountdownLabel != null &&
+        candleCountdownPriceLabel != null;
 
     const refreshTimeGuideOverlay = useCallback(() => {
         const chart = chartRef.current;
@@ -817,6 +1132,312 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         );
     }, [clipTimeGuideOverlayToPane, computedTimeGuides]);
 
+    const refreshCandleCountdownOverlay = useCallback(() => {
+        if (!useCustomLivePriceStack || candleCountdownPrice == null) {
+            setCandleCountdownOverlay((current) =>
+                current.top === null && current.right === null
+                    ? current
+                    : { top: null, right: null }
+            );
+            return;
+        }
+
+        const chart = chartRef.current;
+        const series = seriesRef.current;
+        if (!chart || !series) {
+            setCandleCountdownOverlay((current) =>
+                current.top === null && current.right === null
+                    ? current
+                    : { top: null, right: null }
+            );
+            return;
+        }
+
+        const paneSize = chart.paneSize();
+        const y = series.priceToCoordinate(candleCountdownPrice);
+        if (
+            y == null ||
+            !Number.isFinite(y) ||
+            y < 0 ||
+            y > paneSize.height
+        ) {
+            setCandleCountdownOverlay((current) =>
+                current.top === null && current.right === null
+                    ? current
+                    : { top: null, right: null }
+            );
+            return;
+        }
+
+        const totalHeight = 24;
+        const top = Math.max(0, Math.min(y - 7, Math.max(0, paneSize.height - totalHeight)));
+        const nextOverlay = {
+            top,
+            right: 0,
+        };
+
+        setCandleCountdownOverlay((current) =>
+            sameCandleCountdownOverlay(current, nextOverlay) ? current : nextOverlay
+        );
+    }, [candleCountdownPrice, useCustomLivePriceStack]);
+
+    const refreshLiveTradeOverlay = useCallback(() => {
+        const chart = chartRef.current;
+        const series = seriesRef.current;
+        if (!chart || !series) {
+            setLiveTradeOverlayItems((current) => (current.length === 0 ? current : []));
+            return;
+        }
+
+        const paneSize = chart.paneSize();
+        const timeScale = chart.timeScale();
+        const rowWidth = 210;
+        const clampX = (value: number) =>
+            Math.max(6, Math.min(value, Math.max(6, paneSize.width - rowWidth - 6)));
+
+        const nextItems: LiveTradeOverlayItem[] = [];
+        const lastBarTimestamp = dataRef.current[dataRef.current.length - 1]?.timestamp ?? Date.now();
+
+        for (const position of activeLivePositions) {
+            if (!Number.isFinite(position.entryPrice)) continue;
+            const y = series.priceToCoordinate(position.entryPrice as number);
+            if (y == null || !Number.isFinite(y) || y < 0 || y > paneSize.height) continue;
+
+            const anchorTimestamp = position.openTimestamp ?? lastBarTimestamp;
+            const rawX = timeScale.timeToCoordinate(drawingTimestampToChartTime(anchorTimestamp));
+            nextItems.push({
+                id: `position:${position.positionId}`,
+                kind: "position",
+                x: clampX((rawX ?? 16) + 12),
+                y,
+                lotsLabel: formatLiveTradeLotsLabel(position.lots),
+                label: position.direction,
+                positionId: position.positionId,
+                hasStopLoss: Number.isFinite(position.stopLoss),
+                hasTakeProfit: Number.isFinite(position.takeProfit),
+                stopLossToolId: `${LIVE_TRADE_TOOL_ID_PREFIX}position-sl:${position.positionId}`,
+                takeProfitToolId: `${LIVE_TRADE_TOOL_ID_PREFIX}position-tp:${position.positionId}`,
+            });
+        }
+
+        for (const order of activeLiveOrders) {
+            const primaryPrice = String(order.orderType).toUpperCase().includes("LIMIT")
+                ? order.limitPrice
+                : order.stopPrice;
+            if (!Number.isFinite(primaryPrice)) continue;
+
+            const toolId = `${LIVE_TRADE_TOOL_ID_PREFIX}order-entry:${order.orderId}`;
+            const displayPrice = liveTradePreviewPrices[toolId] ?? (primaryPrice as number);
+            const y = series.priceToCoordinate(displayPrice);
+            if (y == null || !Number.isFinite(y) || y < 0 || y > paneSize.height) continue;
+
+            const anchorTimestamp = order.createdAt ?? lastBarTimestamp;
+            const rawX = timeScale.timeToCoordinate(drawingTimestampToChartTime(anchorTimestamp));
+            nextItems.push({
+                id: `order:${order.orderId}`,
+                kind: "order",
+                x: clampX((rawX ?? 16) + 12),
+                y,
+                lotsLabel: formatLiveTradeLotsLabel(order.lots),
+                label: formatLiveOrderLabel(order.direction, order.orderType),
+                orderId: order.orderId,
+                entryToolId: toolId,
+                hasStopLoss: Number.isFinite(order.stopLoss),
+                hasTakeProfit: Number.isFinite(order.takeProfit),
+                stopLossToolId: `${LIVE_TRADE_TOOL_ID_PREFIX}order-sl:${order.orderId}`,
+                takeProfitToolId: `${LIVE_TRADE_TOOL_ID_PREFIX}order-tp:${order.orderId}`,
+            });
+        }
+
+        nextItems.sort((left, right) => left.y - right.y || left.x - right.x);
+        setLiveTradeOverlayItems((current) =>
+            sameLiveTradeOverlayItems(current, nextItems) ? current : nextItems
+        );
+    }, [activeLiveOrders, activeLivePositions, liveTradePreviewPrices]);
+
+    const resolveLiveTradePreviewDescriptor = useCallback((
+        toolId: string,
+        fallbackPrice?: number
+    ): { meta: LiveTradeLineMeta; spec: LiveTradeLineSpec } | null => {
+        const existingMeta = liveTradeLineMetaRef.current.get(toolId);
+        const existingSpec = liveTradeLineSpecsRef.current.get(toolId);
+        if (existingMeta && existingSpec) {
+            return {
+                meta: existingMeta,
+                spec: {
+                    ...existingSpec,
+                    price: typeof fallbackPrice === "number" ? fallbackPrice : existingSpec.price,
+                },
+            };
+        }
+
+        const parsed = toolId.match(/^live-trade:(position|order)-(entry|sl|tp):(.+)$/);
+        if (!parsed) return null;
+
+        const [, scope, segment, id] = parsed;
+        if (scope === "position") {
+            const position = activeLivePositions.find((candidate) => candidate.positionId === id);
+            if (!position || !Number.isFinite(position.entryPrice)) return null;
+
+            if (segment === "sl") {
+                const price =
+                    typeof fallbackPrice === "number"
+                        ? fallbackPrice
+                        : position.stopLoss ?? position.entryPrice ?? NaN;
+                if (!Number.isFinite(price)) return null;
+                return {
+                    meta: { kind: "position-stopLoss", positionId: id },
+                    spec: {
+                        id: toolId,
+                        price,
+                        title: "SL",
+                        color: "rgba(245, 158, 11, 0.95)",
+                        lineStyle: LineStyle.Dotted,
+                        editable: true,
+                        toolMeta: { kind: "position-stopLoss", positionId: id },
+                    },
+                };
+            }
+
+            if (segment === "tp") {
+                const price =
+                    typeof fallbackPrice === "number"
+                        ? fallbackPrice
+                        : position.takeProfit ?? position.entryPrice ?? NaN;
+                if (!Number.isFinite(price)) return null;
+                return {
+                    meta: { kind: "position-takeProfit", positionId: id },
+                    spec: {
+                        id: toolId,
+                        price,
+                        title: "TP",
+                        color: "rgba(16, 185, 129, 0.95)",
+                        lineStyle: LineStyle.Dotted,
+                        editable: true,
+                        toolMeta: { kind: "position-takeProfit", positionId: id },
+                    },
+                };
+            }
+
+            return null;
+        }
+
+        const order = activeLiveOrders.find((candidate) => candidate.orderId === id);
+        if (!order) return null;
+
+        if (segment === "entry") {
+            const isLimit = String(order.orderType).toUpperCase().includes("LIMIT");
+            const basePrice = isLimit ? order.limitPrice : order.stopPrice;
+            if (!Number.isFinite(basePrice) && !Number.isFinite(fallbackPrice)) return null;
+            const price = typeof fallbackPrice === "number" ? fallbackPrice : basePrice ?? NaN;
+            if (!Number.isFinite(price)) return null;
+            return {
+                meta: { kind: "order-entry", orderId: id, orderType: order.orderType },
+                spec: {
+                    id: toolId,
+                    price,
+                    title: formatLiveTradeTitle(order.lots, formatLiveOrderLabel(order.direction, order.orderType)),
+                    color: isLimit ? "rgba(59, 130, 246, 0.95)" : "rgba(168, 85, 247, 0.95)",
+                    lineStyle: LineStyle.Solid,
+                    editable: true,
+                    toolMeta: { kind: "order-entry", orderId: id, orderType: order.orderType },
+                },
+            };
+        }
+
+        if (segment === "sl") {
+            const anchorPrice = order.stopLoss ?? order.limitPrice ?? order.stopPrice;
+            if (!Number.isFinite(anchorPrice) && !Number.isFinite(fallbackPrice)) return null;
+            const price = typeof fallbackPrice === "number" ? fallbackPrice : anchorPrice ?? NaN;
+            if (!Number.isFinite(price)) return null;
+            return {
+                meta: { kind: "order-stopLoss", orderId: id, orderType: order.orderType },
+                spec: {
+                    id: toolId,
+                    price,
+                    title: "SL",
+                    color: "rgba(245, 158, 11, 0.95)",
+                    lineStyle: LineStyle.Dotted,
+                    editable: true,
+                    toolMeta: { kind: "order-stopLoss", orderId: id, orderType: order.orderType },
+                },
+            };
+        }
+
+        if (segment === "tp") {
+            const anchorPrice = order.takeProfit ?? order.limitPrice ?? order.stopPrice;
+            if (!Number.isFinite(anchorPrice) && !Number.isFinite(fallbackPrice)) return null;
+            const price = typeof fallbackPrice === "number" ? fallbackPrice : anchorPrice ?? NaN;
+            if (!Number.isFinite(price)) return null;
+            return {
+                meta: { kind: "order-takeProfit", orderId: id, orderType: order.orderType },
+                spec: {
+                    id: toolId,
+                    price,
+                    title: "TP",
+                    color: "rgba(16, 185, 129, 0.95)",
+                    lineStyle: LineStyle.Dotted,
+                    editable: true,
+                    toolMeta: { kind: "order-takeProfit", orderId: id, orderType: order.orderType },
+                },
+            };
+        }
+
+        return null;
+    }, [activeLiveOrders, activeLivePositions]);
+
+    const applyLiveTradePreviewPrice = useCallback((toolId: string, nextPrice: number) => {
+        if (!Number.isFinite(nextPrice)) return;
+
+        const descriptor = resolveLiveTradePreviewDescriptor(toolId, nextPrice);
+        if (!descriptor) return;
+
+        setLiveTradePreviewPrices((current) => {
+            if (current[toolId] != null && Math.abs(current[toolId] - nextPrice) <= 0.0000001) {
+                return current;
+            }
+            return {
+                ...current,
+                [toolId]: nextPrice,
+            };
+        });
+
+        liveTradeLineMetaRef.current.set(toolId, descriptor.meta);
+        liveTradeLineSpecsRef.current.set(toolId, descriptor.spec);
+
+        const lineTools = lineToolsRef.current;
+        const latestBarTimestamp = dataRef.current[dataRef.current.length - 1]?.timestamp ?? Date.now();
+        if (lineTools) {
+            lineTools.createOrUpdateLineTool(
+                "HorizontalRay",
+                [{ timestamp: latestBarTimestamp, price: nextPrice }],
+                {
+                    showPriceAxisLabels: false,
+                    showTimeAxisLabels: false,
+                    line: { color: descriptor.spec.color },
+                } as Parameters<LineToolsApi["createOrUpdateLineTool"]>[2],
+                descriptor.spec.id
+            );
+        }
+
+        const existingPriceLine = liveTradePriceLinesRef.current.get(toolId);
+        if (existingPriceLine) {
+            existingPriceLine.applyOptions?.({ price: nextPrice });
+        } else if (seriesRef.current) {
+            const nextPriceLine = seriesRef.current.createPriceLine({
+                price: nextPrice,
+                color: descriptor.spec.color,
+                lineWidth: 1,
+                lineStyle: descriptor.spec.lineStyle,
+                axisLabelVisible: true,
+                title: descriptor.spec.editable ? "" : descriptor.spec.title,
+                lineVisible: !descriptor.spec.editable,
+            });
+            liveTradePriceLinesRef.current.set(toolId, nextPriceLine);
+        }
+        scheduleTimeGuideOverlayRefreshRef.current();
+    }, [resolveLiveTradePreviewDescriptor]);
+
     const scheduleTimeGuideOverlayRefresh = useCallback(() => {
         if (overlayFrameRef.current != null) {
             cancelAnimationFrame(overlayFrameRef.current);
@@ -824,8 +1445,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         overlayFrameRef.current = requestAnimationFrame(() => {
             overlayFrameRef.current = null;
             refreshTimeGuideOverlay();
+            refreshCandleCountdownOverlay();
+            refreshLiveTradeOverlay();
         });
-    }, [refreshTimeGuideOverlay]);
+    }, [refreshCandleCountdownOverlay, refreshLiveTradeOverlay, refreshTimeGuideOverlay]);
 
     useEffect(() => {
         scheduleTimeGuideOverlayRefreshRef.current = scheduleTimeGuideOverlayRefresh;
@@ -872,13 +1495,130 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             overlayFrameRef.current = null;
             refreshTimeGuideOverlay();
             refreshReplayPlacementOverlay();
+            refreshCandleCountdownOverlay();
+            refreshLiveTradeOverlay();
         });
-    }, [refreshReplayPlacementOverlay, refreshTimeGuideOverlay]);
+    }, [refreshCandleCountdownOverlay, refreshLiveTradeOverlay, refreshReplayPlacementOverlay, refreshTimeGuideOverlay]);
 
     useEffect(() => {
         scheduleReplayPlacementOverlayRefreshRef.current = scheduleReplayPlacementOverlayRefresh;
         scheduleTimeGuideOverlayRefreshRef.current = scheduleReplayPlacementOverlayRefresh;
     }, [scheduleReplayPlacementOverlayRefresh]);
+
+    useEffect(() => {
+        if (!isChartReady) {
+            setLiveTradeOverlayItems([]);
+            return;
+        }
+        scheduleTimeGuideOverlayRefresh();
+    }, [
+        activeLiveOrders,
+        activeLivePositions,
+        isChartReady,
+        liveTradePreviewPrices,
+        scheduleTimeGuideOverlayRefresh,
+    ]);
+
+    useEffect(() => {
+        if (!liveTradeDragSession) return;
+
+        const handlePointerMove = (event: PointerEvent) => {
+            const container = containerRef.current;
+            const series = seriesRef.current;
+            if (!container || !series) return;
+
+            const rect = container.getBoundingClientRect();
+            const y = Math.max(0, Math.min(event.clientY - rect.top, rect.height));
+            const mappedPrice = series.coordinateToPrice(y);
+            const nextPrice =
+                typeof mappedPrice === "number" ? mappedPrice : Number(mappedPrice);
+            if (!Number.isFinite(nextPrice)) return;
+
+            applyLiveTradePreviewPrice(liveTradeDragSession.toolId, nextPrice);
+        };
+
+        const finishDrag = () => {
+            const { toolId } = liveTradeDragSession;
+            const previewPrice = liveTradePreviewPrices[toolId];
+            setLiveTradeDragSession(null);
+
+            const clearPreview = () => {
+                setLiveTradePreviewPrices((current) => {
+                    if (!(toolId in current)) return current;
+                    const next = { ...current };
+                    delete next[toolId];
+                    return next;
+                });
+            };
+
+            if (!Number.isFinite(previewPrice)) {
+                clearPreview();
+                return;
+            }
+
+            const liveMeta = liveTradeLineMetaRef.current.get(toolId);
+            if (!liveMeta) {
+                clearPreview();
+                return;
+            }
+
+            void (async () => {
+                try {
+                    if (liveMeta.kind === "position-stopLoss") {
+                        await onActiveLivePositionChangeRef.current?.(
+                            liveMeta.positionId,
+                            previewPrice,
+                            undefined
+                        );
+                        return;
+                    }
+
+                    if (liveMeta.kind === "position-takeProfit") {
+                        await onActiveLivePositionChangeRef.current?.(
+                            liveMeta.positionId,
+                            undefined,
+                            previewPrice
+                        );
+                        return;
+                    }
+
+                    if (liveMeta.kind === "order-entry") {
+                        await onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
+                            ...(String(liveMeta.orderType).toUpperCase().includes("LIMIT")
+                                ? { limitPrice: previewPrice }
+                                : { stopPrice: previewPrice }),
+                        });
+                        return;
+                    }
+
+                    if (liveMeta.kind === "order-stopLoss") {
+                        await onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
+                            stopLoss: previewPrice,
+                        });
+                        return;
+                    }
+
+                    if (liveMeta.kind === "order-takeProfit") {
+                        await onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
+                            takeProfit: previewPrice,
+                        });
+                    }
+                } finally {
+                    clearPreview();
+                }
+            })();
+        };
+
+        window.addEventListener("pointermove", handlePointerMove);
+        window.addEventListener("pointerup", finishDrag, { once: true });
+        window.addEventListener("pointercancel", finishDrag, { once: true });
+
+        return () => {
+            window.removeEventListener("pointermove", handlePointerMove);
+            window.removeEventListener("pointerup", finishDrag);
+            window.removeEventListener("pointercancel", finishDrag);
+        };
+    }, [applyLiveTradePreviewPrice, liveTradeDragSession, liveTradePreviewPrices]);
 
     const formatMoney = (value: number) => {
         const sign = value >= 0 ? "+" : "-";
@@ -891,11 +1631,16 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         return `${sign}${rounded}p`;
     };
 
-    const updateLongShortText = useCallback((tool: { id: string; points: Array<{ price: number }> }) => {
+    const updateLongShortText = useCallback((tool: {
+        id: string;
+        points: Array<{ price: number }>;
+        lots?: number;
+        symbol?: string;
+    }) => {
         const lineTools = lineToolsRef.current;
         if (!lineTools) return;
-        const symbol = longShortSymbolRef.current ?? "";
-        const lots = longShortLotsRef.current;
+        const symbol = tool.symbol ?? longShortSymbolRef.current ?? "";
+        const lots = tool.lots ?? longShortLotsRef.current;
         if (!symbol || !Number.isFinite(lots) || lots <= 0) return;
         const entry = tool.points?.[0]?.price;
         const stop = tool.points?.[1]?.price;
@@ -968,6 +1713,28 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     }, [onDrawingSelectionChange]);
 
     useEffect(() => {
+        if (!isChartReady) return;
+        scheduleTimeGuideOverlayRefreshRef.current();
+    }, [candleCountdownLabel, candleCountdownPrice, data.length, isChartReady]);
+
+    useEffect(() => {
+        if (!isChartReady || !showCandleCountdown) return;
+
+        let frameId = 0;
+
+        const syncOverlay = () => {
+            refreshCandleCountdownOverlay();
+            frameId = window.requestAnimationFrame(syncOverlay);
+        };
+
+        frameId = window.requestAnimationFrame(syncOverlay);
+
+        return () => {
+            window.cancelAnimationFrame(frameId);
+        };
+    }, [isChartReady, refreshCandleCountdownOverlay, showCandleCountdown]);
+
+    useEffect(() => {
         onDrawingToolCompleteRef.current = onDrawingToolComplete;
     }, [onDrawingToolComplete]);
 
@@ -983,7 +1750,43 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         onCalloutEditRequestRef.current = onCalloutEditRequest;
     }, [onCalloutEditRequest]);
 
+    useEffect(() => {
+        onActiveLivePositionChangeRef.current = onActiveLivePositionChange;
+    }, [onActiveLivePositionChange]);
+
+    useEffect(() => {
+        onActiveLivePositionCloseRef.current = onActiveLivePositionClose;
+    }, [onActiveLivePositionClose]);
+
+    useEffect(() => {
+        onActiveLiveOrderChangeRef.current = onActiveLiveOrderChange;
+    }, [onActiveLiveOrderChange]);
+
+    useEffect(() => {
+        onActiveLiveOrderCancelRef.current = onActiveLiveOrderCancel;
+    }, [onActiveLiveOrderCancel]);
+
     const getLineToolsInternal = useCallback(() => lineToolsRef.current as LineToolsInternalApi | null, []);
+
+    const removeLineToolsByIdSafely = useCallback((ids: string[]) => {
+        if (ids.length === 0) return;
+
+        const lineTools = getLineToolsInternal();
+        if (!lineTools) return;
+
+        const toolsMap = lineTools._tools;
+        const removableIds =
+            toolsMap && toolsMap.size > 0
+                ? ids.filter((id) => toolsMap.has(id))
+                : ids;
+        if (removableIds.length === 0) return;
+
+        try {
+            lineTools.removeLineToolsById(removableIds);
+        } catch {
+            // The line tool plugin can race with chart detach/close; treat stale removals as no-op.
+        }
+    }, [getLineToolsInternal]);
 
     const buildDrawingToolOptions = useCallback(
         (toolType: DrawingToolType | null): Parameters<LineToolsApi["addLineTool"]>[2] | undefined => {
@@ -1065,13 +1868,13 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const currentToolId = interactionManager?._currentToolCreating?.id();
 
         if (currentToolId) {
-            lineTools?.removeLineToolsById([currentToolId]);
+            removeLineToolsByIdSafely([currentToolId]);
         }
 
         interactionManager?.setCurrentToolCreating?.(null);
         interactionManager?.deselectAllTools?.();
         lineTools?.requestUpdate?.();
-    }, [getLineToolsInternal]);
+    }, [getLineToolsInternal, removeLineToolsByIdSafely]);
 
     const parseDrawingToolExports = useCallback((raw: string | null | undefined): DrawingToolExport[] => {
         if (!raw) return [];
@@ -1112,7 +1915,9 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const exportCurrentDrawings = useCallback((): DrawingToolExport[] => {
         if (!lineToolsRef.current) return [];
 
-        const exported = parseDrawingToolExports(lineToolsRef.current.exportLineTools?.());
+        const exported = parseDrawingToolExports(lineToolsRef.current.exportLineTools?.()).filter(
+            (tool) => !isLiveTradeToolId(tool.id)
+        );
         if (exported.length > 0) {
             return exported;
         }
@@ -1124,7 +1929,12 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         for (const tool of toolsMap.values()) {
             try {
                 const exp = tool.getExportData();
-                if (exp && isDrawingToolType(exp.toolType) && exp.points?.length > 0) {
+                if (
+                    exp &&
+                    !isLiveTradeToolId(exp.id) &&
+                    isDrawingToolType(exp.toolType) &&
+                    exp.points?.length > 0
+                ) {
                     fallbackExports.push(exp);
                 }
             } catch {
@@ -1365,13 +2175,16 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 }
 
                 if (isDrawingToolType(exportData.toolType) && !incomingIds.has(tool.id())) {
+                    if (isLiveTradeToolId(tool.id())) {
+                        continue;
+                    }
                     staleIds.push(tool.id());
                 }
             }
         }
 
         if (staleIds.length > 0) {
-            lineTools.removeLineToolsById(staleIds);
+            removeLineToolsByIdSafely(staleIds);
         }
 
         if (normalizedDrawings.length > 0) {
@@ -1379,7 +2192,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         }
 
         updateDrawingSelection();
-    }, [getLineToolsInternal, normalizeDrawingForCurrentData, updateDrawingSelection]);
+    }, [getLineToolsInternal, normalizeDrawingForCurrentData, removeLineToolsByIdSafely, updateDrawingSelection]);
 
     const syncSelectionByIds = useCallback((ids: string[], primaryId?: string | null) => {
         const lineTools = getLineToolsInternal();
@@ -1627,6 +2440,40 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         }
 
         return nextBars[nextBars.length - 1].timestamp > previousBars[previousBars.length - 1].timestamp;
+    }, []);
+
+    const isLastBarMutationUpdate = useCallback((previousBars: ChartBar[], nextBars: ChartBar[]) => {
+        if (previousBars.length === 0 || nextBars.length !== previousBars.length) {
+            return false;
+        }
+
+        const lastIndex = previousBars.length - 1;
+        for (let index = 0; index < lastIndex; index += 1) {
+            const previousBar = previousBars[index];
+            const nextBar = nextBars[index];
+            if (
+                previousBar.timestamp !== nextBar.timestamp ||
+                previousBar.open !== nextBar.open ||
+                previousBar.high !== nextBar.high ||
+                previousBar.low !== nextBar.low ||
+                previousBar.close !== nextBar.close
+            ) {
+                return false;
+            }
+        }
+
+        const previousLastBar = previousBars[lastIndex];
+        const nextLastBar = nextBars[lastIndex];
+        if (previousLastBar.timestamp !== nextLastBar.timestamp) {
+            return false;
+        }
+
+        return (
+            previousLastBar.open !== nextLastBar.open ||
+            previousLastBar.high !== nextLastBar.high ||
+            previousLastBar.low !== nextLastBar.low ||
+            previousLastBar.close !== nextLastBar.close
+        );
     }, []);
 
     const getPrependedBarCount = useCallback((previousBars: ChartBar[], nextBars: ChartBar[]) => {
@@ -1920,10 +2767,71 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }
 
             if (toolType === "LongShortPosition" && params.selectedLineTool?.points) {
+                const liveMeta = liveTradeLineMetaRef.current.get(params.selectedLineTool.id);
                 updateLongShortText({
                     id: params.selectedLineTool.id,
                     points: params.selectedLineTool.points as Array<{ price: number }>,
                 });
+            }
+
+            if (toolType === "HorizontalRay" && params.selectedLineTool?.points) {
+                const liveMeta = liveTradeLineMetaRef.current.get(params.selectedLineTool.id);
+                if (liveMeta) {
+                    const toolId = params.selectedLineTool.id;
+                    const pendingTimer = liveTradeAmendTimersRef.current.get(toolId);
+                    if (pendingTimer != null) {
+                        window.clearTimeout(pendingTimer);
+                    }
+
+                    const nextTimer = window.setTimeout(() => {
+                        liveTradeAmendTimersRef.current.delete(toolId);
+                        const latestTool = readDrawingToolById(toolId);
+                        const nextPrice = latestTool?.points?.[0]?.price;
+                        if (!Number.isFinite(nextPrice)) return;
+
+                        if (liveMeta.kind === "position-stopLoss") {
+                            void onActiveLivePositionChangeRef.current?.(
+                                liveMeta.positionId,
+                                nextPrice,
+                                undefined
+                            );
+                            return;
+                        }
+
+                        if (liveMeta.kind === "position-takeProfit") {
+                            void onActiveLivePositionChangeRef.current?.(
+                                liveMeta.positionId,
+                                undefined,
+                                nextPrice
+                            );
+                            return;
+                        }
+
+                        if (liveMeta.kind === "order-entry") {
+                            void onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
+                                ...(String(liveMeta.orderType).toUpperCase().includes("LIMIT")
+                                    ? { limitPrice: nextPrice }
+                                    : { stopPrice: nextPrice }),
+                            });
+                            return;
+                        }
+
+                        if (liveMeta.kind === "order-stopLoss") {
+                            void onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
+                                stopLoss: nextPrice,
+                            });
+                            return;
+                        }
+
+                        if (liveMeta.kind === "order-takeProfit") {
+                            void onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
+                                takeProfit: nextPrice,
+                            });
+                        }
+                    }, 180);
+
+                    liveTradeAmendTimersRef.current.set(toolId, nextTimer);
+                }
             }
 
             if (isFinishedStage) {
@@ -2286,6 +3194,21 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 cancelAnimationFrame(priceScaleUnlockFrameRef.current);
                 priceScaleUnlockFrameRef.current = null;
             }
+            for (const timerId of liveTradeAmendTimersRef.current.values()) {
+                window.clearTimeout(timerId);
+            }
+            liveTradeAmendTimersRef.current.clear();
+            liveTradeLineMetaRef.current.clear();
+            if (seriesRef.current) {
+                for (const priceLine of liveTradePriceLinesRef.current.values()) {
+                    try {
+                        seriesRef.current.removePriceLine(priceLine);
+                    } catch {
+                        // ignore
+                    }
+                }
+            }
+            liveTradePriceLinesRef.current.clear();
             resizeObserver?.disconnect();
             chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRange);
             entryLineRef.current = null;
@@ -2317,6 +3240,217 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         if (!seriesRef.current) return;
         seriesRef.current.applyOptions({ priceFormat });
     }, [priceFormat]);
+
+    useEffect(() => {
+        if (!seriesRef.current) return;
+        seriesRef.current.applyOptions({
+            lastValueVisible: !useCustomLivePriceStack,
+            priceLineVisible: !useCustomLivePriceStack,
+        });
+    }, [useCustomLivePriceStack]);
+
+    useEffect(() => {
+        const lineTools = lineToolsRef.current;
+        const series = seriesRef.current;
+        if (!isChartReady || !lineTools || !series) {
+            return;
+        }
+
+        const nextLiveToolIds = new Set<string>();
+        const nextPriceLineIds = new Set<string>();
+        const nextLiveLineSpecs: LiveTradeLineSpec[] = [];
+
+        const pushSpec = (spec: LiveTradeLineSpec) => {
+            nextLiveLineSpecs.push(spec);
+            nextPriceLineIds.add(spec.id);
+        };
+
+        for (const position of activeLivePositions) {
+            if (!Number.isFinite(position.entryPrice)) {
+                continue;
+            }
+
+            const entryPrice = position.entryPrice as number;
+            pushSpec({
+                id: `${LIVE_TRADE_TOOL_ID_PREFIX}position-entry:${position.positionId}`,
+                price: entryPrice,
+                title: formatLiveTradeTitle(position.lots, `${position.direction}`),
+                color: "rgba(59, 130, 246, 0.95)",
+                lineStyle: LineStyle.Solid,
+                editable: false,
+            });
+
+            if (Number.isFinite(position.stopLoss)) {
+                const toolId = `${LIVE_TRADE_TOOL_ID_PREFIX}position-sl:${position.positionId}`;
+                nextLiveToolIds.add(toolId);
+                pushSpec({
+                    id: toolId,
+                    price: position.stopLoss as number,
+                    title: "SL",
+                    color: "rgba(245, 158, 11, 0.95)",
+                    lineStyle: LineStyle.Dotted,
+                    editable: true,
+                    toolMeta: {
+                        kind: "position-stopLoss",
+                        positionId: position.positionId,
+                    },
+                });
+            }
+
+            if (Number.isFinite(position.takeProfit)) {
+                const toolId = `${LIVE_TRADE_TOOL_ID_PREFIX}position-tp:${position.positionId}`;
+                nextLiveToolIds.add(toolId);
+                pushSpec({
+                    id: toolId,
+                    price: position.takeProfit as number,
+                    title: "TP",
+                    color: "rgba(16, 185, 129, 0.95)",
+                    lineStyle: LineStyle.Dotted,
+                    editable: true,
+                    toolMeta: {
+                        kind: "position-takeProfit",
+                        positionId: position.positionId,
+                    },
+                });
+            }
+        }
+
+        for (const order of activeLiveOrders) {
+            const primaryPrice =
+                String(order.orderType).toUpperCase().includes("LIMIT")
+                    ? order.limitPrice
+                    : order.stopPrice;
+            if (!Number.isFinite(primaryPrice)) {
+                continue;
+            }
+
+            const baseColor =
+                String(order.orderType).toUpperCase().includes("LIMIT")
+                    ? "rgba(59, 130, 246, 0.95)"
+                    : "rgba(168, 85, 247, 0.95)";
+            const entryToolId = `${LIVE_TRADE_TOOL_ID_PREFIX}order-entry:${order.orderId}`;
+            nextLiveToolIds.add(entryToolId);
+            pushSpec({
+                id: entryToolId,
+                price: primaryPrice as number,
+                title: formatLiveTradeTitle(
+                    order.lots,
+                    `${order.direction} ${String(order.orderType).toUpperCase().includes("LIMIT") ? "Limit" : "Stop"}`
+                ),
+                color: baseColor,
+                lineStyle: LineStyle.Solid,
+                editable: true,
+                toolMeta: {
+                    kind: "order-entry",
+                    orderId: order.orderId,
+                    orderType: order.orderType,
+                },
+            });
+
+            if (Number.isFinite(order.stopLoss)) {
+                const toolId = `${LIVE_TRADE_TOOL_ID_PREFIX}order-sl:${order.orderId}`;
+                nextLiveToolIds.add(toolId);
+                pushSpec({
+                    id: toolId,
+                    price: order.stopLoss as number,
+                    title: "SL",
+                    color: "rgba(245, 158, 11, 0.95)",
+                    lineStyle: LineStyle.Dotted,
+                    editable: true,
+                    toolMeta: {
+                        kind: "order-stopLoss",
+                        orderId: order.orderId,
+                        orderType: order.orderType,
+                    },
+                });
+            }
+
+            if (Number.isFinite(order.takeProfit)) {
+                const toolId = `${LIVE_TRADE_TOOL_ID_PREFIX}order-tp:${order.orderId}`;
+                nextLiveToolIds.add(toolId);
+                pushSpec({
+                    id: toolId,
+                    price: order.takeProfit as number,
+                    title: "TP",
+                    color: "rgba(16, 185, 129, 0.95)",
+                    lineStyle: LineStyle.Dotted,
+                    editable: true,
+                    toolMeta: {
+                        kind: "order-takeProfit",
+                        orderId: order.orderId,
+                        orderType: order.orderType,
+                    },
+                });
+            }
+        }
+
+        liveTradeLineSpecsRef.current = new Map(nextLiveLineSpecs.map((spec) => [spec.id, spec]));
+
+        const lastBarTimestamp = data[data.length - 1]?.timestamp ?? Date.now();
+        for (const spec of nextLiveLineSpecs) {
+            const existingPriceLine = liveTradePriceLinesRef.current.get(spec.id);
+            if (existingPriceLine) {
+                series.removePriceLine(existingPriceLine);
+                liveTradePriceLinesRef.current.delete(spec.id);
+            }
+
+            const priceLine = series.createPriceLine({
+                price: spec.price,
+                color: spec.color,
+                lineWidth: 1,
+                lineStyle: spec.lineStyle,
+                axisLabelVisible: true,
+                title: spec.editable ? "" : spec.title,
+                lineVisible: !spec.editable,
+            });
+            liveTradePriceLinesRef.current.set(spec.id, priceLine);
+
+            if (!spec.editable || !spec.toolMeta) {
+                liveTradeLineMetaRef.current.delete(spec.id);
+                continue;
+            }
+
+            lineTools.createOrUpdateLineTool(
+                "HorizontalRay",
+                [{ timestamp: normalizeDrawingTimestampForCurrentData(lastBarTimestamp), price: spec.price }],
+                {
+                    showPriceAxisLabels: false,
+                    showTimeAxisLabels: false,
+                    line: { color: spec.color },
+                } as Parameters<LineToolsApi["createOrUpdateLineTool"]>[2],
+                spec.id
+            );
+            liveTradeLineMetaRef.current.set(spec.id, spec.toolMeta);
+        }
+
+        const staleIds = Array.from(liveTradeLineMetaRef.current.keys()).filter(
+            (id) => !nextLiveToolIds.has(id)
+        );
+        if (staleIds.length > 0) {
+            removeLineToolsByIdSafely(staleIds);
+            for (const staleId of staleIds) {
+                liveTradeLineMetaRef.current.delete(staleId);
+                const pendingTimer = liveTradeAmendTimersRef.current.get(staleId);
+                if (pendingTimer != null) {
+                    window.clearTimeout(pendingTimer);
+                    liveTradeAmendTimersRef.current.delete(staleId);
+                }
+            }
+        }
+
+        for (const [id, priceLine] of liveTradePriceLinesRef.current.entries()) {
+            if (nextPriceLineIds.has(id)) continue;
+            series.removePriceLine(priceLine);
+            liveTradePriceLinesRef.current.delete(id);
+        }
+    }, [
+        activeLivePositions,
+        activeLiveOrders,
+        data,
+        isChartReady,
+        normalizeDrawingTimestampForCurrentData,
+        removeLineToolsByIdSafely,
+    ]);
 
     useEffect(() => {
         if (!isChartReady) {
@@ -2716,10 +3850,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
     // Update chart data and auto-scroll to trade
     useEffect(() => {
-        if (!seriesRef.current || !isChartReady || data.length === 0) return;
+        const series = seriesRef.current;
+        if (!series || !isChartReady || data.length === 0) return;
 
         const timeScale = chartRef.current?.timeScale();
-        const priceScale = seriesRef.current.priceScale();
+        const priceScale = series.priceScale();
         const drawingsBeforeDataUpdate =
             drawingToolRef.current == null && getLineToolsInternal()?._interactionManager?._currentToolCreating == null
                 ? exportCurrentDrawings()
@@ -2735,6 +3870,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             !hasReplayFutureSpace &&
             (dataUpdateMode === "append" ||
                 (dataUpdateMode === "auto" && isAppendOnlyUpdate(previousBars, data)));
+        const lastBarMutationUpdate =
+            !autoScrollOnData &&
+            !hasReplayFutureSpace &&
+            dataUpdateMode === "append" &&
+            isLastBarMutationUpdate(previousBars, data);
         const prependedBarCount =
             !autoScrollOnData
                 ? dataUpdateMode === "prepend"
@@ -2746,25 +3886,40 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         if (appendOnlyUpdate) {
             const appendedBars = data.slice(previousBars.length);
-            if (appendedBars.length <= 50) {
-                // Small appends: incremental updates (fast, flicker-free)
-                for (const bar of appendedBars) {
-                    seriesRef.current.update(toCandlestickPoint(bar));
+            const applyFullDataFallback = () => {
+                const formattedData = formatData(data);
+                series.setData(formattedData);
+                if (timeScale && currentRange && previousBars.length > 0) {
+                    suppressVisibleRangeUntilRef.current = Date.now() + 60;
+                    timeScale.setVisibleLogicalRange(currentRange);
                 }
-            } else {
+            };
+            try {
+                if (appendedBars.length === 0 && lastBarMutationUpdate) {
+                    const nextLastBar = data[data.length - 1];
+                    series.update(toCandlestickPoint(nextLastBar));
+                } else if (appendedBars.length <= 50) {
+                    // Small appends: incremental updates (fast, flicker-free)
+                    for (const bar of appendedBars) {
+                        series.update(toCandlestickPoint(bar));
+                    }
+                } else {
                 // Large appends: bulk setData (avoids main-thread freeze from 4000+ update calls)
                 const formattedData = formatData(data);
-                seriesRef.current.setData(formattedData);
+                series.setData(formattedData);
                 // Restore viewport SYNCHRONOUSLY to prevent flicker —
                 // the browser hasn't painted yet, so there's no visible flash
                 if (timeScale && currentRange && previousBars.length > 0) {
                     suppressVisibleRangeUntilRef.current = Date.now() + 60;
                     timeScale.setVisibleLogicalRange(currentRange);
                 }
+                }
+            } catch {
+                applyFullDataFallback();
             }
         } else {
             const formattedData = formatData(data);
-            seriesRef.current.setData(formattedData);
+            series.setData(formattedData);
         }
 
         if (!autoScrollOnData) {
@@ -2825,7 +3980,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }, 0);
         }
         prevBarsRef.current = data;
-    }, [data, isChartReady, formatData, replayFutureTimestamps, autoScrollOnData, dataUpdateMode, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, scheduleFreePriceScaleMode, syncImportedDrawings, toCandlestickPoint]);
+    }, [data, isChartReady, formatData, replayFutureTimestamps, autoScrollOnData, dataUpdateMode, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, isLastBarMutationUpdate, scheduleFreePriceScaleMode, syncImportedDrawings, toCandlestickPoint]);
 
     useEffect(() => {
         if (!autoScrollOnData || !isChartReady || data.length === 0) return;
@@ -3102,6 +4257,91 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         }
     }, [data, isChartReady, trade, showRiskReward, showRiskRewardLabels]);
 
+    useEffect(() => {
+        const series = seriesRef.current;
+        if (!series || !isChartReady) return;
+
+        if (liveBidLineRef.current) {
+            series.removePriceLine(liveBidLineRef.current);
+            liveBidLineRef.current = null;
+        }
+        if (liveAskLineRef.current) {
+            series.removePriceLine(liveAskLineRef.current);
+            liveAskLineRef.current = null;
+        }
+
+        if (liveBidPrice != null && Number.isFinite(liveBidPrice)) {
+            liveBidLineRef.current = series.createPriceLine({
+                price: liveBidPrice,
+                color: "rgba(148, 163, 184, 0.55)",
+                lineWidth: 1,
+                lineStyle: LineStyle.Dashed,
+                axisLabelVisible: false,
+                lineVisible: true,
+                title: "",
+            });
+        }
+
+        if (liveAskPrice != null && Number.isFinite(liveAskPrice)) {
+            liveAskLineRef.current = series.createPriceLine({
+                price: liveAskPrice,
+                color: "rgba(239, 68, 68, 0.9)",
+                lineWidth: 1,
+                lineStyle: LineStyle.Dashed,
+                axisLabelVisible: false,
+                lineVisible: true,
+                title: "",
+            });
+        }
+
+        return () => {
+            if (!seriesRef.current) return;
+            if (liveBidLineRef.current) {
+                seriesRef.current.removePriceLine(liveBidLineRef.current);
+                liveBidLineRef.current = null;
+            }
+            if (liveAskLineRef.current) {
+                seriesRef.current.removePriceLine(liveAskLineRef.current);
+                liveAskLineRef.current = null;
+            }
+        };
+    }, [isChartReady, liveAskPrice, liveBidPrice]);
+
+    const handleLiveTradeBadgeDragStart = useCallback((
+        event: ReactPointerEvent<HTMLButtonElement>,
+        toolId: string
+    ) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const existingTool = readDrawingToolById(toolId);
+        const nextPrice =
+            existingTool?.points?.[0]?.price ??
+            liveTradePreviewPrices[toolId] ??
+            liveTradeLineSpecsRef.current.get(toolId)?.price;
+        if (Number.isFinite(nextPrice)) {
+            applyLiveTradePreviewPrice(toolId, nextPrice);
+        }
+        setLiveTradeDragSession({ toolId });
+    }, [applyLiveTradePreviewPrice, liveTradePreviewPrices, readDrawingToolById]);
+
+    const handleLiveTradeActionClick = useCallback((
+        event: ReactMouseEvent<HTMLButtonElement>,
+        item: LiveTradeOverlayItem
+    ) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (item.kind === "position" && item.positionId) {
+            void onActiveLivePositionCloseRef.current?.(item.positionId);
+            return;
+        }
+
+        if (item.kind === "order" && item.orderId) {
+            void onActiveLiveOrderCancelRef.current?.(item.orderId);
+        }
+    }, []);
+
     return (
         <div
             className="relative w-full"
@@ -3132,6 +4372,93 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 className="chart-crosshair-lock w-full rounded-lg bg-gray-900/50"
                 style={{ height }}
             />
+
+            {liveTradeOverlayItems.length > 0 && (
+                <div className="pointer-events-none absolute inset-0 z-[5] overflow-hidden rounded-lg">
+                    {liveTradeOverlayItems.map((item) => (
+                        <div
+                            key={item.id}
+                            className="absolute flex -translate-y-1/2 items-center gap-px"
+                            style={{
+                                left: `${item.x}px`,
+                                top: `${item.y}px`,
+                            }}
+                        >
+                            {item.takeProfitToolId ? (
+                                <button
+                                    type="button"
+                                    onPointerDown={(event) => handleLiveTradeBadgeDragStart(event, item.takeProfitToolId!)}
+                                    className={`pointer-events-auto rounded-l-sm border px-1.5 py-[2px] text-[10px] font-semibold leading-none transition-colors ${
+                                        item.hasTakeProfit
+                                            ? "cursor-ns-resize border-emerald-500/65 bg-emerald-500/18 text-emerald-300 hover:bg-emerald-500/28"
+                                            : "cursor-ns-resize border-emerald-500/45 bg-emerald-500/8 text-emerald-200/80 hover:bg-emerald-500/18"
+                                    }`}
+                                    title="Drag to set or move take profit"
+                                >
+                                    TP
+                                </button>
+                            ) : null}
+                            {item.stopLossToolId ? (
+                                <button
+                                    type="button"
+                                    onPointerDown={(event) => handleLiveTradeBadgeDragStart(event, item.stopLossToolId!)}
+                                    className={`pointer-events-auto border px-1.5 py-[2px] text-[10px] font-semibold leading-none transition-colors ${
+                                        item.hasStopLoss
+                                            ? "cursor-ns-resize border-amber-500/65 bg-amber-500/18 text-amber-300 hover:bg-amber-500/28"
+                                            : "cursor-ns-resize border-amber-500/45 bg-amber-500/8 text-amber-200/80 hover:bg-amber-500/18"
+                                    }`}
+                                    title="Drag to set or move stop loss"
+                                >
+                                    SL
+                                </button>
+                            ) : null}
+                            <span className="border border-blue-500/60 bg-blue-500/16 px-2 py-[2px] text-[11px] font-medium leading-none text-blue-100">
+                                {item.lotsLabel}
+                            </span>
+                            {item.entryToolId ? (
+                                <button
+                                    type="button"
+                                    onPointerDown={(event) => handleLiveTradeBadgeDragStart(event, item.entryToolId!)}
+                                    className="pointer-events-auto cursor-ns-resize border border-blue-500/80 bg-blue-950/90 px-2 py-[2px] text-[11px] font-medium leading-none text-blue-200 transition-colors hover:bg-blue-900/95"
+                                    title="Drag to move this pending order"
+                                >
+                                    {item.label}
+                                </button>
+                            ) : (
+                                <span className="border border-slate-500/60 bg-slate-900/92 px-2 py-[2px] text-[11px] font-medium leading-none text-slate-100">
+                                    {item.label}
+                                </span>
+                            )}
+                            <button
+                                type="button"
+                                onClick={(event) => handleLiveTradeActionClick(event, item)}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                className="pointer-events-auto rounded-r-sm border border-blue-500/70 bg-blue-950/92 px-1.5 py-[2px] text-[11px] font-semibold leading-none text-blue-200 transition-colors hover:bg-rose-600/90 hover:text-white"
+                                title={item.kind === "order" ? "Cancel pending order" : "Close position"}
+                            >
+                                ×
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {useCustomLivePriceStack && candleCountdownOverlay.top != null && (
+                <div
+                    className="pointer-events-none absolute right-0 z-[4]"
+                    style={{
+                        top: `${candleCountdownOverlay.top}px`,
+                        width: `${candleCountdownLabelWidth}px`,
+                    }}
+                >
+                    <div className="border border-slate-500/35 bg-slate-700/95 px-1 py-0 text-center text-[11px] font-medium leading-[1.05] tabular-nums text-slate-50 shadow-sm">
+                        {candleCountdownPriceLabel}
+                    </div>
+                    <div className="border border-t-0 border-slate-500/35 bg-slate-800/95 px-1 py-0 text-center text-[11px] font-medium leading-[1.05] tabular-nums text-slate-100">
+                        {candleCountdownLabel}
+                    </div>
+                </div>
+            )}
 
             {selectionBox && (
                 <div className="pointer-events-none absolute inset-0 z-[2] overflow-hidden rounded-lg">

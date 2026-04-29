@@ -12,6 +12,7 @@
     "mt5:service:install": "npm run mt5:service:build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/register-mt5-service-task.ps1",
     "mt5:service:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/unregister-mt5-service-task.ps1",
     "mt5:service": "node local-services/mt5-history-service/history-reader.mjs --serve",
+    "ctrader:live:service": "node local-services/ctrader-live-service/server.mjs",
     "postinstall": "patch-package",
     "start": "next start",
     "lint": "eslint",

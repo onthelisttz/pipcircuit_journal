@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { FileText, Link2, Link2Off } from "lucide-react";
 import {
   Mt5HistoryWorkspace,
@@ -147,6 +147,7 @@ export default function ChartPage() {
   const [showHeaderTabs, setShowHeaderTabs] = useState(true);
   const [historyAvailabilityText, setHistoryAvailabilityText] = useState<string | null>(null);
   const [syncTimeframes, setSyncTimeframes] = useState(false);
+  const [workspaceHeaderControls, setWorkspaceHeaderControls] = useState<ReactNode | null>(null);
   const [isObservationPanelOpen, setIsObservationPanelOpen] = useState(false);
   const [activeObservationWorkspace, setActiveObservationWorkspace] =
     useState<ChartObservationWorkspaceApi | null>(null);
@@ -469,6 +470,11 @@ export default function ChartPage() {
             }
             isActive={tabIsVisible && (!isMulti || paneIsActive)}
             onTradePanelChange={handleTradePanelChange}
+            onHeaderControlsChange={
+              tabIsVisible && (!isMulti || paneIsActive)
+                ? setWorkspaceHeaderControls
+                : undefined
+            }
             arePageTabsVisible={showHeaderTabs}
             onTogglePageTabsVisibility={toggleHeaderTabsVisibility}
             compact={isMulti}
@@ -551,11 +557,17 @@ export default function ChartPage() {
                 </button>
               </div>
               <div className="ml-auto min-w-0 basis-full md:basis-auto">
-                <p className="mt-1 text-sm text-muted-foreground md:mt-0 md:text-right">
-                  {mode === "synced"
-                    ? "workspace"
-                    : historyAvailabilityText ?? "Loading MT5 history availability..."}
-                </p>
+                {mode === "synced" ? (
+                  <div className="mt-1 md:mt-0 md:text-right">
+                    {workspaceHeaderControls ?? (
+                      <p className="text-sm text-muted-foreground">workspace</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm text-muted-foreground md:mt-0 md:text-right">
+                    {historyAvailabilityText ?? "Loading MT5 history availability..."}
+                  </p>
+                )}
               </div>
             </div>
 
