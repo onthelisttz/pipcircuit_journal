@@ -39,7 +39,11 @@ import type { DrawingToolType, TradeCandlestickChartRef } from "@ui/components/c
 import type { ChartTradeHistoryPanelData } from "./ChartTradeHistoryPanel";
 type DrawingToolExport = ReturnType<TradeCandlestickChartRef["exportAllDrawings"]>[number];
 import { useChartData } from "@ui/hooks/useChartData";
-import { useCTraderLiveBar } from "@ui/hooks/useCTraderLiveBar";
+import {
+  useCTraderLiveBar,
+  type LiveOrderSnapshot,
+  type LivePositionSnapshot,
+} from "@ui/hooks/useCTraderLiveBar";
 import { useSyncProgress } from "@ui/hooks/useSyncProgress";
 import { useTradesByQuery } from "@ui/hooks/useTradesByQuery";
 import { useAccount } from "@ui/hooks/useAccount";
@@ -94,38 +98,6 @@ const EDGE_FETCH_THRESHOLD = 10;
 const FETCH_THROTTLE_MS = 160;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-type LivePositionSnapshot = {
-  positionId: string;
-  symbol: string;
-  direction: "Buy" | "Sell";
-  volume: number;
-  lots: number;
-  openTimestamp: number | null;
-  entryPrice: number | null;
-  stopLoss: number | null;
-  takeProfit: number | null;
-  trailingStopLoss: boolean;
-  label: string;
-  comment: string;
-  updatedAt: number | null;
-};
-
-type LiveOrderSnapshot = {
-  orderId: string;
-  symbol: string;
-  direction: "Buy" | "Sell";
-  orderType: string;
-  lots: number;
-  volume: number;
-  limitPrice: number | null;
-  stopPrice: number | null;
-  stopLoss: number | null;
-  takeProfit: number | null;
-  createdAt: number | null;
-  expiresAt: number | null;
-  positionId: number | null;
-};
 
 type LiveOrderType = "MARKET" | "LIMIT" | "STOP";
 
@@ -232,6 +204,11 @@ function formatLivePrice(value: number | null | undefined): string {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
+}
+
+function formatLivePriceInput(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  return value.toFixed(inferDisplayDecimals(value));
 }
 
 function formatSpreadDisplay(bid: number | null | undefined, ask: number | null | undefined): string {
@@ -1264,6 +1241,8 @@ export function SyncedChartWorkspace({
   const {
     currentBar: liveCurrentBar,
     quote: liveQuote,
+    positions: streamedLivePositions,
+    orders: streamedLiveOrders,
     status: liveStatus,
     error: liveError,
     backfillCompletedAt,
@@ -1425,6 +1404,17 @@ export function SyncedChartWorkspace({
     () => formatSpreadDisplay(liveQuote?.bid, liveQuote?.ask),
     [liveQuote?.ask, liveQuote?.bid]
   );
+  const liveReferenceTradePrice = useMemo(
+    () =>
+      richTradeSide === "BUY"
+        ? (liveQuote?.ask ?? liveCurrentBar?.close ?? null)
+        : (liveQuote?.bid ?? liveCurrentBar?.close ?? null),
+    [liveCurrentBar?.close, liveQuote?.ask, liveQuote?.bid, richTradeSide]
+  );
+  const liveReferenceTradePriceInput = useMemo(
+    () => formatLivePriceInput(liveReferenceTradePrice),
+    [liveReferenceTradePrice]
+  );
   const canTradeLive = Boolean(
     liveVisualsEnabled &&
       liveSessionId &&
@@ -1436,32 +1426,29 @@ export function SyncedChartWorkspace({
       liveStatus !== "error"
   );
 
-  const refreshLivePositions = useCallback(async () => {
-    if (!liveSessionId || !liveVisualsEnabled) {
-      setLivePositions([]);
-      setLiveOrders([]);
+  const seedRichTradePrice = useCallback((
+    nextOrderType: LiveOrderType,
+    nextSide: "BUY" | "SELL",
+    options?: { force?: boolean }
+  ) => {
+    if (nextOrderType === "MARKET") {
       return;
     }
 
-    const response = await fetch(
-      buildLocalServiceEndpoint(
-        `/api/ctrader/live/positions?sessionId=${encodeURIComponent(liveSessionId)}`,
-        liveServiceUrl
-      )
-    );
-    const payload = (await response.json()) as {
-      positions?: LivePositionSnapshot[];
-      orders?: LiveOrderSnapshot[];
-      error?: string;
-    };
+    const sourcePrice =
+      nextSide === "BUY"
+        ? (liveQuote?.ask ?? liveCurrentBar?.close ?? null)
+        : (liveQuote?.bid ?? liveCurrentBar?.close ?? null);
+    const nextValue = formatLivePriceInput(sourcePrice);
+    if (!nextValue) return;
 
-    if (!response.ok) {
-      throw new Error(payload.error ?? `Failed to load live positions (${response.status})`);
-    }
-
-    setLivePositions(Array.isArray(payload.positions) ? payload.positions : []);
-    setLiveOrders(Array.isArray(payload.orders) ? payload.orders : []);
-  }, [liveServiceUrl, liveSessionId, liveVisualsEnabled]);
+    setRichTradePrice((current) => {
+      if (options?.force || !current.trim()) {
+        return nextValue;
+      }
+      return current;
+    });
+  }, [liveCurrentBar?.close, liveQuote?.ask, liveQuote?.bid]);
 
   const submitTradeRequest = useCallback(async (body: Record<string, unknown>) => {
     if (!liveSessionId) {
@@ -1515,6 +1502,21 @@ export function SyncedChartWorkspace({
       throw new Error("Live session is not ready.");
     }
 
+    const previousPositions = livePositions;
+    const previousOrders = liveOrders;
+    setLivePositions((current) =>
+      current.map((position) =>
+        position.positionId !== positionId
+          ? position
+          : {
+              ...position,
+              ...(stopLoss !== undefined ? { stopLoss } : {}),
+              ...(takeProfit !== undefined ? { takeProfit } : {}),
+              updatedAt: Date.now(),
+            }
+      )
+    );
+
     setTradeActionPending(true);
     setTradeActionError(null);
     try {
@@ -1542,6 +1544,8 @@ export function SyncedChartWorkspace({
       setLivePositions(Array.isArray(payload.positions) ? payload.positions : []);
       setLiveOrders(Array.isArray(payload.orders) ? payload.orders : []);
     } catch (amendError) {
+      setLivePositions(previousPositions);
+      setLiveOrders(previousOrders);
       const message =
         amendError instanceof Error ? amendError.message : "Failed to amend live position.";
       setTradeActionError(message);
@@ -1549,7 +1553,7 @@ export function SyncedChartWorkspace({
     } finally {
       setTradeActionPending(false);
     }
-  }, [liveServiceUrl, liveSessionId]);
+  }, [liveOrders, livePositions, liveServiceUrl, liveSessionId]);
 
   const closeLivePosition = useCallback(async (positionId: string) => {
     if (!liveSessionId) {
@@ -1603,6 +1607,19 @@ export function SyncedChartWorkspace({
       throw new Error("Live session is not ready.");
     }
 
+    const previousPositions = livePositions;
+    const previousOrders = liveOrders;
+    setLiveOrders((current) =>
+      current.map((order) =>
+        order.orderId !== orderId
+          ? order
+          : {
+              ...order,
+              ...patch,
+            }
+      )
+    );
+
     setTradeActionPending(true);
     setTradeActionError(null);
     try {
@@ -1629,6 +1646,8 @@ export function SyncedChartWorkspace({
       setLivePositions(Array.isArray(payload.positions) ? payload.positions : []);
       setLiveOrders(Array.isArray(payload.orders) ? payload.orders : []);
     } catch (orderError) {
+      setLivePositions(previousPositions);
+      setLiveOrders(previousOrders);
       const message =
         orderError instanceof Error ? orderError.message : "Failed to amend live order.";
       setTradeActionError(message);
@@ -1636,7 +1655,7 @@ export function SyncedChartWorkspace({
     } finally {
       setTradeActionPending(false);
     }
-  }, [liveServiceUrl, liveSessionId]);
+  }, [liveOrders, livePositions, liveServiceUrl, liveSessionId]);
 
   const cancelLiveOrder = useCallback(async (orderId: string) => {
     if (!liveSessionId) {
@@ -1688,31 +1707,22 @@ export function SyncedChartWorkspace({
       return;
     }
 
-    void refreshLivePositions().catch((positionError) => {
-      const message =
-        positionError instanceof Error ? positionError.message : "Failed to load live positions.";
-      setTradeActionError(message);
-    });
-
-    const timer = window.setInterval(() => {
-      void refreshLivePositions().catch(() => {});
-    }, 4_000);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [liveSessionId, liveVisualsEnabled, refreshLivePositions]);
+    setLivePositions(streamedLivePositions);
+    setLiveOrders(streamedLiveOrders);
+  }, [
+    liveSessionId,
+    liveVisualsEnabled,
+    streamedLiveOrders,
+    streamedLivePositions,
+  ]);
 
   useEffect(() => {
-    if (richTradeOrderType === "MARKET") {
-      setRichTradePrice("");
+    if (!isRichTradeOpen || richTradeOrderType === "MARKET") {
       return;
     }
 
-    const nextPrice = richTradeSide === "BUY" ? liveQuote?.ask : liveQuote?.bid;
-    if (nextPrice == null || !Number.isFinite(nextPrice)) return;
-    setRichTradePrice(String(nextPrice));
-  }, [liveQuote?.ask, liveQuote?.bid, richTradeOrderType, richTradeSide]);
+    seedRichTradePrice(richTradeOrderType, richTradeSide);
+  }, [isRichTradeOpen, richTradeOrderType, richTradeSide, seedRichTradePrice]);
 
   useEffect(() => {
     if (!isRichTradeOpen) return;
@@ -2226,13 +2236,27 @@ export function SyncedChartWorkspace({
       trades: brokerSymbolTrades,
       selectedTradeId: selectedTradeHistoryId,
       onSelectTrade: handleTradeHistorySelect,
+      liveModeEnabled,
+      livePositions,
+      liveOrders,
+      liveBidPrice: liveQuote?.bid ?? null,
+      liveAskPrice: liveQuote?.ask ?? null,
+      onClosePosition: closeLivePosition,
+      onCancelOrder: cancelLiveOrder,
       onClose: handleTradeHistoryPanelClose,
     });
   }, [
     brokerSymbolTrades,
+    cancelLiveOrder,
+    closeLivePosition,
     handleTradeHistoryPanelClose,
     handleTradeHistorySelect,
     isActive,
+    liveModeEnabled,
+    liveQuote?.ask,
+    liveQuote?.bid,
+    liveOrders,
+    livePositions,
     onTradePanelChange,
     selectedTradeHistoryId,
     selection?.broker,
@@ -2744,7 +2768,11 @@ export function SyncedChartWorkspace({
           ref={richTradeButtonRef}
           type="button"
           onClick={() => {
-            setIsRichTradeOpen((open) => !open);
+            const nextOpen = !isRichTradeOpen;
+            setIsRichTradeOpen(nextOpen);
+            if (nextOpen && richTradeOrderType !== "MARKET") {
+              seedRichTradePrice(richTradeOrderType, richTradeSide);
+            }
             setSymbolMenuOpen(false);
             setTimeframeMenuOpen(false);
             setTradesMenuOpen(false);
@@ -2767,7 +2795,10 @@ export function SyncedChartWorkspace({
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => setRichTradeSide("BUY")}
+                onClick={() => {
+                  setRichTradeSide("BUY");
+                  seedRichTradePrice(richTradeOrderType, "BUY", { force: true });
+                }}
                 className={`rounded-md border px-3 py-2 text-left text-xs font-medium transition-colors ${
                   richTradeSide === "BUY"
                     ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
@@ -2778,7 +2809,10 @@ export function SyncedChartWorkspace({
               </button>
               <button
                 type="button"
-                onClick={() => setRichTradeSide("SELL")}
+                onClick={() => {
+                  setRichTradeSide("SELL");
+                  seedRichTradePrice(richTradeOrderType, "SELL", { force: true });
+                }}
                 className={`rounded-md border px-3 py-2 text-left text-xs font-medium transition-colors ${
                   richTradeSide === "SELL"
                     ? "border-rose-500/40 bg-rose-500/10 text-rose-400"
@@ -2793,7 +2827,13 @@ export function SyncedChartWorkspace({
                 Order
                 <select
                   value={richTradeOrderType}
-                  onChange={(event) => setRichTradeOrderType(event.target.value as LiveOrderType)}
+                  onChange={(event) => {
+                    const nextOrderType = event.target.value as LiveOrderType;
+                    setRichTradeOrderType(nextOrderType);
+                    if (nextOrderType !== "MARKET") {
+                      seedRichTradePrice(nextOrderType, richTradeSide, { force: true });
+                    }
+                  }}
                   className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
                 >
                   <option value="MARKET">Market</option>
@@ -2813,19 +2853,18 @@ export function SyncedChartWorkspace({
                   className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
                 />
               </label>
-              {richTradeOrderType !== "MARKET" ? (
-                <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Price
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="any"
-                    value={richTradePrice}
-                    onChange={(event) => setRichTradePrice(event.target.value)}
-                    className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
-                  />
-                </label>
-              ) : <div />}
+              <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Price
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="any"
+                  value={richTradeOrderType === "MARKET" ? liveReferenceTradePriceInput : richTradePrice}
+                  onChange={(event) => setRichTradePrice(event.target.value)}
+                  disabled={richTradeOrderType === "MARKET"}
+                  className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-70"
+                />
+              </label>
               <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                 Stop Loss
                 <input

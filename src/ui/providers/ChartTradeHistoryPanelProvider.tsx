@@ -33,7 +33,14 @@ export function ChartTradeHistoryPanelProvider({ children }: { children: ReactNo
         current.broker === nextPanel.broker &&
         current.selectedTradeId === nextPanel.selectedTradeId &&
         current.trades === nextPanel.trades &&
+        current.liveModeEnabled === nextPanel.liveModeEnabled &&
+        current.livePositions === nextPanel.livePositions &&
+        current.liveOrders === nextPanel.liveOrders &&
+        current.liveBidPrice === nextPanel.liveBidPrice &&
+        current.liveAskPrice === nextPanel.liveAskPrice &&
         current.onSelectTrade === nextPanel.onSelectTrade &&
+        current.onClosePosition === nextPanel.onClosePosition &&
+        current.onCancelOrder === nextPanel.onCancelOrder &&
         current.onClose === nextPanel.onClose
       ) {
         return current;

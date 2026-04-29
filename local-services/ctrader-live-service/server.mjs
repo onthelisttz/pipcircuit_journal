@@ -806,9 +806,10 @@ class LiveSessionManager {
       }
     );
 
+    const snapshot = await this.publishTradeSnapshot(session, await this.getPositionsSnapshot(sessionId));
     return {
       execution: sanitizeExecutionEvent(execution),
-      ...(await this.getPositionsSnapshot(sessionId)),
+      ...snapshot,
     };
   }
 
@@ -850,9 +851,28 @@ class LiveSessionManager {
     const targetBefore = beforeSnapshot.positions.find(
       (position) => Number(position.positionId) === positionId
     );
+    const preservedStopLoss = Number.isFinite(targetBefore?.stopLoss)
+      ? normalizePriceForSymbol(targetBefore.stopLoss, session.config.symbolMeta)
+      : null;
+    const preservedTakeProfit = Number.isFinite(targetBefore?.takeProfit)
+      ? normalizePriceForSymbol(targetBefore.takeProfit, session.config.symbolMeta)
+      : null;
     const execution = await this.waitForTradeResult(
       session,
-      () => session.connection.sendCommand("ProtoOAAmendPositionSLTPReq", payload, requestId),
+      () =>
+        session.connection.sendCommand(
+          "ProtoOAAmendPositionSLTPReq",
+          {
+            ...payload,
+            ...((hasStopLoss || hasTakeProfit)
+              ? {
+                  stopLoss: hasStopLoss ? stopLoss : preservedStopLoss,
+                  takeProfit: hasTakeProfit ? takeProfit : preservedTakeProfit,
+                }
+              : {}),
+          },
+          requestId
+        ),
       {
         matchExecution: (eventPayload) =>
           eventMatchesSymbol(eventPayload, session.config.symbolId) &&
@@ -899,9 +919,10 @@ class LiveSessionManager {
       }
     );
 
+    const snapshot = await this.publishTradeSnapshot(session, await this.getPositionsSnapshot(sessionId));
     return {
       execution: sanitizeExecutionEvent(execution),
-      ...(await this.getPositionsSnapshot(sessionId)),
+      ...snapshot,
     };
   }
 
@@ -943,6 +964,12 @@ class LiveSessionManager {
     if (!existingOrder) {
       throw new Error("Order not found.");
     }
+    const preservedStopLoss = Number.isFinite(existingOrder.stopLoss)
+      ? normalizePriceForSymbol(existingOrder.stopLoss, session.config.symbolMeta)
+      : null;
+    const preservedTakeProfit = Number.isFinite(existingOrder.takeProfit)
+      ? normalizePriceForSymbol(existingOrder.takeProfit, session.config.symbolMeta)
+      : null;
 
     const payload = {
       ctidTraderAccountId: session.config.accountId,
@@ -956,7 +983,20 @@ class LiveSessionManager {
 
     const execution = await this.waitForTradeResult(
       session,
-      () => session.connection.sendCommand("ProtoOAAmendOrderReq", payload, requestId),
+      () =>
+        session.connection.sendCommand(
+          "ProtoOAAmendOrderReq",
+          {
+            ...payload,
+            ...((hasStopLoss || hasTakeProfit)
+              ? {
+                  stopLoss: hasStopLoss ? stopLoss : preservedStopLoss,
+                  takeProfit: hasTakeProfit ? takeProfit : preservedTakeProfit,
+                }
+              : {}),
+          },
+          requestId
+        ),
       {
         matchExecution: (eventPayload) =>
           eventMatchesSymbol(eventPayload, session.config.symbolId) &&
@@ -1014,9 +1054,10 @@ class LiveSessionManager {
       }
     );
 
+    const snapshot = await this.publishTradeSnapshot(session, await this.getPositionsSnapshot(sessionId));
     return {
       execution: sanitizeExecutionEvent(execution),
-      ...(await this.getPositionsSnapshot(sessionId)),
+      ...snapshot,
     };
   }
 
@@ -1063,9 +1104,10 @@ class LiveSessionManager {
       }
     );
 
+    const snapshot = await this.publishTradeSnapshot(session, await this.getPositionsSnapshot(sessionId));
     return {
       execution: sanitizeExecutionEvent(execution),
-      ...(await this.getPositionsSnapshot(sessionId)),
+      ...snapshot,
     };
   }
 
@@ -1118,9 +1160,10 @@ class LiveSessionManager {
       }
     );
 
+    const nextSnapshot = await this.publishTradeSnapshot(session, await this.getPositionsSnapshot(sessionId));
     return {
       execution: sanitizeExecutionEvent(execution),
-      ...(await this.getPositionsSnapshot(sessionId)),
+      ...nextSnapshot,
     };
   }
 
@@ -1175,12 +1218,15 @@ class LiveSessionManager {
       config,
       state: "connecting",
       latestPayload: null,
+      latestTradeSnapshot: null,
+      latestTradeSnapshotHash: "",
       error: null,
       subscribers: new Set(),
       heartbeatTimer: null,
       cleanupTimer: null,
       connection: null,
       listenerId: null,
+      executionListenerId: null,
       lastTouchedAt: Date.now(),
     };
 
@@ -1276,7 +1322,20 @@ class LiveSessionManager {
       this.broadcast(session, nextPayload);
     };
 
+    const handleExecutionEvent = (event) => {
+      const payload = event?.descriptor ?? event ?? {};
+      if (!eventMatchesSymbol(payload, symbolId)) {
+        return;
+      }
+
+      session.lastTouchedAt = Date.now();
+      void this.publishTradeSnapshot(session).catch(() => {
+        // Ignore transient snapshot reconcile failures; the next trade event will retry.
+      });
+    };
+
     session.listenerId = connection.on("ProtoOASpotEvent", handleSpotEvent);
+    session.executionListenerId = connection.on("ProtoOAExecutionEvent", handleExecutionEvent);
 
     await connection.sendCommand("ProtoOASubscribeSpotsReq", {
       ctidTraderAccountId: session.config.accountId,
@@ -1293,6 +1352,7 @@ class LiveSessionManager {
     session.connection = connection;
     session.state = "live";
     session.error = null;
+    await this.publishTradeSnapshot(session, null, true).catch(() => null);
     session.heartbeatTimer = setInterval(() => {
       try {
         connection.sendHeartbeat();
@@ -1306,6 +1366,33 @@ class LiveSessionManager {
     for (const response of session.subscribers) {
       writeSse(response, "message", payload);
     }
+  }
+
+  async publishTradeSnapshot(session, snapshot = null, force = false) {
+    if (!session) {
+      return null;
+    }
+
+    const resolvedSnapshot = snapshot ?? (await this.getPositionsSnapshot(session.id));
+    const snapshotHash = serializeSnapshot(resolvedSnapshot);
+
+    if (!force && snapshotHash === session.latestTradeSnapshotHash) {
+      return resolvedSnapshot;
+    }
+
+    const payload = {
+      type: "snapshot",
+      symbol: session.config.symbol,
+      timeframe: session.config.timeframe,
+      positions: resolvedSnapshot.positions,
+      orders: resolvedSnapshot.orders,
+    };
+
+    session.latestTradeSnapshot = payload;
+    session.latestTradeSnapshotHash = snapshotHash;
+    session.lastTouchedAt = Date.now();
+    this.broadcast(session, payload);
+    return resolvedSnapshot;
   }
 
   attachSubscriber(session, response) {
@@ -1329,6 +1416,9 @@ class LiveSessionManager {
 
     if (session.latestPayload) {
       writeSse(response, "message", session.latestPayload);
+    }
+    if (session.latestTradeSnapshot) {
+      writeSse(response, "message", session.latestTradeSnapshot);
     }
   }
 
@@ -1362,6 +1452,9 @@ class LiveSessionManager {
       try {
         if (session.listenerId) {
           session.connection.removeEventListener(session.listenerId);
+        }
+        if (session.executionListenerId) {
+          session.connection.removeEventListener(session.executionListenerId);
         }
       } catch {
         // ignore

@@ -301,8 +301,12 @@ type LiveTradeOverlayItem = {
     color: string;
     lotsLabel: string;
     label: string;
+    pipsLabel?: string;
+    pipsPositive?: boolean;
     pnlLabel?: string;
     pnlPositive?: boolean;
+    currentPnlLabel?: string;
+    currentPnlPositive?: boolean;
     draggable: boolean;
     dragToolId?: string;
     positionId?: string;
@@ -340,6 +344,38 @@ function formatLiveOrderLabel(direction: string, orderType: string): string {
             ? "Stop"
             : orderType;
     return `${direction} ${shortType}`.trim();
+}
+
+function withColorAlpha(color: string, alpha: number): string {
+    const normalizedAlpha = Math.max(0, Math.min(1, alpha));
+    const rgbaMatch = color.match(/^rgba?\(([^)]+)\)$/i);
+    if (!rgbaMatch) {
+        return color;
+    }
+
+    const parts = rgbaMatch[1]
+        .split(",")
+        .map((part) => Number.parseFloat(part.trim()))
+        .filter((value) => Number.isFinite(value));
+    if (parts.length < 3) {
+        return color;
+    }
+
+    const [red, green, blue] = parts;
+    return `rgba(${red}, ${green}, ${blue}, ${normalizedAlpha})`;
+}
+
+function formatLivePipsLabel(value: number): string {
+    if (!Number.isFinite(value)) return "0.0p";
+    const rounded = Math.round(value * 10) / 10;
+    const sign = rounded > 0 ? "+" : rounded < 0 ? "-" : "";
+    return `${sign}${Math.abs(rounded).toFixed(1)}p`;
+}
+
+function formatLiveMoneyLabel(value: number): string {
+    if (!Number.isFinite(value)) return "$0.00";
+    const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+    return `${sign}$${Math.abs(value).toFixed(2)}`;
 }
 
 function buildTradeOverlay(
@@ -715,8 +751,12 @@ function sameLiveTradeOverlayItems(left: LiveTradeOverlayItem[], right: LiveTrad
             a.label !== b.label ||
             a.lotsLabel !== b.lotsLabel ||
             a.color !== b.color ||
+            a.pipsLabel !== b.pipsLabel ||
+            a.pipsPositive !== b.pipsPositive ||
             a.pnlLabel !== b.pnlLabel ||
             a.pnlPositive !== b.pnlPositive ||
+            a.currentPnlLabel !== b.currentPnlLabel ||
+            a.currentPnlPositive !== b.currentPnlPositive ||
             a.draggable !== b.draggable ||
             a.dragToolId !== b.dragToolId ||
             a.positionId !== b.positionId ||
@@ -1217,9 +1257,19 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const computePnl = (entryPrice: number, targetPrice: number, lots: number, direction: string, symbol: string) => {
             const pnl = estimateGrossProfit(entryPrice, targetPrice, lots, direction, symbol);
             if (!Number.isFinite(pnl) || Math.abs(pnl) >= 1_000_000) return { label: undefined, positive: undefined };
-            const sign = pnl >= 0 ? "+" : "";
-            return { label: `${sign}${pnl.toFixed(2)} USD`, positive: pnl >= 0 };
+            return { label: `${formatLiveMoneyLabel(pnl)} USD`, positive: pnl >= 0 };
         };
+
+        const computePips = (entryPrice: number, targetPrice: number, direction: string, symbol: string) => {
+            const priceDiff = direction === "Buy" ? targetPrice - entryPrice : entryPrice - targetPrice;
+            const pips = priceDiffToPips(priceDiff, symbol);
+            if (!Number.isFinite(pips) || Math.abs(pips) >= 1_000_000) {
+                return { label: undefined, positive: undefined };
+            }
+            return { label: formatLivePipsLabel(pips), positive: pips >= 0 };
+        };
+
+        const fallbackClosePrice = data[data.length - 1]?.close;
 
         for (const position of activeLivePositions) {
             if (!Number.isFinite(position.entryPrice)) continue;
@@ -1230,6 +1280,23 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             const lotsLabel = formatLiveTradeLotsLabel(lots);
             const slToolId = `${LIVE_TRADE_TOOL_ID_PREFIX}position-sl:${position.positionId}`;
             const tpToolId = `${LIVE_TRADE_TOOL_ID_PREFIX}position-tp:${position.positionId}`;
+            const currentMarketPrice =
+                direction === "Buy"
+                    ? (Number.isFinite(liveBidPrice) ? liveBidPrice : Number.isFinite(liveAskPrice) ? liveAskPrice : fallbackClosePrice)
+                    : (Number.isFinite(liveAskPrice) ? liveAskPrice : Number.isFinite(liveBidPrice) ? liveBidPrice : fallbackClosePrice);
+            const entryPnl =
+                Number.isFinite(currentMarketPrice)
+                    ? estimateGrossProfit(entryPrice, currentMarketPrice as number, lots, direction, symbol)
+                    : NaN;
+            const entryPips =
+                Number.isFinite(currentMarketPrice)
+                    ? priceDiffToPips(
+                        direction === "Buy"
+                            ? (currentMarketPrice as number) - entryPrice
+                            : entryPrice - (currentMarketPrice as number),
+                        symbol
+                    )
+                    : NaN;
 
             addItem(entryPrice, undefined, {
                 id: `position-entry:${position.positionId}`,
@@ -1237,6 +1304,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 color: "rgba(59, 130, 246, 0.95)",
                 lotsLabel,
                 label: direction,
+                pipsLabel: Number.isFinite(entryPips) ? formatLivePipsLabel(entryPips) : undefined,
+                pipsPositive: Number.isFinite(entryPips) ? entryPips >= 0 : undefined,
+                currentPnlLabel: Number.isFinite(entryPnl) ? formatLiveMoneyLabel(entryPnl) : undefined,
+                currentPnlPositive: Number.isFinite(entryPnl) ? entryPnl >= 0 : undefined,
                 draggable: false,
                 positionId: position.positionId,
                 showTpToggle: !Number.isFinite(position.takeProfit),
@@ -1250,12 +1321,15 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             if (Number.isFinite(position.stopLoss)) {
                 const slPrice = liveTradePreviewPrices[slToolId] ?? (position.stopLoss as number);
                 const pnl = computePnl(entryPrice, slPrice, lots, direction, symbol);
+                const pips = computePips(entryPrice, slPrice, direction, symbol);
                 addItem(position.stopLoss as number, slToolId, {
                     id: `position-sl:${position.positionId}`,
                     lineType: "position-sl",
                     color: "rgba(239, 68, 68, 0.95)",
                     lotsLabel,
                     label: "SL",
+                    pipsLabel: pips.label,
+                    pipsPositive: pips.positive,
                     pnlLabel: pnl.label,
                     pnlPositive: pnl.positive,
                     draggable: true,
@@ -1267,12 +1341,15 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             if (Number.isFinite(position.takeProfit)) {
                 const tpPrice = liveTradePreviewPrices[tpToolId] ?? (position.takeProfit as number);
                 const pnl = computePnl(entryPrice, tpPrice, lots, direction, symbol);
+                const pips = computePips(entryPrice, tpPrice, direction, symbol);
                 addItem(position.takeProfit as number, tpToolId, {
                     id: `position-tp:${position.positionId}`,
                     lineType: "position-tp",
                     color: "rgba(16, 185, 129, 0.95)",
                     lotsLabel,
                     label: "TP",
+                    pipsLabel: pips.label,
+                    pipsPositive: pips.positive,
                     pnlLabel: pnl.label,
                     pnlPositive: pnl.positive,
                     draggable: true,
@@ -1317,12 +1394,15 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             if (Number.isFinite(order.stopLoss)) {
                 const slPrice = liveTradePreviewPrices[slToolId] ?? (order.stopLoss as number);
                 const pnl = computePnl(entryPrice, slPrice, lots, direction, symbol);
+                const pips = computePips(entryPrice, slPrice, direction, symbol);
                 addItem(order.stopLoss as number, slToolId, {
                     id: `order-sl:${order.orderId}`,
                     lineType: "order-sl",
                     color: "rgba(239, 68, 68, 0.95)",
                     lotsLabel,
                     label: "SL",
+                    pipsLabel: pips.label,
+                    pipsPositive: pips.positive,
                     pnlLabel: pnl.label,
                     pnlPositive: pnl.positive,
                     draggable: true,
@@ -1334,12 +1414,15 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             if (Number.isFinite(order.takeProfit)) {
                 const tpPrice = liveTradePreviewPrices[tpToolId] ?? (order.takeProfit as number);
                 const pnl = computePnl(entryPrice, tpPrice, lots, direction, symbol);
+                const pips = computePips(entryPrice, tpPrice, direction, symbol);
                 addItem(order.takeProfit as number, tpToolId, {
                     id: `order-tp:${order.orderId}`,
                     lineType: "order-tp",
                     color: "rgba(16, 185, 129, 0.95)",
                     lotsLabel,
                     label: "TP",
+                    pipsLabel: pips.label,
+                    pipsPositive: pips.positive,
                     pnlLabel: pnl.label,
                     pnlPositive: pnl.positive,
                     draggable: true,
@@ -1353,7 +1436,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         setLiveTradeOverlayItems((current) =>
             sameLiveTradeOverlayItems(current, nextItems) ? current : nextItems
         );
-    }, [activeLiveOrders, activeLivePositions, liveTradePreviewPrices]);
+    }, [activeLiveOrders, activeLivePositions, data, liveAskPrice, liveBidPrice, liveTradePreviewPrices]);
 
     const resolveLiveTradePreviewDescriptor = useCallback((
         toolId: string,
@@ -2889,41 +2972,50 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                         if (!Number.isFinite(nextPrice)) return;
 
                         if (liveMeta.kind === "position-stopLoss") {
+                            const position = activeLivePositionsRef.current.find((p) => p.positionId === liveMeta.positionId);
                             void onActiveLivePositionChangeRef.current?.(
                                 liveMeta.positionId,
                                 nextPrice,
-                                undefined
+                                position?.takeProfit ?? undefined
                             );
                             return;
                         }
 
                         if (liveMeta.kind === "position-takeProfit") {
+                            const position = activeLivePositionsRef.current.find((p) => p.positionId === liveMeta.positionId);
                             void onActiveLivePositionChangeRef.current?.(
                                 liveMeta.positionId,
-                                undefined,
+                                position?.stopLoss ?? undefined,
                                 nextPrice
                             );
                             return;
                         }
 
                         if (liveMeta.kind === "order-entry") {
+                            const order = activeLiveOrdersRef.current.find((o) => o.orderId === liveMeta.orderId);
                             void onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
                                 ...(String(liveMeta.orderType).toUpperCase().includes("LIMIT")
                                     ? { limitPrice: nextPrice }
                                     : { stopPrice: nextPrice }),
+                                stopLoss: order?.stopLoss ?? undefined,
+                                takeProfit: order?.takeProfit ?? undefined,
                             });
                             return;
                         }
 
                         if (liveMeta.kind === "order-stopLoss") {
+                            const order = activeLiveOrdersRef.current.find((o) => o.orderId === liveMeta.orderId);
                             void onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
+                                takeProfit: order?.takeProfit ?? undefined,
                                 stopLoss: nextPrice,
                             });
                             return;
                         }
 
                         if (liveMeta.kind === "order-takeProfit") {
+                            const order = activeLiveOrdersRef.current.find((o) => o.orderId === liveMeta.orderId);
                             void onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
+                                stopLoss: order?.stopLoss ?? undefined,
                                 takeProfit: nextPrice,
                             });
                         }
@@ -4421,12 +4513,22 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         event.stopPropagation();
 
         if (item.positionId && item.lineType === "position-tp") {
-            void onActiveLivePositionChangeRef.current?.(item.positionId, undefined, null);
+            const position = activeLivePositionsRef.current.find((candidate) => candidate.positionId === item.positionId);
+            void onActiveLivePositionChangeRef.current?.(
+                item.positionId,
+                position?.stopLoss ?? null,
+                null
+            );
             return;
         }
 
         if (item.positionId && item.lineType === "position-sl") {
-            void onActiveLivePositionChangeRef.current?.(item.positionId, null, undefined);
+            const position = activeLivePositionsRef.current.find((candidate) => candidate.positionId === item.positionId);
+            void onActiveLivePositionChangeRef.current?.(
+                item.positionId,
+                null,
+                position?.takeProfit ?? null
+            );
             return;
         }
 
@@ -4436,12 +4538,20 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         }
 
         if (item.orderId && item.lineType === "order-tp") {
-            void onActiveLiveOrderChangeRef.current?.(item.orderId, { takeProfit: null });
+            const order = activeLiveOrdersRef.current.find((candidate) => candidate.orderId === item.orderId);
+            void onActiveLiveOrderChangeRef.current?.(item.orderId, {
+                stopLoss: order?.stopLoss ?? null,
+                takeProfit: null,
+            });
             return;
         }
 
         if (item.orderId && item.lineType === "order-sl") {
-            void onActiveLiveOrderChangeRef.current?.(item.orderId, { stopLoss: null });
+            const order = activeLiveOrdersRef.current.find((candidate) => candidate.orderId === item.orderId);
+            void onActiveLiveOrderChangeRef.current?.(item.orderId, {
+                stopLoss: null,
+                takeProfit: order?.takeProfit ?? null,
+            });
             return;
         }
 
@@ -4486,19 +4596,61 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                     {liveTradeOverlayItems.map((item) => {
                         const isEntry = item.lineType === "position-entry" || item.lineType === "order-entry";
                         const isSlTp = !isEntry;
-                        const borderColor = item.color.replace(/[\d.]+\)$/, "0.6)");
+                        const canDragWholeBadge = isSlTp && item.draggable && Boolean(item.dragToolId);
+                        const borderColor = withColorAlpha(item.color, 0.95);
+                        const chipBg = withColorAlpha(item.color, 1);
+                        const chipFg = "rgba(248, 250, 252, 0.98)";
+                        const actionBg = withColorAlpha(item.color, 0.9);
+                        const pnlBg = item.pnlPositive ? "rgba(6, 95, 70, 1)" : "rgba(127, 29, 29, 1)";
+                        const pnlFg = item.pnlPositive ? "rgba(236, 253, 245, 0.98)" : "rgba(254, 242, 242, 0.98)";
+                        const pipsBg =
+                            item.pipsPositive == null
+                                ? "rgba(30, 41, 59, 1)"
+                                : item.pipsPositive
+                                    ? "rgba(6, 95, 70, 1)"
+                                    : "rgba(127, 29, 29, 1)";
+                        const pipsFg =
+                            item.pipsPositive == null
+                                ? "rgba(226, 232, 240, 0.98)"
+                                : item.pipsPositive
+                                    ? "rgba(236, 253, 245, 0.98)"
+                                    : "rgba(254, 242, 242, 0.98)";
+                        const currentPnlBg =
+                            item.currentPnlPositive == null
+                                ? "rgba(30, 41, 59, 1)"
+                                : item.currentPnlPositive
+                                    ? "rgba(6, 95, 70, 1)"
+                                    : "rgba(127, 29, 29, 1)";
+                        const currentPnlFg =
+                            item.currentPnlPositive == null
+                                ? "rgba(226, 232, 240, 0.98)"
+                                : item.currentPnlPositive
+                                    ? "rgba(236, 253, 245, 0.98)"
+                                    : "rgba(254, 242, 242, 0.98)";
 
                         return (
                             <div
                                 key={item.id}
-                                className="absolute flex -translate-y-1/2 items-center"
+                                className={`absolute z-[2] flex -translate-y-1/2 items-center ${canDragWholeBadge ? "pointer-events-auto cursor-ns-resize" : ""}`}
                                 style={{ top: `${item.y}px`, right: `${liveTradeOverlayPadRight}px` }}
+                                onPointerDown={
+                                    canDragWholeBadge
+                                        ? (e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleLiveTradeBadgeDragStart(
+                                                e as unknown as ReactPointerEvent<HTMLButtonElement>,
+                                                item.dragToolId!
+                                            );
+                                        }
+                                        : undefined
+                                }
                             >
                                 {/* Invisible full-width drag strip for line-level dragging */}
                                 {item.draggable && item.dragToolId && (
                                     <div
                                         className="pointer-events-auto absolute right-0 cursor-ns-resize"
-                                        style={{ top: "-4px", height: "9px", left: "-3000px" }}
+                                        style={{ top: "-9px", height: "18px", left: "-3000px" }}
                                         onPointerDown={(e) => {
                                             e.preventDefault();
                                             e.stopPropagation();
@@ -4511,11 +4663,15 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                                 {isEntry && item.showTpToggle && item.tpDragToolId && (
                                     <button
                                         type="button"
-                                        onPointerDown={(e) => handleLiveTradeBadgeDragStart(e, item.tpDragToolId!)}
-                                        className={`pointer-events-auto rounded-l border-y border-l px-1.5 py-[1px] text-[10px] font-bold leading-tight tracking-wide transition-colors ${
+                                        onPointerDown={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleLiveTradeBadgeDragStart(e, item.tpDragToolId!);
+                                        }}
+                                        className={`pointer-events-auto inline-flex h-5 items-center rounded-l border-y border-l px-1.5 text-[10px] font-bold leading-none tracking-wide shadow-[0_1px_2px_rgba(0,0,0,0.45)] transition-colors ${
                                             item.hasTp
-                                                ? "cursor-ns-resize border-emerald-500/50 bg-emerald-950/85 text-emerald-400 hover:bg-emerald-900/80"
-                                                : "cursor-ns-resize border-slate-600/40 bg-slate-950/80 text-slate-500 hover:bg-slate-800/80 hover:text-slate-400"
+                                                ? "cursor-ns-resize border-emerald-500/80 bg-emerald-950 text-emerald-300 hover:bg-emerald-900"
+                                                : "cursor-ns-resize border-slate-600/60 bg-slate-950 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
                                         }`}
                                         title="Drag to set take profit"
                                     >
@@ -4527,11 +4683,15 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                                 {isEntry && item.showSlToggle && item.slDragToolId && (
                                     <button
                                         type="button"
-                                        onPointerDown={(e) => handleLiveTradeBadgeDragStart(e, item.slDragToolId!)}
-                                        className={`pointer-events-auto border-y border-l px-1.5 py-[1px] text-[10px] font-bold leading-tight tracking-wide transition-colors ${
+                                        onPointerDown={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleLiveTradeBadgeDragStart(e, item.slDragToolId!);
+                                        }}
+                                        className={`pointer-events-auto inline-flex h-5 items-center border-y border-l px-1.5 text-[10px] font-bold leading-none tracking-wide shadow-[0_1px_2px_rgba(0,0,0,0.45)] transition-colors ${
                                             item.hasSl
-                                                ? "cursor-ns-resize border-red-500/50 bg-red-950/85 text-red-400 hover:bg-red-900/80"
-                                                : "cursor-ns-resize border-slate-600/40 bg-slate-950/80 text-slate-500 hover:bg-slate-800/80 hover:text-slate-400"
+                                                ? "cursor-ns-resize border-red-500/80 bg-red-950 text-red-300 hover:bg-red-900"
+                                                : "cursor-ns-resize border-slate-600/60 bg-slate-950 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
                                         }`}
                                         title="Drag to set stop loss"
                                     >
@@ -4539,14 +4699,41 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                                     </button>
                                 )}
 
+                                {item.pipsLabel && (
+                                    <span
+                                        className="inline-flex h-5 items-center border-y border-l px-1.5 text-[11px] font-semibold leading-none tabular-nums shadow-[0_1px_2px_rgba(0,0,0,0.45)]"
+                                        style={{
+                                            borderColor,
+                                            backgroundColor: pipsBg,
+                                            color: pipsFg,
+                                            ...(isSlTp && !item.showTpToggle ? { borderRadius: "3px 0 0 3px" } : {}),
+                                        }}
+                                    >
+                                        {item.pipsLabel}
+                                    </span>
+                                )}
+
+                                {isEntry && item.currentPnlLabel && (
+                                    <span
+                                        className="inline-flex h-5 items-center border-y border-l px-1.5 text-[11px] font-semibold leading-none tabular-nums shadow-[0_1px_2px_rgba(0,0,0,0.45)]"
+                                        style={{
+                                            borderColor,
+                                            backgroundColor: currentPnlBg,
+                                            color: currentPnlFg,
+                                        }}
+                                    >
+                                        {item.currentPnlLabel}
+                                    </span>
+                                )}
+
                                 {/* Lots badge */}
                                 <span
-                                    className="border-y border-l px-1.5 py-[1px] text-[10px] font-semibold leading-tight tabular-nums"
+                                    className="inline-flex h-5 items-center border-y border-l px-1.5 text-[11px] font-semibold leading-none tabular-nums shadow-[0_1px_2px_rgba(0,0,0,0.45)]"
                                     style={{
                                         borderColor,
-                                        backgroundColor: item.color.replace(/[\d.]+\)$/, "0.96)"),
-                                        color: item.color.replace(/[\d.]+\)$/, "0.9)"),
-                                        ...(isSlTp && !item.showTpToggle ? { borderRadius: "3px 0 0 3px" } : {}),
+                                        backgroundColor: chipBg,
+                                        color: chipFg,
+                                        ...(isSlTp && !item.showTpToggle && !item.pipsLabel ? { borderRadius: "3px 0 0 3px" } : {}),
                                     }}
                                 >
                                     {item.lotsLabel}
@@ -4555,15 +4742,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                                 {/* P&L label — SL/TP lines */}
                                 {isSlTp && item.pnlLabel && (
                                     <span
-                                        className="border-y border-l px-1.5 py-[1px] text-[10px] font-semibold leading-tight tabular-nums"
+                                        className="inline-flex h-5 items-center border-y border-l px-1.5 text-[11px] font-semibold leading-none tabular-nums shadow-[0_1px_2px_rgba(0,0,0,0.45)]"
                                         style={{
                                             borderColor,
-                                            backgroundColor: item.pnlPositive
-                                                ? "rgba(6, 95, 70, 0.96)"
-                                                : "rgba(127, 29, 29, 0.96)",
-                                            color: item.pnlPositive
-                                                ? "rgba(52, 211, 153, 0.95)"
-                                                : "rgba(252, 165, 165, 0.95)",
+                                            backgroundColor: pnlBg,
+                                            color: pnlFg,
                                         }}
                                     >
                                         {item.pnlLabel}
@@ -4576,11 +4759,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                                         <button
                                             type="button"
                                             onPointerDown={(e) => handleLiveTradeBadgeDragStart(e, item.dragToolId!)}
-                                            className="pointer-events-auto cursor-ns-resize border-y border-l px-2 py-[1px] text-[10px] font-semibold leading-tight transition-colors hover:brightness-125"
+                                            className="pointer-events-auto inline-flex h-5 cursor-ns-resize items-center border-y border-l px-2 text-[11px] font-semibold leading-none tracking-[0.01em] shadow-[0_1px_2px_rgba(0,0,0,0.45)] transition-colors hover:brightness-110"
                                             style={{
                                                 borderColor,
-                                                backgroundColor: item.color.replace(/[\d.]+\)$/, "0.96)"),
-                                                color: item.color.replace(/[\d.]+\)$/, "0.95)"),
+                                                backgroundColor: chipBg,
+                                                color: chipFg,
                                             }}
                                             title="Drag to move this pending order"
                                         >
@@ -4588,11 +4771,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                                         </button>
                                     ) : (
                                         <span
-                                            className="border-y border-l px-2 py-[1px] text-[10px] font-semibold leading-tight"
+                                            className="inline-flex h-5 items-center border-y border-l px-2 text-[11px] font-semibold leading-none tracking-[0.01em] shadow-[0_1px_2px_rgba(0,0,0,0.45)]"
                                             style={{
                                                 borderColor,
-                                                backgroundColor: item.color.replace(/[\d.]+\)$/, "0.96)"),
-                                                color: item.color.replace(/[\d.]+\)$/, "0.95)"),
+                                                backgroundColor: chipBg,
+                                                color: chipFg,
                                             }}
                                         >
                                             {item.label}
@@ -4605,11 +4788,11 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                                     type="button"
                                     onClick={(e) => handleLiveTradeActionClick(e, item)}
                                     onPointerDown={(e) => e.stopPropagation()}
-                                    className="pointer-events-auto rounded-r border px-1 py-[1px] text-[10px] font-bold leading-tight transition-colors hover:bg-rose-600/80 hover:text-white"
+                                    className="pointer-events-auto inline-flex h-5 items-center rounded-r border px-1.5 text-[11px] font-bold leading-none text-slate-50 shadow-[0_1px_2px_rgba(0,0,0,0.45)] transition-colors hover:bg-rose-600 hover:text-white"
                                     style={{
                                         borderColor,
-                                        backgroundColor: item.color.replace(/[\d.]+\)$/, "0.96)"),
-                                        color: item.color.replace(/[\d.]+\)$/, "0.7)"),
+                                        backgroundColor: actionBg,
+                                        color: chipFg,
                                     }}
                                     title={
                                         item.lineType === "order-entry"

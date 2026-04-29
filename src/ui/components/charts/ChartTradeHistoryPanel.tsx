@@ -6,11 +6,14 @@ import { Calendar, ChevronDown, RotateCcw, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Trade } from "@domain/entities";
 import { Direction } from "@domain/enums";
-import { volumeToLots } from "@lib/pnl-estimate";
+import { estimateGrossProfit, volumeToLots } from "@lib/pnl-estimate";
+import type { LiveOrderSnapshot, LivePositionSnapshot } from "@ui/hooks/useCTraderLiveBar";
 
 type DirectionFilter = Direction | "Both";
 type TradeSortKey = "direction" | "date" | "lots" | "pnl";
 type TradeSortDirection = "asc" | "desc";
+type TradePanelTab = "history" | "live";
+type LiveDetailTab = "open" | "pending";
 const DESKTOP_BREAKPOINT_PX = 768;
 const DEFAULT_DESKTOP_PANEL_WIDTH_PX = 28 * 16;
 const MAX_DESKTOP_PANEL_WIDTH_RATIO = 0.7;
@@ -23,6 +26,13 @@ export interface ChartTradeHistoryPanelData {
   trades: Trade[];
   selectedTradeId: number | null;
   onSelectTrade: (trade: Trade) => void;
+  liveModeEnabled?: boolean;
+  livePositions?: LivePositionSnapshot[];
+  liveOrders?: LiveOrderSnapshot[];
+  liveBidPrice?: number | null;
+  liveAskPrice?: number | null;
+  onClosePosition?: (positionId: string) => void;
+  onCancelOrder?: (orderId: string) => void;
   onClose: () => void;
 }
 
@@ -63,12 +73,62 @@ function parseDateInputValue(value: string, fallback: Date, endOfSelectedDay = f
   return endOfSelectedDay ? endOfDay(nextDate) : startOfDay(nextDate);
 }
 
+function inferPriceDecimals(price: number | null | undefined): number {
+  if (price == null || !Number.isFinite(price)) return 5;
+  if (price >= 100000) return 0;
+  if (price >= 10000) return 1;
+  if (price >= 1000) return 2;
+  if (price >= 100) return 3;
+  return 5;
+}
+
+function formatLivePriceValue(price: number | null | undefined): string {
+  if (price == null || !Number.isFinite(price)) return "--";
+  return price.toLocaleString(undefined, {
+    minimumFractionDigits: inferPriceDecimals(price),
+    maximumFractionDigits: inferPriceDecimals(price),
+  });
+}
+
+function getFloatingPnlLabel(position: LivePositionSnapshot, bid: number | null, ask: number | null): string {
+  const markPrice =
+    position.direction === "Buy"
+      ? bid
+      : ask;
+
+  if (
+    markPrice == null ||
+    !Number.isFinite(markPrice) ||
+    position.entryPrice == null ||
+    !Number.isFinite(position.entryPrice)
+  ) {
+    return "--";
+  }
+
+  return formatProfit(
+    estimateGrossProfit(
+      position.entryPrice,
+      markPrice,
+      position.lots,
+      position.direction,
+      position.symbol
+    )
+  );
+}
+
 export function ChartTradeHistoryPanel({
   symbol,
   broker,
   trades,
   selectedTradeId,
   onSelectTrade,
+  liveModeEnabled = false,
+  livePositions = [],
+  liveOrders = [],
+  liveBidPrice = null,
+  liveAskPrice = null,
+  onClosePosition,
+  onCancelOrder,
   onClose,
 }: ChartTradeHistoryPanelData) {
   const [isDesktop, setIsDesktop] = useState(() => {
@@ -92,6 +152,8 @@ export function ChartTradeHistoryPanel({
   const [directionOpen, setDirectionOpen] = useState(false);
   const [sortKey, setSortKey] = useState<TradeSortKey>("date");
   const [sortDirection, setSortDirection] = useState<TradeSortDirection>("desc");
+  const [activeTab, setActiveTab] = useState<TradePanelTab>("history");
+  const [liveDetailTab, setLiveDetailTab] = useState<LiveDetailTab>("open");
   const [dateDraftFrom, setDateDraftFrom] = useState("");
   const [dateDraftTo, setDateDraftTo] = useState("");
   const dateRef = useRef<HTMLDivElement>(null);
@@ -261,6 +323,24 @@ export function ChartTradeHistoryPanel({
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  const showLiveTab = liveModeEnabled || livePositions.length > 0 || liveOrders.length > 0;
+
+  useEffect(() => {
+    if (!showLiveTab && activeTab === "live") {
+      setActiveTab("history");
+    }
+  }, [activeTab, showLiveTab]);
+
+  useEffect(() => {
+    if (liveDetailTab === "open" && livePositions.length === 0 && liveOrders.length > 0) {
+      setLiveDetailTab("pending");
+      return;
+    }
+    if (liveDetailTab === "pending" && liveOrders.length === 0 && livePositions.length > 0) {
+      setLiveDetailTab("open");
+    }
+  }, [liveDetailTab, liveOrders.length, livePositions.length]);
+
   const filteredTrades = useMemo(() => {
     const fromTime = startOfDay(from).getTime();
     const toTime = endOfDay(to).getTime();
@@ -307,6 +387,29 @@ export function ChartTradeHistoryPanel({
     return { total, totalProfit, winRate };
   }, [filteredTrades]);
 
+  const sortedLiveOrders = useMemo(
+    () =>
+      [...liveOrders].sort(
+        (left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0)
+      ),
+    [liveOrders]
+  );
+  const sortedLivePositions = useMemo(
+    () =>
+      [...livePositions].sort(
+        (left, right) => (right.updatedAt ?? right.openTimestamp ?? 0) - (left.updatedAt ?? left.openTimestamp ?? 0)
+      ),
+    [livePositions]
+  );
+  const liveSummary = useMemo(
+    () => ({
+      orders: liveOrders.length,
+      positions: livePositions.length,
+      total: liveOrders.length + livePositions.length,
+    }),
+    [liveOrders.length, livePositions.length]
+  );
+
   const subtitle = broker && symbol ? `${broker} - ${symbol}` : symbol ?? "Trade history";
   const rangeLabel = `${format(from, "MMM d, yyyy")} - ${format(to, "MMM d, yyyy")}`;
 
@@ -330,6 +433,126 @@ export function ChartTradeHistoryPanel({
     }));
     setDateOpen(false);
   };
+
+  const livePanelContent = (
+    <>
+      <div className="grid grid-cols-3 gap-2">
+        <div className="rounded-lg border border-border bg-background px-3 py-2">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Total</div>
+          <div className="mt-1 text-sm font-semibold text-foreground">{liveSummary.total}</div>
+        </div>
+        <div className="rounded-lg border border-border bg-background px-3 py-2">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Orders</div>
+          <div className="mt-1 text-sm font-semibold text-foreground">{liveSummary.orders}</div>
+        </div>
+        <div className="rounded-lg border border-border bg-background px-3 py-2">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Positions</div>
+          <div className="mt-1 text-sm font-semibold text-foreground">{liveSummary.positions}</div>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-border bg-background">
+        <div className="border-b border-border px-2 py-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setLiveDetailTab("open")}
+              className={`inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                liveDetailTab === "open"
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              <span>Open</span>
+              <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-foreground">
+                {sortedLivePositions.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setLiveDetailTab("pending")}
+              className={`inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                liveDetailTab === "pending"
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              <span>Pending</span>
+              <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-foreground">
+                {sortedLiveOrders.length}
+              </span>
+            </button>
+          </div>
+        </div>
+        {liveDetailTab === "pending" ? (
+          sortedLiveOrders.length === 0 ? (
+            <div className="px-4 py-5 text-center text-xs text-muted-foreground">
+              No pending orders.
+            </div>
+          ) : (
+            sortedLiveOrders.map((order) => (
+              <div key={`order-${order.orderId}`} className="border-b border-border/70 px-3 py-3 last:border-b-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-foreground">{order.symbol}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${order.direction === "Buy" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-destructive/10 text-destructive"}`}>
+                        {order.direction} {order.orderType}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">{order.lots.toFixed(2)} lots</div>
+                    <div className="mt-1 text-xs text-muted-foreground">Entry {formatLivePriceValue(order.limitPrice ?? order.stopPrice)}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">SL {formatLivePriceValue(order.stopLoss)} · TP {formatLivePriceValue(order.takeProfit)}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onCancelOrder?.(order.orderId)}
+                    className="shrink-0 rounded-md border border-destructive/30 px-2.5 py-1 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ))
+          )
+        ) : sortedLivePositions.length === 0 ? (
+          <div className="px-4 py-5 text-center text-xs text-muted-foreground">
+            No open positions.
+          </div>
+        ) : (
+          sortedLivePositions.map((position) => {
+            const floatingPnlLabel = getFloatingPnlLabel(position, liveBidPrice, liveAskPrice);
+
+            return (
+              <div key={`position-${position.positionId}`} className="border-b border-border/70 px-3 py-3 last:border-b-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-foreground">{position.symbol}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${position.direction === "Buy" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-destructive/10 text-destructive"}`}>
+                        {position.direction}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">{position.lots.toFixed(2)} lots</div>
+                    <div className="mt-1 text-xs text-muted-foreground">Entry {formatLivePriceValue(position.entryPrice)}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">Floating PNL {floatingPnlLabel}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">SL {formatLivePriceValue(position.stopLoss)} · TP {formatLivePriceValue(position.takeProfit)}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onClosePosition?.(position.positionId)}
+                    className="shrink-0 rounded-md border border-destructive/30 px-2.5 py-1 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </>
+  );
 
   const panelBody = (
     <div
@@ -371,6 +594,41 @@ export function ChartTradeHistoryPanel({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-2 px-3 py-2 md:px-3 md:py-2">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab("history")}
+            className={`inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors ${
+              activeTab === "history"
+                ? "border-primary/40 bg-primary/10 text-primary"
+                : "border-border bg-background text-muted-foreground hover:bg-accent"
+            }`}
+          >
+            <span>History</span>
+            <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-foreground">
+              {trades.length}
+            </span>
+          </button>
+          {showLiveTab ? (
+            <button
+              type="button"
+              onClick={() => setActiveTab("live")}
+              className={`inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                activeTab === "live"
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              <span>Live</span>
+              <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-foreground">
+                {liveSummary.total}
+              </span>
+            </button>
+          ) : null}
+        </div>
+
+        {activeTab === "history" ? (
+          <>
         <div className="relative z-20 grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
           <div className="relative" ref={dateRef}>
             <button
@@ -648,6 +906,8 @@ export function ChartTradeHistoryPanel({
             )}
           </div>
         </div>
+          </>
+        ) : livePanelContent}
       </div>
     </div>
   );

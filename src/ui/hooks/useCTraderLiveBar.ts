@@ -49,9 +49,43 @@ interface LiveQuote {
   spotTimestamp?: number;
 }
 
+export interface LivePositionSnapshot {
+  positionId: string;
+  symbol: string;
+  direction: "Buy" | "Sell";
+  volume: number;
+  lots: number;
+  openTimestamp: number | null;
+  entryPrice: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  trailingStopLoss: boolean;
+  label: string;
+  comment: string;
+  updatedAt: number | null;
+}
+
+export interface LiveOrderSnapshot {
+  orderId: string;
+  symbol: string;
+  direction: "Buy" | "Sell";
+  orderType: string;
+  lots: number;
+  volume: number;
+  limitPrice: number | null;
+  stopPrice: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  createdAt: number | null;
+  expiresAt: number | null;
+  positionId: number | null;
+}
+
 interface UseCTraderLiveBarResult {
   currentBar: ChartBar | null;
   quote: LiveQuote | null;
+  positions: LivePositionSnapshot[];
+  orders: LiveOrderSnapshot[];
   status: LiveChartStatus;
   error: string | null;
   backfillCompletedAt: number | null;
@@ -156,6 +190,8 @@ export function useCTraderLiveBar({
   const [serviceUrl, setServiceUrl] = useState(DEFAULT_CTRADER_LIVE_SERVICE_URL);
   const [currentBar, setCurrentBar] = useState<ChartBar | null>(null);
   const [quote, setQuote] = useState<LiveQuote | null>(null);
+  const [positions, setPositions] = useState<LivePositionSnapshot[]>([]);
+  const [orders, setOrders] = useState<LiveOrderSnapshot[]>([]);
   const [status, setStatus] = useState<LiveChartStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [backfillCompletedAt, setBackfillCompletedAt] = useState<number | null>(null);
@@ -194,6 +230,8 @@ export function useCTraderLiveBar({
       previousBarRef.current = null;
       setCurrentBar(null);
       setQuote(null);
+      setPositions([]);
+      setOrders([]);
       setStatus("idle");
       setError(null);
       setSessionIdState(null);
@@ -258,9 +296,12 @@ export function useCTraderLiveBar({
       if (cancelled || !payload || typeof payload !== "object") return;
 
       const next = payload as {
+        type?: string;
         bid?: number;
         ask?: number;
         spotTimestamp?: number;
+        positions?: LivePositionSnapshot[];
+        orders?: LiveOrderSnapshot[];
         currentBar?: {
           timestamp: number;
           open: number;
@@ -270,6 +311,14 @@ export function useCTraderLiveBar({
           volume: number;
         } | null;
       };
+
+      if (next.type === "snapshot") {
+        setPositions(Array.isArray(next.positions) ? next.positions : []);
+        setOrders(Array.isArray(next.orders) ? next.orders : []);
+        setError(null);
+        return;
+      }
+
       const livePrice =
         typeof next.bid === "number"
           ? next.bid
@@ -440,7 +489,6 @@ export function useCTraderLiveBar({
           }
         };
         eventSource.onmessage = handleMessage;
-        eventSource.addEventListener("message", handleMessage as EventListener);
 
         eventSource.onerror = () => {
           if (cancelled) return;
@@ -554,6 +602,8 @@ export function useCTraderLiveBar({
   return {
     currentBar,
     quote,
+    positions,
+    orders,
     status,
     error,
     backfillCompletedAt,
