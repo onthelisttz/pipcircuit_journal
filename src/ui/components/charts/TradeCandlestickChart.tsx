@@ -296,18 +296,23 @@ type LiveTradeLineSpec = {
 
 type LiveTradeOverlayItem = {
     id: string;
-    kind: "position" | "order";
-    x: number;
+    lineType: "position-entry" | "position-sl" | "position-tp" | "order-entry" | "order-sl" | "order-tp";
     y: number;
+    color: string;
     lotsLabel: string;
     label: string;
-    entryToolId?: string;
+    pnlLabel?: string;
+    pnlPositive?: boolean;
+    draggable: boolean;
+    dragToolId?: string;
     positionId?: string;
     orderId?: string;
-    hasStopLoss: boolean;
-    hasTakeProfit: boolean;
-    stopLossToolId?: string;
-    takeProfitToolId?: string;
+    showTpToggle?: boolean;
+    showSlToggle?: boolean;
+    tpDragToolId?: string;
+    slDragToolId?: string;
+    hasTp?: boolean;
+    hasSl?: boolean;
 };
 
 type LiveTradeHtmlDragSession = {
@@ -637,7 +642,7 @@ export interface TradeCandlestickChartProps {
     /** Active live positions rendered as chart-managed long/short tools */
     activeLivePositions?: ActiveLivePosition[];
     /** Called when a live position's SL/TP is dragged on chart */
-    onActiveLivePositionChange?: (positionId: string, stopLoss?: number, takeProfit?: number) => void;
+    onActiveLivePositionChange?: (positionId: string, stopLoss?: number | null, takeProfit?: number | null) => void;
     /** Called when a live position should be closed from the chart overlay */
     onActiveLivePositionClose?: (positionId: string) => void;
     /** Active live pending orders rendered as draggable chart lines */
@@ -646,10 +651,10 @@ export interface TradeCandlestickChartProps {
     onActiveLiveOrderChange?: (
         orderId: string,
         patch: {
-            limitPrice?: number;
-            stopPrice?: number;
-            stopLoss?: number;
-            takeProfit?: number;
+            limitPrice?: number | null;
+            stopPrice?: number | null;
+            stopLoss?: number | null;
+            takeProfit?: number | null;
         }
     ) => void;
     /** Called when a live pending order should be cancelled from the chart overlay */
@@ -702,27 +707,30 @@ function sameLiveTradeOverlayItems(left: LiveTradeOverlayItem[], right: LiveTrad
     if (left.length !== right.length) return false;
 
     for (let index = 0; index < left.length; index += 1) {
-        const previous = left[index];
-        const next = right[index];
+        const a = left[index];
+        const b = right[index];
         if (
-            previous.id !== next.id ||
-            previous.kind !== next.kind ||
-            previous.label !== next.label ||
-            previous.lotsLabel !== next.lotsLabel ||
-            previous.entryToolId !== next.entryToolId ||
-            previous.positionId !== next.positionId ||
-            previous.orderId !== next.orderId ||
-            previous.hasStopLoss !== next.hasStopLoss ||
-            previous.hasTakeProfit !== next.hasTakeProfit ||
-            previous.stopLossToolId !== next.stopLossToolId ||
-            previous.takeProfitToolId !== next.takeProfitToolId
+            a.id !== b.id ||
+            a.lineType !== b.lineType ||
+            a.label !== b.label ||
+            a.lotsLabel !== b.lotsLabel ||
+            a.color !== b.color ||
+            a.pnlLabel !== b.pnlLabel ||
+            a.pnlPositive !== b.pnlPositive ||
+            a.draggable !== b.draggable ||
+            a.dragToolId !== b.dragToolId ||
+            a.positionId !== b.positionId ||
+            a.orderId !== b.orderId ||
+            a.showTpToggle !== b.showTpToggle ||
+            a.showSlToggle !== b.showSlToggle ||
+            a.hasTp !== b.hasTp ||
+            a.hasSl !== b.hasSl
         ) {
             return false;
         }
 
-        const xMatches = previous.x === next.x || Math.abs(previous.x - next.x) <= 0.5;
-        const yMatches = previous.y === next.y || Math.abs(previous.y - next.y) <= 0.5;
-        if (!xMatches || !yMatches) {
+        const yMatches = a.y === b.y || Math.abs(a.y - b.y) <= 0.5;
+        if (!yMatches) {
             return false;
         }
     }
@@ -821,6 +829,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const liveBidLineRef = useRef<IPriceLine | null>(null);
     const liveAskLineRef = useRef<IPriceLine | null>(null);
     const liveTradePriceLinesRef = useRef<Map<string, IPriceLine>>(new Map());
+    const activeLivePositionsRef = useRef(activeLivePositions);
+    const activeLiveOrdersRef = useRef(activeLiveOrders);
     const priceScaleUnlockFrameRef = useRef<number | null>(null);
     const [isChartReady, setIsChartReady] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
@@ -851,6 +861,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         right: null,
     });
     const [liveTradeOverlayItems, setLiveTradeOverlayItems] = useState<LiveTradeOverlayItem[]>([]);
+    const [liveTradeOverlayPadRight, setLiveTradeOverlayPadRight] = useState(0);
     const [liveTradePreviewPrices, setLiveTradePreviewPrices] = useState<Record<string, number>>({});
     const [liveTradeDragSession, setLiveTradeDragSession] = useState<LiveTradeHtmlDragSession | null>(null);
     const [selectionBox, setSelectionBox] = useState<SelectionBoxBounds | null>(null);
@@ -1184,72 +1195,161 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const refreshLiveTradeOverlay = useCallback(() => {
         const chart = chartRef.current;
         const series = seriesRef.current;
-        if (!chart || !series) {
+        const container = containerRef.current;
+        if (!chart || !series || !container) {
             setLiveTradeOverlayItems((current) => (current.length === 0 ? current : []));
             return;
         }
 
         const paneSize = chart.paneSize();
-        const timeScale = chart.timeScale();
-        const rowWidth = 210;
-        const clampX = (value: number) =>
-            Math.max(6, Math.min(value, Math.max(6, paneSize.width - rowWidth - 6)));
+        const padRight = Math.max(0, container.clientWidth - paneSize.width);
+        setLiveTradeOverlayPadRight((prev) => (Math.abs(prev - padRight) < 1 ? prev : padRight));
 
         const nextItems: LiveTradeOverlayItem[] = [];
-        const lastBarTimestamp = dataRef.current[dataRef.current.length - 1]?.timestamp ?? Date.now();
+
+        const addItem = (rawPrice: number, dragToolId: string | undefined, item: Omit<LiveTradeOverlayItem, "y">) => {
+            const displayPrice = dragToolId ? (liveTradePreviewPrices[dragToolId] ?? rawPrice) : rawPrice;
+            const y = series.priceToCoordinate(displayPrice);
+            if (y == null || !Number.isFinite(y) || y < -20 || y > paneSize.height + 20) return;
+            nextItems.push({ ...item, y } as LiveTradeOverlayItem);
+        };
+
+        const computePnl = (entryPrice: number, targetPrice: number, lots: number, direction: string, symbol: string) => {
+            const pnl = estimateGrossProfit(entryPrice, targetPrice, lots, direction, symbol);
+            if (!Number.isFinite(pnl) || Math.abs(pnl) >= 1_000_000) return { label: undefined, positive: undefined };
+            const sign = pnl >= 0 ? "+" : "";
+            return { label: `${sign}${pnl.toFixed(2)} USD`, positive: pnl >= 0 };
+        };
 
         for (const position of activeLivePositions) {
             if (!Number.isFinite(position.entryPrice)) continue;
-            const y = series.priceToCoordinate(position.entryPrice as number);
-            if (y == null || !Number.isFinite(y) || y < 0 || y > paneSize.height) continue;
+            const entryPrice = position.entryPrice as number;
+            const direction = position.direction;
+            const symbol = longShortSymbolRef.current ?? "";
+            const lots = position.lots;
+            const lotsLabel = formatLiveTradeLotsLabel(lots);
+            const slToolId = `${LIVE_TRADE_TOOL_ID_PREFIX}position-sl:${position.positionId}`;
+            const tpToolId = `${LIVE_TRADE_TOOL_ID_PREFIX}position-tp:${position.positionId}`;
 
-            const anchorTimestamp = position.openTimestamp ?? lastBarTimestamp;
-            const rawX = timeScale.timeToCoordinate(drawingTimestampToChartTime(anchorTimestamp));
-            nextItems.push({
-                id: `position:${position.positionId}`,
-                kind: "position",
-                x: clampX((rawX ?? 16) + 12),
-                y,
-                lotsLabel: formatLiveTradeLotsLabel(position.lots),
-                label: position.direction,
+            addItem(entryPrice, undefined, {
+                id: `position-entry:${position.positionId}`,
+                lineType: "position-entry",
+                color: "rgba(59, 130, 246, 0.95)",
+                lotsLabel,
+                label: direction,
+                draggable: false,
                 positionId: position.positionId,
-                hasStopLoss: Number.isFinite(position.stopLoss),
-                hasTakeProfit: Number.isFinite(position.takeProfit),
-                stopLossToolId: `${LIVE_TRADE_TOOL_ID_PREFIX}position-sl:${position.positionId}`,
-                takeProfitToolId: `${LIVE_TRADE_TOOL_ID_PREFIX}position-tp:${position.positionId}`,
+                showTpToggle: !Number.isFinite(position.takeProfit),
+                showSlToggle: !Number.isFinite(position.stopLoss),
+                tpDragToolId: tpToolId,
+                slDragToolId: slToolId,
+                hasTp: Number.isFinite(position.takeProfit),
+                hasSl: Number.isFinite(position.stopLoss),
             });
+
+            if (Number.isFinite(position.stopLoss)) {
+                const slPrice = liveTradePreviewPrices[slToolId] ?? (position.stopLoss as number);
+                const pnl = computePnl(entryPrice, slPrice, lots, direction, symbol);
+                addItem(position.stopLoss as number, slToolId, {
+                    id: `position-sl:${position.positionId}`,
+                    lineType: "position-sl",
+                    color: "rgba(239, 68, 68, 0.95)",
+                    lotsLabel,
+                    label: "SL",
+                    pnlLabel: pnl.label,
+                    pnlPositive: pnl.positive,
+                    draggable: true,
+                    dragToolId: slToolId,
+                    positionId: position.positionId,
+                });
+            }
+
+            if (Number.isFinite(position.takeProfit)) {
+                const tpPrice = liveTradePreviewPrices[tpToolId] ?? (position.takeProfit as number);
+                const pnl = computePnl(entryPrice, tpPrice, lots, direction, symbol);
+                addItem(position.takeProfit as number, tpToolId, {
+                    id: `position-tp:${position.positionId}`,
+                    lineType: "position-tp",
+                    color: "rgba(16, 185, 129, 0.95)",
+                    lotsLabel,
+                    label: "TP",
+                    pnlLabel: pnl.label,
+                    pnlPositive: pnl.positive,
+                    draggable: true,
+                    dragToolId: tpToolId,
+                    positionId: position.positionId,
+                });
+            }
         }
 
         for (const order of activeLiveOrders) {
-            const primaryPrice = String(order.orderType).toUpperCase().includes("LIMIT")
-                ? order.limitPrice
-                : order.stopPrice;
+            const isLimit = String(order.orderType).toUpperCase().includes("LIMIT");
+            const primaryPrice = isLimit ? order.limitPrice : order.stopPrice;
             if (!Number.isFinite(primaryPrice)) continue;
+            const entryPrice = primaryPrice as number;
+            const direction = order.direction;
+            const symbol = longShortSymbolRef.current ?? "";
+            const lots = order.lots;
+            const lotsLabel = formatLiveTradeLotsLabel(lots);
+            const entryToolId = `${LIVE_TRADE_TOOL_ID_PREFIX}order-entry:${order.orderId}`;
+            const slToolId = `${LIVE_TRADE_TOOL_ID_PREFIX}order-sl:${order.orderId}`;
+            const tpToolId = `${LIVE_TRADE_TOOL_ID_PREFIX}order-tp:${order.orderId}`;
+            const orderLabel = formatLiveOrderLabel(direction, order.orderType);
+            const baseColor = isLimit ? "rgba(59, 130, 246, 0.95)" : "rgba(168, 85, 247, 0.95)";
 
-            const toolId = `${LIVE_TRADE_TOOL_ID_PREFIX}order-entry:${order.orderId}`;
-            const displayPrice = liveTradePreviewPrices[toolId] ?? (primaryPrice as number);
-            const y = series.priceToCoordinate(displayPrice);
-            if (y == null || !Number.isFinite(y) || y < 0 || y > paneSize.height) continue;
-
-            const anchorTimestamp = order.createdAt ?? lastBarTimestamp;
-            const rawX = timeScale.timeToCoordinate(drawingTimestampToChartTime(anchorTimestamp));
-            nextItems.push({
-                id: `order:${order.orderId}`,
-                kind: "order",
-                x: clampX((rawX ?? 16) + 12),
-                y,
-                lotsLabel: formatLiveTradeLotsLabel(order.lots),
-                label: formatLiveOrderLabel(order.direction, order.orderType),
+            addItem(entryPrice, entryToolId, {
+                id: `order-entry:${order.orderId}`,
+                lineType: "order-entry",
+                color: baseColor,
+                lotsLabel,
+                label: orderLabel,
+                draggable: true,
+                dragToolId: entryToolId,
                 orderId: order.orderId,
-                entryToolId: toolId,
-                hasStopLoss: Number.isFinite(order.stopLoss),
-                hasTakeProfit: Number.isFinite(order.takeProfit),
-                stopLossToolId: `${LIVE_TRADE_TOOL_ID_PREFIX}order-sl:${order.orderId}`,
-                takeProfitToolId: `${LIVE_TRADE_TOOL_ID_PREFIX}order-tp:${order.orderId}`,
+                showTpToggle: !Number.isFinite(order.takeProfit),
+                showSlToggle: !Number.isFinite(order.stopLoss),
+                tpDragToolId: tpToolId,
+                slDragToolId: slToolId,
+                hasTp: Number.isFinite(order.takeProfit),
+                hasSl: Number.isFinite(order.stopLoss),
             });
+
+            if (Number.isFinite(order.stopLoss)) {
+                const slPrice = liveTradePreviewPrices[slToolId] ?? (order.stopLoss as number);
+                const pnl = computePnl(entryPrice, slPrice, lots, direction, symbol);
+                addItem(order.stopLoss as number, slToolId, {
+                    id: `order-sl:${order.orderId}`,
+                    lineType: "order-sl",
+                    color: "rgba(239, 68, 68, 0.95)",
+                    lotsLabel,
+                    label: "SL",
+                    pnlLabel: pnl.label,
+                    pnlPositive: pnl.positive,
+                    draggable: true,
+                    dragToolId: slToolId,
+                    orderId: order.orderId,
+                });
+            }
+
+            if (Number.isFinite(order.takeProfit)) {
+                const tpPrice = liveTradePreviewPrices[tpToolId] ?? (order.takeProfit as number);
+                const pnl = computePnl(entryPrice, tpPrice, lots, direction, symbol);
+                addItem(order.takeProfit as number, tpToolId, {
+                    id: `order-tp:${order.orderId}`,
+                    lineType: "order-tp",
+                    color: "rgba(16, 185, 129, 0.95)",
+                    lotsLabel,
+                    label: "TP",
+                    pnlLabel: pnl.label,
+                    pnlPositive: pnl.positive,
+                    draggable: true,
+                    dragToolId: tpToolId,
+                    orderId: order.orderId,
+                });
+            }
         }
 
-        nextItems.sort((left, right) => left.y - right.y || left.x - right.x);
+        nextItems.sort((left, right) => left.y - right.y);
         setLiveTradeOverlayItems((current) =>
             sameLiveTradeOverlayItems(current, nextItems) ? current : nextItems
         );
@@ -1405,21 +1505,6 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         liveTradeLineMetaRef.current.set(toolId, descriptor.meta);
         liveTradeLineSpecsRef.current.set(toolId, descriptor.spec);
 
-        const lineTools = lineToolsRef.current;
-        const latestBarTimestamp = dataRef.current[dataRef.current.length - 1]?.timestamp ?? Date.now();
-        if (lineTools) {
-            lineTools.createOrUpdateLineTool(
-                "HorizontalRay",
-                [{ timestamp: latestBarTimestamp, price: nextPrice }],
-                {
-                    showPriceAxisLabels: false,
-                    showTimeAxisLabels: false,
-                    line: { color: descriptor.spec.color },
-                } as Parameters<LineToolsApi["createOrUpdateLineTool"]>[2],
-                descriptor.spec.id
-            );
-        }
-
         const existingPriceLine = liveTradePriceLinesRef.current.get(toolId);
         if (existingPriceLine) {
             existingPriceLine.applyOptions?.({ price: nextPrice });
@@ -1430,8 +1515,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 lineWidth: 1,
                 lineStyle: descriptor.spec.lineStyle,
                 axisLabelVisible: true,
-                title: descriptor.spec.editable ? "" : descriptor.spec.title,
-                lineVisible: !descriptor.spec.editable,
+                title: "",
+                lineVisible: true,
             });
             liveTradePriceLinesRef.current.set(toolId, nextPriceLine);
         }
@@ -1565,18 +1650,20 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             void (async () => {
                 try {
                     if (liveMeta.kind === "position-stopLoss") {
+                        const position = activeLivePositionsRef.current.find(p => p.positionId === liveMeta.positionId);
                         await onActiveLivePositionChangeRef.current?.(
                             liveMeta.positionId,
                             previewPrice,
-                            undefined
+                            position?.takeProfit ?? undefined
                         );
                         return;
                     }
 
                     if (liveMeta.kind === "position-takeProfit") {
+                        const position = activeLivePositionsRef.current.find(p => p.positionId === liveMeta.positionId);
                         await onActiveLivePositionChangeRef.current?.(
                             liveMeta.positionId,
-                            undefined,
+                            position?.stopLoss ?? undefined,
                             previewPrice
                         );
                         return;
@@ -1592,14 +1679,18 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                     }
 
                     if (liveMeta.kind === "order-stopLoss") {
+                        const order = activeLiveOrdersRef.current.find(o => o.orderId === liveMeta.orderId);
                         await onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
+                            takeProfit: order?.takeProfit ?? undefined,
                             stopLoss: previewPrice,
                         });
                         return;
                     }
 
                     if (liveMeta.kind === "order-takeProfit") {
+                        const order = activeLiveOrdersRef.current.find(o => o.orderId === liveMeta.orderId);
                         await onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
+                            stopLoss: order?.stopLoss ?? undefined,
                             takeProfit: previewPrice,
                         });
                     }
@@ -1765,6 +1856,14 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     useEffect(() => {
         onActiveLiveOrderCancelRef.current = onActiveLiveOrderCancel;
     }, [onActiveLiveOrderCancel]);
+
+    useEffect(() => {
+        activeLivePositionsRef.current = activeLivePositions;
+    }, [activeLivePositions]);
+
+    useEffect(() => {
+        activeLiveOrdersRef.current = activeLiveOrders;
+    }, [activeLiveOrders]);
 
     const getLineToolsInternal = useCallback(() => lineToolsRef.current as LineToolsInternalApi | null, []);
 
@@ -3400,27 +3499,16 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 lineWidth: 1,
                 lineStyle: spec.lineStyle,
                 axisLabelVisible: true,
-                title: spec.editable ? "" : spec.title,
-                lineVisible: !spec.editable,
+                title: "",
+                lineVisible: true,
             });
             liveTradePriceLinesRef.current.set(spec.id, priceLine);
 
-            if (!spec.editable || !spec.toolMeta) {
+            if (spec.editable && spec.toolMeta) {
+                liveTradeLineMetaRef.current.set(spec.id, spec.toolMeta);
+            } else {
                 liveTradeLineMetaRef.current.delete(spec.id);
-                continue;
             }
-
-            lineTools.createOrUpdateLineTool(
-                "HorizontalRay",
-                [{ timestamp: normalizeDrawingTimestampForCurrentData(lastBarTimestamp), price: spec.price }],
-                {
-                    showPriceAxisLabels: false,
-                    showTimeAxisLabels: false,
-                    line: { color: spec.color },
-                } as Parameters<LineToolsApi["createOrUpdateLineTool"]>[2],
-                spec.id
-            );
-            liveTradeLineMetaRef.current.set(spec.id, spec.toolMeta);
         }
 
         const staleIds = Array.from(liveTradeLineMetaRef.current.keys()).filter(
@@ -4332,12 +4420,32 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         event.preventDefault();
         event.stopPropagation();
 
-        if (item.kind === "position" && item.positionId) {
+        if (item.positionId && item.lineType === "position-tp") {
+            void onActiveLivePositionChangeRef.current?.(item.positionId, undefined, null);
+            return;
+        }
+
+        if (item.positionId && item.lineType === "position-sl") {
+            void onActiveLivePositionChangeRef.current?.(item.positionId, null, undefined);
+            return;
+        }
+
+        if (item.positionId && item.lineType === "position-entry") {
             void onActiveLivePositionCloseRef.current?.(item.positionId);
             return;
         }
 
-        if (item.kind === "order" && item.orderId) {
+        if (item.orderId && item.lineType === "order-tp") {
+            void onActiveLiveOrderChangeRef.current?.(item.orderId, { takeProfit: null });
+            return;
+        }
+
+        if (item.orderId && item.lineType === "order-sl") {
+            void onActiveLiveOrderChangeRef.current?.(item.orderId, { stopLoss: null });
+            return;
+        }
+
+        if (item.orderId && item.lineType === "order-entry") {
             void onActiveLiveOrderCancelRef.current?.(item.orderId);
         }
     }, []);
@@ -4375,71 +4483,149 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
             {liveTradeOverlayItems.length > 0 && (
                 <div className="pointer-events-none absolute inset-0 z-[5] overflow-hidden rounded-lg">
-                    {liveTradeOverlayItems.map((item) => (
-                        <div
-                            key={item.id}
-                            className="absolute flex -translate-y-1/2 items-center gap-px"
-                            style={{
-                                left: `${item.x}px`,
-                                top: `${item.y}px`,
-                            }}
-                        >
-                            {item.takeProfitToolId ? (
-                                <button
-                                    type="button"
-                                    onPointerDown={(event) => handleLiveTradeBadgeDragStart(event, item.takeProfitToolId!)}
-                                    className={`pointer-events-auto rounded-l-sm border px-1.5 py-[2px] text-[10px] font-semibold leading-none transition-colors ${
-                                        item.hasTakeProfit
-                                            ? "cursor-ns-resize border-emerald-500/65 bg-emerald-500/18 text-emerald-300 hover:bg-emerald-500/28"
-                                            : "cursor-ns-resize border-emerald-500/45 bg-emerald-500/8 text-emerald-200/80 hover:bg-emerald-500/18"
-                                    }`}
-                                    title="Drag to set or move take profit"
-                                >
-                                    TP
-                                </button>
-                            ) : null}
-                            {item.stopLossToolId ? (
-                                <button
-                                    type="button"
-                                    onPointerDown={(event) => handleLiveTradeBadgeDragStart(event, item.stopLossToolId!)}
-                                    className={`pointer-events-auto border px-1.5 py-[2px] text-[10px] font-semibold leading-none transition-colors ${
-                                        item.hasStopLoss
-                                            ? "cursor-ns-resize border-amber-500/65 bg-amber-500/18 text-amber-300 hover:bg-amber-500/28"
-                                            : "cursor-ns-resize border-amber-500/45 bg-amber-500/8 text-amber-200/80 hover:bg-amber-500/18"
-                                    }`}
-                                    title="Drag to set or move stop loss"
-                                >
-                                    SL
-                                </button>
-                            ) : null}
-                            <span className="border border-blue-500/60 bg-blue-500/16 px-2 py-[2px] text-[11px] font-medium leading-none text-blue-100">
-                                {item.lotsLabel}
-                            </span>
-                            {item.entryToolId ? (
-                                <button
-                                    type="button"
-                                    onPointerDown={(event) => handleLiveTradeBadgeDragStart(event, item.entryToolId!)}
-                                    className="pointer-events-auto cursor-ns-resize border border-blue-500/80 bg-blue-950/90 px-2 py-[2px] text-[11px] font-medium leading-none text-blue-200 transition-colors hover:bg-blue-900/95"
-                                    title="Drag to move this pending order"
-                                >
-                                    {item.label}
-                                </button>
-                            ) : (
-                                <span className="border border-slate-500/60 bg-slate-900/92 px-2 py-[2px] text-[11px] font-medium leading-none text-slate-100">
-                                    {item.label}
-                                </span>
-                            )}
-                            <button
-                                type="button"
-                                onClick={(event) => handleLiveTradeActionClick(event, item)}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                className="pointer-events-auto rounded-r-sm border border-blue-500/70 bg-blue-950/92 px-1.5 py-[2px] text-[11px] font-semibold leading-none text-blue-200 transition-colors hover:bg-rose-600/90 hover:text-white"
-                                title={item.kind === "order" ? "Cancel pending order" : "Close position"}
+                    {liveTradeOverlayItems.map((item) => {
+                        const isEntry = item.lineType === "position-entry" || item.lineType === "order-entry";
+                        const isSlTp = !isEntry;
+                        const borderColor = item.color.replace(/[\d.]+\)$/, "0.6)");
+
+                        return (
+                            <div
+                                key={item.id}
+                                className="absolute flex -translate-y-1/2 items-center"
+                                style={{ top: `${item.y}px`, right: `${liveTradeOverlayPadRight}px` }}
                             >
-                                ×
-                            </button>
-                        </div>
-                    ))}
+                                {/* Invisible full-width drag strip for line-level dragging */}
+                                {item.draggable && item.dragToolId && (
+                                    <div
+                                        className="pointer-events-auto absolute right-0 cursor-ns-resize"
+                                        style={{ top: "-4px", height: "9px", left: "-3000px" }}
+                                        onPointerDown={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleLiveTradeBadgeDragStart(e as unknown as ReactPointerEvent<HTMLButtonElement>, item.dragToolId!);
+                                        }}
+                                    />
+                                )}
+
+                                {/* TP toggle — entry lines only */}
+                                {isEntry && item.showTpToggle && item.tpDragToolId && (
+                                    <button
+                                        type="button"
+                                        onPointerDown={(e) => handleLiveTradeBadgeDragStart(e, item.tpDragToolId!)}
+                                        className={`pointer-events-auto rounded-l border-y border-l px-1.5 py-[1px] text-[10px] font-bold leading-tight tracking-wide transition-colors ${
+                                            item.hasTp
+                                                ? "cursor-ns-resize border-emerald-500/50 bg-emerald-950/85 text-emerald-400 hover:bg-emerald-900/80"
+                                                : "cursor-ns-resize border-slate-600/40 bg-slate-950/80 text-slate-500 hover:bg-slate-800/80 hover:text-slate-400"
+                                        }`}
+                                        title="Drag to set take profit"
+                                    >
+                                        TP
+                                    </button>
+                                )}
+
+                                {/* SL toggle — entry lines only */}
+                                {isEntry && item.showSlToggle && item.slDragToolId && (
+                                    <button
+                                        type="button"
+                                        onPointerDown={(e) => handleLiveTradeBadgeDragStart(e, item.slDragToolId!)}
+                                        className={`pointer-events-auto border-y border-l px-1.5 py-[1px] text-[10px] font-bold leading-tight tracking-wide transition-colors ${
+                                            item.hasSl
+                                                ? "cursor-ns-resize border-red-500/50 bg-red-950/85 text-red-400 hover:bg-red-900/80"
+                                                : "cursor-ns-resize border-slate-600/40 bg-slate-950/80 text-slate-500 hover:bg-slate-800/80 hover:text-slate-400"
+                                        }`}
+                                        title="Drag to set stop loss"
+                                    >
+                                        SL
+                                    </button>
+                                )}
+
+                                {/* Lots badge */}
+                                <span
+                                    className="border-y border-l px-1.5 py-[1px] text-[10px] font-semibold leading-tight tabular-nums"
+                                    style={{
+                                        borderColor,
+                                        backgroundColor: item.color.replace(/[\d.]+\)$/, "0.96)"),
+                                        color: item.color.replace(/[\d.]+\)$/, "0.9)"),
+                                        ...(isSlTp && !item.showTpToggle ? { borderRadius: "3px 0 0 3px" } : {}),
+                                    }}
+                                >
+                                    {item.lotsLabel}
+                                </span>
+
+                                {/* P&L label — SL/TP lines */}
+                                {isSlTp && item.pnlLabel && (
+                                    <span
+                                        className="border-y border-l px-1.5 py-[1px] text-[10px] font-semibold leading-tight tabular-nums"
+                                        style={{
+                                            borderColor,
+                                            backgroundColor: item.pnlPositive
+                                                ? "rgba(6, 95, 70, 0.96)"
+                                                : "rgba(127, 29, 29, 0.96)",
+                                            color: item.pnlPositive
+                                                ? "rgba(52, 211, 153, 0.95)"
+                                                : "rgba(252, 165, 165, 0.95)",
+                                        }}
+                                    >
+                                        {item.pnlLabel}
+                                    </span>
+                                )}
+
+                                {/* Main label (order type / direction) — entry lines */}
+                                {isEntry && (
+                                    item.draggable && item.dragToolId ? (
+                                        <button
+                                            type="button"
+                                            onPointerDown={(e) => handleLiveTradeBadgeDragStart(e, item.dragToolId!)}
+                                            className="pointer-events-auto cursor-ns-resize border-y border-l px-2 py-[1px] text-[10px] font-semibold leading-tight transition-colors hover:brightness-125"
+                                            style={{
+                                                borderColor,
+                                                backgroundColor: item.color.replace(/[\d.]+\)$/, "0.96)"),
+                                                color: item.color.replace(/[\d.]+\)$/, "0.95)"),
+                                            }}
+                                            title="Drag to move this pending order"
+                                        >
+                                            {item.label}
+                                        </button>
+                                    ) : (
+                                        <span
+                                            className="border-y border-l px-2 py-[1px] text-[10px] font-semibold leading-tight"
+                                            style={{
+                                                borderColor,
+                                                backgroundColor: item.color.replace(/[\d.]+\)$/, "0.96)"),
+                                                color: item.color.replace(/[\d.]+\)$/, "0.95)"),
+                                            }}
+                                        >
+                                            {item.label}
+                                        </span>
+                                    )
+                                )}
+
+                                {/* Close / Cancel button */}
+                                <button
+                                    type="button"
+                                    onClick={(e) => handleLiveTradeActionClick(e, item)}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    className="pointer-events-auto rounded-r border px-1 py-[1px] text-[10px] font-bold leading-tight transition-colors hover:bg-rose-600/80 hover:text-white"
+                                    style={{
+                                        borderColor,
+                                        backgroundColor: item.color.replace(/[\d.]+\)$/, "0.96)"),
+                                        color: item.color.replace(/[\d.]+\)$/, "0.7)"),
+                                    }}
+                                    title={
+                                        item.lineType === "order-entry"
+                                            ? "Cancel pending order"
+                                            : item.lineType === "position-entry"
+                                                ? "Close position"
+                                                : item.lineType.endsWith("-tp")
+                                                    ? "Remove take profit"
+                                                    : "Remove stop loss"
+                                    }
+                                >
+                                    ×
+                                </button>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
 

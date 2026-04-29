@@ -3,7 +3,6 @@
 import { useState, useCallback, useRef, useMemo } from "react";
 import { RefreshCw } from "lucide-react";
 import { useSyncProgress } from "@ui/hooks/useSyncProgress";
-import { ConfirmDialog } from "@ui/components/common";
 import { useAccount } from "@ui/hooks/useAccount";
 import { useAuth } from "@ui/hooks/useAuth";
 import { DexieSymbolSyncProgressRepository } from "@infrastructure/db/dexie/repositories";
@@ -19,6 +18,13 @@ import { isOnline } from "@infrastructure/sync/utils/connection";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface RefetchRangeDialogState {
+  broker: string;
+  symbol: string;
+  availableStart: Date | null;
+  availableEnd: Date | null;
+}
+
+interface DeleteBarsDialogState {
   broker: string;
   symbol: string;
   availableStart: Date | null;
@@ -41,7 +47,10 @@ export function ChartDataSyncSection() {
   const [syncingBrokers, setSyncingBrokers] = useState<Set<string>>(new Set());
   const [syncingSymbols, setSyncingSymbols] = useState<Set<string>>(new Set());
   const [deletingSymbols, setDeletingSymbols] = useState<Set<string>>(new Set());
-  const [deleteConfirm, setDeleteConfirm] = useState<{ broker: string; symbol: string } | null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<DeleteBarsDialogState | null>(null);
+  const [deleteMode, setDeleteMode] = useState<"all" | "recentRange">("all");
+  const [deleteRecentFrom, setDeleteRecentFrom] = useState("");
+  const [deleteDialogError, setDeleteDialogError] = useState<string | null>(null);
   const [refetchRangeDialog, setRefetchRangeDialog] = useState<RefetchRangeDialogState | null>(null);
   const [refetchRangeStart, setRefetchRangeStart] = useState("");
   const [refetchRangeEnd, setRefetchRangeEnd] = useState("");
@@ -564,56 +573,222 @@ export function ChartDataSyncSection() {
   }, [user?.id, accounts, getBrokerProgress, progressRepo, refresh, ensureSyncSucceeded]);
 
   const handleDeleteBarsClick = useCallback((broker: string, symbol: string) => {
-    setDeleteConfirm({ broker, symbol });
-  }, []);
+    const progress = symbolProgress.find((item) => item.broker === broker && item.symbol === symbol) ?? null;
+    const availableEnd = progress?.lastBarDate ? new Date(progress.lastBarDate) : new Date();
+    const availableStart = progress?.firstBarDate
+      ? new Date(progress.firstBarDate)
+      : new Date(availableEnd.getTime() - DAY_MS);
+
+    setDeleteDialog({
+      broker,
+      symbol,
+      availableStart: progress?.firstBarDate ? new Date(progress.firstBarDate) : null,
+      availableEnd: progress?.lastBarDate ? new Date(progress.lastBarDate) : null,
+    });
+    setDeleteMode("all");
+    setDeleteRecentFrom(toDateTimeLocalValue(availableStart));
+    setDeleteDialogError(null);
+  }, [symbolProgress]);
+
+  const handleCloseDeleteDialog = useCallback(() => {
+    if (deleteDialog == null) return;
+    const symbolKey = `${deleteDialog.broker}:${deleteDialog.symbol}`;
+    if (deletingSymbols.has(symbolKey) || syncingSymbols.has(symbolKey)) return;
+
+    setDeleteDialog(null);
+    setDeleteMode("all");
+    setDeleteRecentFrom("");
+    setDeleteDialogError(null);
+  }, [deleteDialog, deletingSymbols, syncingSymbols]);
+
+  const updateLocalProgressSnapshot = useCallback(async (
+    broker: string,
+    symbol: string,
+    status: SymbolSyncProgress["status"] = "pending"
+  ) => {
+    const dexieChartRepo = new DexieChartBarRepository();
+    const [totalBars, dateRange] = await Promise.all([
+      dexieChartRepo.countBars(broker, symbol, "M1"),
+      dexieChartRepo.getDateRange(broker, symbol, "M1"),
+    ]);
+
+    await progressRepo.updateStatus(broker, symbol, status);
+    await progressRepo.updateProgress(broker, symbol, {
+      totalBars,
+      firstBarDate: dateRange.firstBarDate,
+      lastBarDate: dateRange.lastBarDate,
+      lastSyncTime: status === "completed" ? new Date() : null,
+      error: null,
+      progressPercent: status === "completed" ? 100 : 0,
+      currentFetchFrom: null,
+      currentFetchTo: null,
+      currentFetchStartedAt: null,
+    });
+
+    return {
+      totalBars,
+      firstBarDate: dateRange.firstBarDate,
+      lastBarDate: dateRange.lastBarDate,
+    };
+  }, [progressRepo]);
 
   const handleDeleteBarsConfirm = useCallback(async () => {
-    const target = deleteConfirm;
+    const target = deleteDialog;
     if (!target || !user?.id) return;
 
     const symbolKey = `${target.broker}:${target.symbol}`;
     setDeletingSymbols((prev) => new Set(prev).add(symbolKey));
     setError(null);
+    setDeleteDialogError(null);
 
     try {
       const dexieChartRepo = new DexieChartBarRepository();
 
-      // Delete from Dexie (local)
-      await dexieChartRepo.deleteAllForSymbol(
-        target.broker,
-        target.symbol,
-        "M1"
+      if (deleteMode === "all") {
+        await dexieChartRepo.deleteAllForSymbol(
+          target.broker,
+          target.symbol,
+          "M1"
+        );
+
+        await progressRepo.updateStatus(target.broker, target.symbol, "pending");
+        await progressRepo.updateProgress(target.broker, target.symbol, {
+          totalBars: 0,
+          firstBarDate: null,
+          lastBarDate: null,
+          lastSyncTime: null,
+          error: null,
+          progressPercent: 0,
+          currentFetchFrom: null,
+          currentFetchTo: null,
+          currentFetchStartedAt: null,
+        });
+
+        setDeleteDialog(null);
+        setDeleteMode("all");
+        setDeleteRecentFrom("");
+        await refresh();
+        return;
+      }
+
+      if (!isOnline()) {
+        setDeleteDialogError("Cannot trim and refetch bars while offline.");
+        return;
+      }
+
+      const token = TokenStorage.getGlobal();
+      if (!token) {
+        setDeleteDialogError("No access token available. Please reconnect your cTrader account.");
+        return;
+      }
+
+      const deleteFromDate = parseDateTimeLocalValue(deleteRecentFrom);
+      if (!deleteFromDate) {
+        setDeleteDialogError("Choose the date and time where recent-bar deletion should start.");
+        return;
+      }
+
+      const currentRange = await dexieChartRepo.getDateRange(target.broker, target.symbol, "M1");
+      const currentLastBarDate = currentRange.lastBarDate;
+      if (!currentLastBarDate) {
+        setDeleteDialogError("No local bars were found for this symbol.");
+        return;
+      }
+
+      if (deleteFromDate > currentLastBarDate) {
+        setDeleteDialogError("The selected date/time must be within the current local range.");
+        return;
+      }
+
+      if (currentRange.firstBarDate && deleteFromDate < currentRange.firstBarDate) {
+        setDeleteDialogError("The selected date/time must not be before the first local bar.");
+        return;
+      }
+
+      const brokerAccount = accounts.find((acc) => acc.broker === target.broker);
+      const accountNumber = brokerAccount?.accountNumber;
+      const api = new CTraderAPI();
+      const syncUseCase = new HybridSyncChartBarsUseCase(
+        api,
+        dexieChartRepo,
+        progressRepo
       );
 
-      // Reset progress to pending so user can sync again
-      await progressRepo.updateStatus(target.broker, target.symbol, "pending");
-      await progressRepo.updateProgress(target.broker, target.symbol, {
-        totalBars: 0,
-        firstBarDate: null,
-        lastBarDate: null,
-        lastSyncTime: null,
-        error: null,
-        progressPercent: 0,
-        currentFetchFrom: null,
-        currentFetchTo: null,
-        currentFetchStartedAt: null,
-      });
+      setSyncingSymbols((prev) => new Set(prev).add(symbolKey));
 
-      setDeleteConfirm(null);
+      await dexieChartRepo.deleteByWindow(
+        target.symbol,
+        "M1",
+        deleteFromDate.getTime(),
+        currentLastBarDate.getTime(),
+        target.broker
+      );
+
+      await updateLocalProgressSnapshot(target.broker, target.symbol, "pending");
+      await refresh();
+
+      const monthsDiff =
+        (currentLastBarDate.getTime() - deleteFromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+      const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000 || 60000));
+
+      const result = await Promise.race([
+        syncUseCase.execute({
+          userId: user.id,
+          broker: target.broker,
+          symbol: target.symbol,
+          fromDate: deleteFromDate,
+          toDate: currentLastBarDate,
+          accessToken: token.accessToken,
+          accountNumber,
+          forceFullSync: true,
+          shouldCancel: () => cancelRequestedRef.current,
+        }),
+        new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Refetch timeout after ${Math.round(timeoutMs / 1000)} seconds`)),
+            timeoutMs
+          )
+        ),
+      ]);
+
+      ensureSyncSucceeded(result, "Failed to refetch the deleted bar section.");
+
+      setDeleteDialog(null);
+      setDeleteMode("all");
+      setDeleteRecentFrom("");
       await refresh();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      setError(`Failed to delete bars: ${errorMsg}`);
+      if (deleteMode === "recentRange") {
+        setDeleteDialogError(`Failed to delete/refetch bars: ${errorMsg}`);
+      } else {
+        setError(`Failed to delete bars: ${errorMsg}`);
+        setDeleteDialog(null);
+      }
       console.error("Delete bars error:", err);
-      setDeleteConfirm(null);
     } finally {
       setDeletingSymbols((prev) => {
         const next = new Set(prev);
         next.delete(symbolKey);
         return next;
       });
+      setSyncingSymbols((prev) => {
+        const next = new Set(prev);
+        next.delete(symbolKey);
+        return next;
+      });
     }
-  }, [deleteConfirm, user?.id, progressRepo, refresh]);
+  }, [
+    accounts,
+    deleteDialog,
+    deleteMode,
+    deleteRecentFrom,
+    ensureSyncSucceeded,
+    progressRepo,
+    refresh,
+    updateLocalProgressSnapshot,
+    user?.id,
+  ]);
 
   const handleResetToPending = useCallback(async (broker: string, symbol: string) => {
     const symbolKey = `${broker}:${symbol}`;
@@ -768,24 +943,123 @@ export function ChartDataSyncSection() {
         </div>
       )}
 
-      <ConfirmDialog
-        open={deleteConfirm != null}
-        onClose={() => setDeleteConfirm(null)}
-        onConfirm={() => void handleDeleteBarsConfirm()}
-        title="Delete chart bars"
-        message={
-          deleteConfirm
-            ? `Delete all synced bars for ${deleteConfirm.symbol}? This will reset the symbol so you can sync from scratch.`
-            : ""
-        }
-        confirmLabel="Delete"
-        cancelLabel="Cancel"
-        variant="danger"
-        isLoading={
-          deleteConfirm != null &&
-          deletingSymbols.has(`${deleteConfirm.broker}:${deleteConfirm.symbol}`)
-        }
-      />
+      {deleteDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-xl rounded-xl border border-border bg-card p-6 shadow-lg">
+            <h2 className="text-lg font-semibold text-foreground">Delete Chart Bars</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Choose whether to wipe all local bars for{" "}
+              <span className="font-medium text-foreground">{deleteDialog.symbol}</span> or remove
+              only the recent tail and download that deleted section again.
+            </p>
+
+            <div className="mt-5 space-y-3">
+              <button
+                type="button"
+                onClick={() => setDeleteMode("all")}
+                className={`w-full rounded-xl border p-4 text-left transition-colors ${
+                  deleteMode === "all"
+                    ? "border-destructive/50 bg-destructive/10"
+                    : "border-border hover:bg-accent/40"
+                }`}
+              >
+                <div className="text-sm font-medium text-foreground">Delete all bars</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  This keeps today&apos;s behavior: remove the symbol&apos;s local M1 history and reset
+                  sync so you can start from scratch.
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDeleteMode("recentRange")}
+                className={`w-full rounded-xl border p-4 text-left transition-colors ${
+                  deleteMode === "recentRange"
+                    ? "border-amber-500/50 bg-amber-500/10"
+                    : "border-border hover:bg-accent/40"
+                }`}
+              >
+                <div className="text-sm font-medium text-foreground">
+                  Delete recent bars from a chosen date/time, then refetch them
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  This trims local history from the selected date/time to the most recent local bar,
+                  updates the stored sync progress, and then downloads only that deleted tail again.
+                </div>
+              </button>
+            </div>
+
+            {deleteMode === "recentRange" && (
+              <div className="mt-5 space-y-4 rounded-xl border border-border/70 bg-muted/20 p-4">
+                <label className="flex flex-col gap-1 text-sm">
+                  <span className="text-muted-foreground">Delete recent bars starting from</span>
+                  <input
+                    type="datetime-local"
+                    value={deleteRecentFrom}
+                    onChange={(event) => setDeleteRecentFrom(event.target.value)}
+                    max={maxRefetchDateTime}
+                    disabled={deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)}
+                    className="rounded-lg border border-border bg-background px-3 py-2 text-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+                  />
+                </label>
+
+                {(deleteDialog.availableStart || deleteDialog.availableEnd) && (
+                  <p className="text-xs text-muted-foreground">
+                    Current local range:{" "}
+                    {deleteDialog.availableStart
+                      ? deleteDialog.availableStart.toLocaleString()
+                      : "unknown"}{" "}
+                    {"->"}{" "}
+                    {deleteDialog.availableEnd
+                      ? deleteDialog.availableEnd.toLocaleString()
+                      : "unknown"}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {deleteDialogError && (
+              <div className="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                {deleteDialogError}
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={handleCloseDeleteDialog}
+                disabled={
+                  deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`) ||
+                  syncingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)
+                }
+                className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-accent disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleDeleteBarsConfirm()}
+                disabled={
+                  deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`) ||
+                  syncingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)
+                }
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
+                  deleteMode === "all"
+                    ? "bg-destructive hover:bg-destructive/90"
+                    : "bg-amber-600 hover:bg-amber-600/90"
+                }`}
+              >
+                {deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`) ||
+                syncingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)
+                  ? deleteMode === "all"
+                    ? "Deleting..."
+                    : "Deleting and refetching..."
+                  : deleteMode === "all"
+                    ? "Delete All"
+                    : "Delete and Refetch"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {refetchRangeDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">

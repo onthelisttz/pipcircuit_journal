@@ -821,14 +821,16 @@ class LiveSessionManager {
     const beforeSnapshot = await this.getPositionsSnapshot(sessionId);
 
     const positionId = toNumber(request?.positionId);
-    const stopLoss = normalizePriceForSymbol(
-      toNumber(request?.stopLoss),
-      session.config.symbolMeta
-    );
-    const takeProfit = normalizePriceForSymbol(
-      toNumber(request?.takeProfit),
-      session.config.symbolMeta
-    );
+    const hasStopLoss = Object.prototype.hasOwnProperty.call(request ?? {}, "stopLoss");
+    const hasTakeProfit = Object.prototype.hasOwnProperty.call(request ?? {}, "takeProfit");
+    const stopLoss =
+      hasStopLoss && request?.stopLoss === null
+        ? null
+        : normalizePriceForSymbol(toNumber(request?.stopLoss), session.config.symbolMeta);
+    const takeProfit =
+      hasTakeProfit && request?.takeProfit === null
+        ? null
+        : normalizePriceForSymbol(toNumber(request?.takeProfit), session.config.symbolMeta);
     const trailingStopLoss =
       typeof request?.trailingStopLoss === "boolean" ? request.trailingStopLoss : undefined;
 
@@ -839,8 +841,8 @@ class LiveSessionManager {
     const payload = {
       ctidTraderAccountId: session.config.accountId,
       positionId,
-      ...(Number.isFinite(stopLoss) ? { stopLoss } : {}),
-      ...(Number.isFinite(takeProfit) ? { takeProfit } : {}),
+      ...(hasStopLoss ? { stopLoss } : {}),
+      ...(hasTakeProfit ? { takeProfit } : {}),
       ...(typeof trailingStopLoss === "boolean" ? { trailingStopLoss } : {}),
     };
     const requestId = crypto.randomUUID();
@@ -866,22 +868,30 @@ class LiveSessionManager {
           if (!target) return false;
 
           const stopLossMatches =
-            !Number.isFinite(stopLoss) ||
-            (Number.isFinite(target.stopLoss) && pricesRoughlyMatch(target.stopLoss, stopLoss));
+            !hasStopLoss ||
+            (stopLoss === null
+              ? !Number.isFinite(target.stopLoss)
+              : Number.isFinite(target.stopLoss) && pricesRoughlyMatch(target.stopLoss, stopLoss));
           const takeProfitMatches =
-            !Number.isFinite(takeProfit) ||
-            (Number.isFinite(target.takeProfit) &&
-              pricesRoughlyMatch(target.takeProfit, takeProfit));
+            !hasTakeProfit ||
+            (takeProfit === null
+              ? !Number.isFinite(target.takeProfit)
+              : Number.isFinite(target.takeProfit) &&
+                pricesRoughlyMatch(target.takeProfit, takeProfit));
 
           if (!targetBefore) {
             return stopLossMatches && takeProfitMatches;
           }
 
-          const stopLossChanged = Number.isFinite(stopLoss)
-            ? !pricesRoughlyMatch(targetBefore.stopLoss, target.stopLoss)
+          const stopLossChanged = hasStopLoss
+            ? stopLoss === null
+              ? Number.isFinite(targetBefore.stopLoss) && !Number.isFinite(target.stopLoss)
+              : !optionalPricesEqual(targetBefore.stopLoss, target.stopLoss)
             : false;
-          const takeProfitChanged = Number.isFinite(takeProfit)
-            ? !pricesRoughlyMatch(targetBefore.takeProfit, target.takeProfit)
+          const takeProfitChanged = hasTakeProfit
+            ? takeProfit === null
+              ? Number.isFinite(targetBefore.takeProfit) && !Number.isFinite(target.takeProfit)
+              : !optionalPricesEqual(targetBefore.takeProfit, target.takeProfit)
             : false;
 
           return stopLossMatches && takeProfitMatches && (stopLossChanged || takeProfitChanged);
@@ -904,22 +914,26 @@ class LiveSessionManager {
     const beforeSnapshot = await this.getPositionsSnapshot(sessionId);
 
     const orderId = toNumber(request?.orderId);
-    const limitPrice = normalizePriceForSymbol(
-      toNumber(request?.limitPrice),
-      session.config.symbolMeta
-    );
-    const stopPrice = normalizePriceForSymbol(
-      toNumber(request?.stopPrice),
-      session.config.symbolMeta
-    );
-    const stopLoss = normalizePriceForSymbol(
-      toNumber(request?.stopLoss),
-      session.config.symbolMeta
-    );
-    const takeProfit = normalizePriceForSymbol(
-      toNumber(request?.takeProfit),
-      session.config.symbolMeta
-    );
+    const hasLimitPrice = Object.prototype.hasOwnProperty.call(request ?? {}, "limitPrice");
+    const hasStopPrice = Object.prototype.hasOwnProperty.call(request ?? {}, "stopPrice");
+    const hasStopLoss = Object.prototype.hasOwnProperty.call(request ?? {}, "stopLoss");
+    const hasTakeProfit = Object.prototype.hasOwnProperty.call(request ?? {}, "takeProfit");
+    const limitPrice =
+      hasLimitPrice && request?.limitPrice === null
+        ? null
+        : normalizePriceForSymbol(toNumber(request?.limitPrice), session.config.symbolMeta);
+    const stopPrice =
+      hasStopPrice && request?.stopPrice === null
+        ? null
+        : normalizePriceForSymbol(toNumber(request?.stopPrice), session.config.symbolMeta);
+    const stopLoss =
+      hasStopLoss && request?.stopLoss === null
+        ? null
+        : normalizePriceForSymbol(toNumber(request?.stopLoss), session.config.symbolMeta);
+    const takeProfit =
+      hasTakeProfit && request?.takeProfit === null
+        ? null
+        : normalizePriceForSymbol(toNumber(request?.takeProfit), session.config.symbolMeta);
 
     if (!orderId) {
       throw new Error("Order id is required.");
@@ -933,10 +947,10 @@ class LiveSessionManager {
     const payload = {
       ctidTraderAccountId: session.config.accountId,
       orderId,
-      ...(Number.isFinite(limitPrice) ? { limitPrice } : {}),
-      ...(Number.isFinite(stopPrice) ? { stopPrice } : {}),
-      ...(Number.isFinite(stopLoss) ? { stopLoss } : {}),
-      ...(Number.isFinite(takeProfit) ? { takeProfit } : {}),
+      ...(hasLimitPrice ? { limitPrice } : {}),
+      ...(hasStopPrice ? { stopPrice } : {}),
+      ...(hasStopLoss ? { stopLoss } : {}),
+      ...(hasTakeProfit ? { takeProfit } : {}),
     };
     const requestId = crypto.randomUUID();
 
@@ -957,27 +971,43 @@ class LiveSessionManager {
           if (!target) return false;
 
           const limitMatches =
-            !Number.isFinite(limitPrice) ||
-            (Number.isFinite(target.limitPrice) && pricesRoughlyMatch(target.limitPrice, limitPrice));
+            !hasLimitPrice ||
+            (limitPrice === null
+              ? !Number.isFinite(target.limitPrice)
+              : Number.isFinite(target.limitPrice) && pricesRoughlyMatch(target.limitPrice, limitPrice));
           const stopMatches =
-            !Number.isFinite(stopPrice) ||
-            (Number.isFinite(target.stopPrice) && pricesRoughlyMatch(target.stopPrice, stopPrice));
+            !hasStopPrice ||
+            (stopPrice === null
+              ? !Number.isFinite(target.stopPrice)
+              : Number.isFinite(target.stopPrice) && pricesRoughlyMatch(target.stopPrice, stopPrice));
           const stopLossMatches =
-            !Number.isFinite(stopLoss) ||
-            (Number.isFinite(target.stopLoss) && pricesRoughlyMatch(target.stopLoss, stopLoss));
+            !hasStopLoss ||
+            (stopLoss === null
+              ? !Number.isFinite(target.stopLoss)
+              : Number.isFinite(target.stopLoss) && pricesRoughlyMatch(target.stopLoss, stopLoss));
           const takeProfitMatches =
-            !Number.isFinite(takeProfit) ||
-            (Number.isFinite(target.takeProfit) && pricesRoughlyMatch(target.takeProfit, takeProfit));
+            !hasTakeProfit ||
+            (takeProfit === null
+              ? !Number.isFinite(target.takeProfit)
+              : Number.isFinite(target.takeProfit) && pricesRoughlyMatch(target.takeProfit, takeProfit));
 
           const changed =
-            (Number.isFinite(limitPrice) &&
-              !optionalPricesEqual(existingOrder.limitPrice, target.limitPrice)) ||
-            (Number.isFinite(stopPrice) &&
-              !optionalPricesEqual(existingOrder.stopPrice, target.stopPrice)) ||
-            (Number.isFinite(stopLoss) &&
-              !optionalPricesEqual(existingOrder.stopLoss, target.stopLoss)) ||
-            (Number.isFinite(takeProfit) &&
-              !optionalPricesEqual(existingOrder.takeProfit, target.takeProfit));
+            (hasLimitPrice &&
+              (limitPrice === null
+                ? Number.isFinite(existingOrder.limitPrice) && !Number.isFinite(target.limitPrice)
+                : !optionalPricesEqual(existingOrder.limitPrice, target.limitPrice))) ||
+            (hasStopPrice &&
+              (stopPrice === null
+                ? Number.isFinite(existingOrder.stopPrice) && !Number.isFinite(target.stopPrice)
+                : !optionalPricesEqual(existingOrder.stopPrice, target.stopPrice))) ||
+            (hasStopLoss &&
+              (stopLoss === null
+                ? Number.isFinite(existingOrder.stopLoss) && !Number.isFinite(target.stopLoss)
+                : !optionalPricesEqual(existingOrder.stopLoss, target.stopLoss))) ||
+            (hasTakeProfit &&
+              (takeProfit === null
+                ? Number.isFinite(existingOrder.takeProfit) && !Number.isFinite(target.takeProfit)
+                : !optionalPricesEqual(existingOrder.takeProfit, target.takeProfit)));
 
           return changed && limitMatches && stopMatches && stopLossMatches && takeProfitMatches;
         },

@@ -1510,7 +1510,7 @@ export function SyncedChartWorkspace({
     }
   }, [liveServiceUrl, liveSessionId]);
 
-  const amendLivePosition = useCallback(async (positionId: string, stopLoss?: number, takeProfit?: number) => {
+  const amendLivePosition = useCallback(async (positionId: string, stopLoss?: number | null, takeProfit?: number | null) => {
     if (!liveSessionId) {
       throw new Error("Live session is not ready.");
     }
@@ -1526,8 +1526,8 @@ export function SyncedChartWorkspace({
           body: JSON.stringify({
             sessionId: liveSessionId,
             positionId,
-            ...(Number.isFinite(stopLoss) ? { stopLoss } : {}),
-            ...(Number.isFinite(takeProfit) ? { takeProfit } : {}),
+            ...(stopLoss !== undefined ? { stopLoss } : {}),
+            ...(takeProfit !== undefined ? { takeProfit } : {}),
           }),
         }
       );
@@ -1593,10 +1593,10 @@ export function SyncedChartWorkspace({
   const amendLiveOrder = useCallback(async (
     orderId: string,
     patch: {
-      limitPrice?: number;
-      stopPrice?: number;
-      stopLoss?: number;
-      takeProfit?: number;
+      limitPrice?: number | null;
+      stopPrice?: number | null;
+      stopLoss?: number | null;
+      takeProfit?: number | null;
     }
   ) => {
     if (!liveSessionId) {
@@ -2334,17 +2334,17 @@ export function SyncedChartWorkspace({
     submitTradeRequest,
   ]);
 
-  const handleLivePositionAdjust = useCallback(async (positionId: string, stopLoss?: number, takeProfit?: number) => {
+  const handleLivePositionAdjust = useCallback(async (positionId: string, stopLoss?: number | null, takeProfit?: number | null) => {
     await amendLivePosition(positionId, stopLoss, takeProfit);
   }, [amendLivePosition]);
 
   const handleLiveOrderAdjust = useCallback(async (
     orderId: string,
     patch: {
-      limitPrice?: number;
-      stopPrice?: number;
-      stopLoss?: number;
-      takeProfit?: number;
+      limitPrice?: number | null;
+      stopPrice?: number | null;
+      stopLoss?: number | null;
+      takeProfit?: number | null;
     }
   ) => {
     await amendLiveOrder(orderId, patch);
