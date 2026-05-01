@@ -1550,7 +1550,7 @@ export function SyncedChartWorkspace({
     clearLatestTriggeredEvent,
   } = usePriceAlerts({
     userId: user?.id,
-    enabled: Boolean(user?.id && isActive),
+    enabled: Boolean(user?.id),
   });
   useEffect(() => {
     if (!liveVisualsEnabled || backfillCompletedAt == null) return;

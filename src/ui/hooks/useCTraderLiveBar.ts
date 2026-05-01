@@ -391,7 +391,8 @@ export function useCTraderLiveBar({
         const latestLocalTimestamp = range.lastBarDate?.getTime() ?? null;
         const backfillFrom =
           latestLocalTimestamp != null ? latestLocalTimestamp + intervalMs : null;
-        const backfillTo = currentBucketStart - intervalMs;
+        // Include the current bar being formed to avoid gaps if live stream has any delay
+        const backfillTo = currentBucketStart;
 
         if (
           backfillFrom != null &&
