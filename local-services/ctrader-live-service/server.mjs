@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createClient } from "@supabase/supabase-js";
 
 const SERVICE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SERVICE_DIR, "..", "..");
@@ -40,6 +41,8 @@ loadEnvFile(path.join(PROJECT_ROOT, ".env.local"));
 
 const clientId = process.env.NEXT_PUBLIC_CTRADER_CLIENT_ID ?? "";
 const clientSecret = process.env.CTRADER_CLIENT_SECRET ?? "";
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const protoLiveHost = process.env.CTRADER_PROTO_HOST_LIVE ?? "live.ctraderapi.com";
 const protoDemoHost = process.env.CTRADER_PROTO_HOST_DEMO ?? "demo.ctraderapi.com";
 const protoPort = Number(process.env.CTRADER_PROTO_PORT ?? "5035");
@@ -79,6 +82,50 @@ function toNumber(value) {
 
 function normalizeSymbol(symbol) {
   return String(symbol ?? "").replace("/", "").trim().toUpperCase();
+}
+
+function normalizeAlertCondition(value) {
+  return String(value ?? "").trim().toLowerCase() === "below" ? "below" : "above";
+}
+
+function normalizeAlertPriceSide(value) {
+  return String(value ?? "").trim().toLowerCase() === "ask" ? "ask" : "bid";
+}
+
+function sanitizePriceAlert(alert) {
+  const targetPrice = toNumber(alert?.targetPrice);
+  if (!alert?.id || !Number.isFinite(targetPrice)) {
+    return null;
+  }
+
+  return {
+    id: String(alert.id),
+    broker: String(alert.broker ?? ""),
+    symbol: normalizeSymbol(alert.symbol),
+    condition: normalizeAlertCondition(alert.condition),
+    priceSide: normalizeAlertPriceSide(alert.priceSide),
+    targetPrice,
+    note: typeof alert.note === "string" && alert.note.trim() ? alert.note.trim() : null,
+    isActive: alert.isActive !== false,
+  };
+}
+
+function buildSupabaseUserClient(accessToken) {
+  if (!supabaseUrl || !supabaseAnonKey || !accessToken) {
+    return null;
+  }
+
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  });
 }
 
 function normalizePrice(raw) {
@@ -1207,6 +1254,12 @@ class LiveSessionManager {
       if (existing.state === "error") {
         await this.disposeSession(existing.id);
       } else {
+        if (typeof config.supabaseAccessToken === "string" && config.supabaseAccessToken.trim()) {
+          existing.supabaseAccessToken = config.supabaseAccessToken.trim();
+        }
+        if (typeof config.userId === "string" && config.userId.trim()) {
+          existing.userId = config.userId.trim();
+        }
         existing.lastTouchedAt = Date.now();
         return existing;
       }
@@ -1227,6 +1280,10 @@ class LiveSessionManager {
       connection: null,
       listenerId: null,
       executionListenerId: null,
+      alerts: [],
+      supabaseAccessToken:
+        typeof config.supabaseAccessToken === "string" ? config.supabaseAccessToken : "",
+      userId: typeof config.userId === "string" ? config.userId : "",
       lastTouchedAt: Date.now(),
     };
 
@@ -1320,6 +1377,9 @@ class LiveSessionManager {
       session.error = null;
       session.lastTouchedAt = Date.now();
       this.broadcast(session, nextPayload);
+      void this.evaluateAlerts(session, nextPayload).catch((error) => {
+        console.warn("[ctrader-live-service] Failed to evaluate alerts:", error);
+      });
     };
 
     const handleExecutionEvent = (event) => {
@@ -1393,6 +1453,132 @@ class LiveSessionManager {
     session.lastTouchedAt = Date.now();
     this.broadcast(session, payload);
     return resolvedSnapshot;
+  }
+
+  syncAlerts(sessionId, body) {
+    const session = this.getSessionById(sessionId);
+    if (!session) {
+      throw new Error("Live session not found.");
+    }
+
+    session.userId =
+      typeof body.userId === "string" && body.userId.trim()
+        ? body.userId.trim()
+        : session.userId;
+    session.supabaseAccessToken =
+      typeof body.supabaseAccessToken === "string" && body.supabaseAccessToken.trim()
+        ? body.supabaseAccessToken.trim()
+        : session.supabaseAccessToken;
+
+    const nextAlerts = Array.isArray(body.alerts)
+      ? body.alerts
+          .map((alert) => sanitizePriceAlert(alert))
+          .filter((alert) => alert && alert.isActive)
+          .filter((alert) => alert.symbol === normalizeSymbol(session.config.symbol))
+      : [];
+
+    session.alerts = nextAlerts;
+    session.lastTouchedAt = Date.now();
+
+    return {
+      ok: true,
+      count: session.alerts.length,
+    };
+  }
+
+  async persistAlertTrigger(session, alert, triggerPrice, firedAtIso) {
+    const supabase = buildSupabaseUserClient(session.supabaseAccessToken);
+    if (!supabase || !session.userId) {
+      return;
+    }
+
+    const [eventResult, alertResult] = await Promise.all([
+      supabase.from("price_alert_events").insert({
+        alert_id: alert.id,
+        user_id: session.userId,
+        broker: alert.broker,
+        symbol: alert.symbol,
+        condition: alert.condition,
+        price_side: alert.priceSide,
+        target_price: alert.targetPrice,
+        trigger_price: triggerPrice,
+        note: alert.note,
+        fired_at: firedAtIso,
+        created_at: firedAtIso,
+      }),
+      supabase
+        .from("price_alerts")
+        .update({
+          is_active: false,
+          last_triggered_at: firedAtIso,
+          updated_at: firedAtIso,
+        })
+        .eq("user_id", session.userId)
+        .eq("id", alert.id),
+    ]);
+
+    if (eventResult.error) {
+      throw eventResult.error;
+    }
+    if (alertResult.error) {
+      throw alertResult.error;
+    }
+  }
+
+  async evaluateAlerts(session, payload) {
+    if (!session || !Array.isArray(session.alerts) || session.alerts.length === 0) {
+      return;
+    }
+
+    const bid = toNumber(payload?.bid);
+    const ask = toNumber(payload?.ask);
+    const nextAlerts = [];
+
+    for (const alert of session.alerts) {
+      if (!alert?.isActive) {
+        continue;
+      }
+
+      const markPrice = alert.priceSide === "ask" ? ask : bid;
+      if (!Number.isFinite(markPrice)) {
+        nextAlerts.push(alert);
+        continue;
+      }
+
+      const shouldTrigger =
+        alert.condition === "below"
+          ? markPrice <= alert.targetPrice
+          : markPrice >= alert.targetPrice;
+
+      if (!shouldTrigger) {
+        nextAlerts.push(alert);
+        continue;
+      }
+
+      const firedAtIso = new Date().toISOString();
+      const eventPayload = {
+        type: "alert-fired",
+        event: {
+          id: crypto.randomUUID(),
+          alertId: alert.id,
+          broker: alert.broker,
+          symbol: alert.symbol,
+          condition: alert.condition,
+          priceSide: alert.priceSide,
+          targetPrice: alert.targetPrice,
+          triggerPrice: markPrice,
+          note: alert.note,
+          firedAt: firedAtIso,
+        },
+      };
+
+      this.broadcast(session, eventPayload);
+      void this.persistAlertTrigger(session, alert, markPrice, firedAtIso).catch((error) => {
+        console.warn("[ctrader-live-service] Failed to persist alert trigger:", error);
+      });
+    }
+
+    session.alerts = nextAlerts;
   }
 
   attachSubscriber(session, response) {
@@ -1538,6 +1724,9 @@ async function resolveLiveConfig(body) {
     accountNumber: requestedAccountNumber || getAccountIdentifier(account),
     host: getAccountHost(account),
     symbolId: null,
+    supabaseAccessToken:
+      typeof body.supabaseAccessToken === "string" ? body.supabaseAccessToken.trim() : "",
+    userId: typeof body.userId === "string" ? body.userId.trim() : "",
   };
 }
 
@@ -1656,6 +1845,19 @@ export function startCTraderLiveService(options = {}) {
 
         const snapshot = await sessionManager.getPositionsSnapshot(sessionId);
         writeJson(response, 200, snapshot, origin);
+        return;
+      }
+
+      if (pathname === "/api/ctrader/live/alerts/sync" && request.method === "POST") {
+        const body = await readJsonBody(request);
+        const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+        if (!sessionId) {
+          writeJson(response, 400, { error: "Missing sessionId." }, origin);
+          return;
+        }
+
+        const result = sessionManager.syncAlerts(sessionId, body);
+        writeJson(response, 200, result, origin);
         return;
       }
 

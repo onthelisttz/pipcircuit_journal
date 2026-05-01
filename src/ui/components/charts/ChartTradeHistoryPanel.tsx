@@ -8,12 +8,14 @@ import type { Trade } from "@domain/entities";
 import { Direction } from "@domain/enums";
 import { estimateGrossProfit, volumeToLots } from "@lib/pnl-estimate";
 import type { LiveOrderSnapshot, LivePositionSnapshot } from "@ui/hooks/useCTraderLiveBar";
+import type { PriceAlert, PriceAlertEvent } from "@ui/hooks/usePriceAlerts";
 
 type DirectionFilter = Direction | "Both";
 type TradeSortKey = "direction" | "date" | "lots" | "pnl";
 type TradeSortDirection = "asc" | "desc";
-type TradePanelTab = "history" | "live";
+type TradePanelTab = "history" | "live" | "alerts";
 type LiveDetailTab = "open" | "pending";
+type AlertDetailTab = "active" | "triggered";
 const DESKTOP_BREAKPOINT_PX = 768;
 const DEFAULT_DESKTOP_PANEL_WIDTH_PX = 28 * 16;
 const MAX_DESKTOP_PANEL_WIDTH_RATIO = 0.7;
@@ -31,8 +33,11 @@ export interface ChartTradeHistoryPanelData {
   liveOrders?: LiveOrderSnapshot[];
   liveBidPrice?: number | null;
   liveAskPrice?: number | null;
+  priceAlerts?: PriceAlert[];
+  recentAlertEvents?: PriceAlertEvent[];
   onClosePosition?: (positionId: string) => void;
   onCancelOrder?: (orderId: string) => void;
+  onDeleteAlert?: (alertId: string) => void;
   onClose: () => void;
 }
 
@@ -90,11 +95,12 @@ function formatLivePriceValue(price: number | null | undefined): string {
   });
 }
 
-function getFloatingPnlLabel(position: LivePositionSnapshot, bid: number | null, ask: number | null): string {
-  const markPrice =
-    position.direction === "Buy"
-      ? bid
-      : ask;
+function getFloatingPnlValue(
+  position: LivePositionSnapshot,
+  bid: number | null,
+  ask: number | null
+): number | null {
+  const markPrice = position.direction === "Buy" ? bid : ask;
 
   if (
     markPrice == null ||
@@ -102,18 +108,25 @@ function getFloatingPnlLabel(position: LivePositionSnapshot, bid: number | null,
     position.entryPrice == null ||
     !Number.isFinite(position.entryPrice)
   ) {
-    return "--";
+    return null;
   }
 
-  return formatProfit(
-    estimateGrossProfit(
-      position.entryPrice,
-      markPrice,
-      position.lots,
-      position.direction,
-      position.symbol
-    )
+  return estimateGrossProfit(
+    position.entryPrice,
+    markPrice,
+    position.lots,
+    position.direction,
+    position.symbol
   );
+}
+
+function getFloatingPnlLabel(position: LivePositionSnapshot, bid: number | null, ask: number | null): string {
+  const value = getFloatingPnlValue(position, bid, ask);
+  return value == null ? "--" : formatProfit(value);
+}
+
+function formatAlertCondition(condition: PriceAlert["condition"]): string {
+  return condition === "below" ? "Crosses below" : "Crosses above";
 }
 
 export function ChartTradeHistoryPanel({
@@ -127,8 +140,11 @@ export function ChartTradeHistoryPanel({
   liveOrders = [],
   liveBidPrice = null,
   liveAskPrice = null,
+  priceAlerts = [],
+  recentAlertEvents = [],
   onClosePosition,
   onCancelOrder,
+  onDeleteAlert,
   onClose,
 }: ChartTradeHistoryPanelData) {
   const [isDesktop, setIsDesktop] = useState(() => {
@@ -154,6 +170,7 @@ export function ChartTradeHistoryPanel({
   const [sortDirection, setSortDirection] = useState<TradeSortDirection>("desc");
   const [activeTab, setActiveTab] = useState<TradePanelTab>("history");
   const [liveDetailTab, setLiveDetailTab] = useState<LiveDetailTab>("open");
+  const [alertDetailTab, setAlertDetailTab] = useState<AlertDetailTab>("active");
   const [dateDraftFrom, setDateDraftFrom] = useState("");
   const [dateDraftTo, setDateDraftTo] = useState("");
   const dateRef = useRef<HTMLDivElement>(null);
@@ -324,12 +341,19 @@ export function ChartTradeHistoryPanel({
   }, []);
 
   const showLiveTab = liveModeEnabled || livePositions.length > 0 || liveOrders.length > 0;
+  const showAlertsTab = Boolean(onDeleteAlert) || priceAlerts.length > 0 || recentAlertEvents.length > 0;
 
   useEffect(() => {
     if (!showLiveTab && activeTab === "live") {
       setActiveTab("history");
     }
   }, [activeTab, showLiveTab]);
+
+  useEffect(() => {
+    if (!showAlertsTab && activeTab === "alerts") {
+      setActiveTab("history");
+    }
+  }, [activeTab, showAlertsTab]);
 
   useEffect(() => {
     if (liveDetailTab === "open" && livePositions.length === 0 && liveOrders.length > 0) {
@@ -340,6 +364,16 @@ export function ChartTradeHistoryPanel({
       setLiveDetailTab("open");
     }
   }, [liveDetailTab, liveOrders.length, livePositions.length]);
+
+  useEffect(() => {
+    if (alertDetailTab === "active" && priceAlerts.length === 0 && recentAlertEvents.length > 0) {
+      setAlertDetailTab("triggered");
+      return;
+    }
+    if (alertDetailTab === "triggered" && recentAlertEvents.length === 0 && priceAlerts.length > 0) {
+      setAlertDetailTab("active");
+    }
+  }, [alertDetailTab, priceAlerts.length, recentAlertEvents.length]);
 
   const filteredTrades = useMemo(() => {
     const fromTime = startOfDay(from).getTime();
@@ -408,6 +442,13 @@ export function ChartTradeHistoryPanel({
       total: liveOrders.length + livePositions.length,
     }),
     [liveOrders.length, livePositions.length]
+  );
+  const alertsSummary = useMemo(
+    () => ({
+      active: priceAlerts.filter((alert) => alert.isActive).length,
+      recent: recentAlertEvents.length,
+    }),
+    [priceAlerts, recentAlertEvents.length]
   );
 
   const subtitle = broker && symbol ? `${broker} - ${symbol}` : symbol ?? "Trade history";
@@ -522,6 +563,13 @@ export function ChartTradeHistoryPanel({
         ) : (
           sortedLivePositions.map((position) => {
             const floatingPnlLabel = getFloatingPnlLabel(position, liveBidPrice, liveAskPrice);
+            const floatingPnlValue = getFloatingPnlValue(position, liveBidPrice, liveAskPrice);
+            const floatingPnlTone =
+              floatingPnlValue == null
+                ? "text-muted-foreground"
+                : floatingPnlValue >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-destructive";
 
             return (
               <div key={`position-${position.positionId}`} className="border-b border-border/70 px-3 py-3 last:border-b-0">
@@ -535,7 +583,7 @@ export function ChartTradeHistoryPanel({
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground">{position.lots.toFixed(2)} lots</div>
                     <div className="mt-1 text-xs text-muted-foreground">Entry {formatLivePriceValue(position.entryPrice)}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">Floating PNL {floatingPnlLabel}</div>
+                    <div className={`mt-1 text-xs ${floatingPnlTone}`}>Floating PNL {floatingPnlLabel}</div>
                     <div className="mt-1 text-xs text-muted-foreground">SL {formatLivePriceValue(position.stopLoss)} · TP {formatLivePriceValue(position.takeProfit)}</div>
                   </div>
                   <button
@@ -549,6 +597,119 @@ export function ChartTradeHistoryPanel({
               </div>
             );
           })
+        )}
+      </div>
+    </>
+  );
+
+  const alertsPanelContent = (
+    <>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="rounded-lg border border-border bg-background px-3 py-2">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Active</div>
+          <div className="mt-1 text-sm font-semibold text-foreground">{alertsSummary.active}</div>
+        </div>
+        <div className="rounded-lg border border-border bg-background px-3 py-2">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Triggered</div>
+          <div className="mt-1 text-sm font-semibold text-foreground">{alertsSummary.recent}</div>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-border bg-background">
+        <div className="border-b border-border px-2 py-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAlertDetailTab("active")}
+              className={`inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                alertDetailTab === "active"
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              <span>Active</span>
+              <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-foreground">
+                {priceAlerts.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setAlertDetailTab("triggered")}
+              className={`inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                alertDetailTab === "triggered"
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              <span>Triggered</span>
+              <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-foreground">
+                {recentAlertEvents.length}
+              </span>
+            </button>
+          </div>
+        </div>
+        {alertDetailTab === "active" ? (
+          priceAlerts.length === 0 ? (
+            <div className="px-4 py-5 text-center text-xs text-muted-foreground">
+              No active alerts for this chart symbol.
+            </div>
+          ) : (
+          priceAlerts.map((alert) => (
+            <div key={alert.id} className="border-b border-border/70 px-3 py-3 last:border-b-0">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-foreground">{alert.symbol}</span>
+                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                      {formatAlertCondition(alert.condition)}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {alert.priceSide.toUpperCase()} {formatLivePriceValue(alert.targetPrice)}
+                  </div>
+                  {alert.note ? (
+                    <div className="mt-1 text-xs text-muted-foreground">{alert.note}</div>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onDeleteAlert?.(alert.id)}
+                  className="shrink-0 rounded-md border border-destructive/30 px-2.5 py-1 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))
+        )) : recentAlertEvents.length === 0 ? (
+          <div className="px-4 py-5 text-center text-xs text-muted-foreground">
+            No triggered alerts yet.
+          </div>
+        ) : (
+          recentAlertEvents.map((event) => (
+            <div key={event.id} className="border-b border-border/70 px-3 py-3 last:border-b-0">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-foreground">{event.symbol}</span>
+                  <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                    Triggered
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {formatAlertCondition(event.condition)} on {event.priceSide.toUpperCase()}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Target {formatLivePriceValue(event.targetPrice)} · Fired {formatLivePriceValue(event.triggerPrice)}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {format(new Date(event.firedAt), "MMM d, yyyy · HH:mm:ss")}
+                </div>
+                {event.note ? (
+                  <div className="mt-1 text-xs text-muted-foreground">{event.note}</div>
+                ) : null}
+              </div>
+            </div>
+          ))
         )}
       </div>
     </>
@@ -622,6 +783,22 @@ export function ChartTradeHistoryPanel({
               <span>Live</span>
               <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-foreground">
                 {liveSummary.total}
+              </span>
+            </button>
+          ) : null}
+          {showAlertsTab ? (
+            <button
+              type="button"
+              onClick={() => setActiveTab("alerts")}
+              className={`inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                activeTab === "alerts"
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              <span>Alerts</span>
+              <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-foreground">
+                {alertsSummary.active}
               </span>
             </button>
           ) : null}
@@ -907,7 +1084,7 @@ export function ChartTradeHistoryPanel({
           </div>
         </div>
           </>
-        ) : livePanelContent}
+        ) : activeTab === "live" ? livePanelContent : alertsPanelContent}
       </div>
     </div>
   );

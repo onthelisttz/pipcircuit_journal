@@ -449,6 +449,7 @@ export default function ChartPage() {
             key={pane.id}
             initialSymbol={pane.symbol || undefined}
             initialBroker={pane.broker || undefined}
+            initialTimeframe={pane.timeframe as "M1" | "M5" | "M15" | "H1" | undefined}
             initialGoToDate={pane.goToDate || undefined}
             onSymbolChange={onSyncedSymbolChange}
             onTimeframeChange={onTimeframeChange}
@@ -469,6 +470,7 @@ export default function ChartPage() {
               )
             }
             isActive={tabIsVisible && (!isMulti || paneIsActive)}
+            keepLiveSessionWarm={mode === "synced"}
             onTradePanelChange={handleTradePanelChange}
             onHeaderControlsChange={
               tabIsVisible && (!isMulti || paneIsActive)

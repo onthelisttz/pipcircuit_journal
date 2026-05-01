@@ -319,6 +319,10 @@ export function useCTraderLiveBar({
         return;
       }
 
+      if (next.type === "alert-fired") {
+        return;
+      }
+
       const livePrice =
         typeof next.bid === "number"
           ? next.bid

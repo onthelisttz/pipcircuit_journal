@@ -20,6 +20,7 @@ import {
   CheckCircle2,
   Clock3,
   AlertTriangle,
+  Bell,
   Circle,
   Maximize2,
   Minimize2,
@@ -47,10 +48,18 @@ import {
 import { useSyncProgress } from "@ui/hooks/useSyncProgress";
 import { useTradesByQuery } from "@ui/hooks/useTradesByQuery";
 import { useAccount } from "@ui/hooks/useAccount";
+import { useAuth } from "@ui/hooks/useAuth";
+import {
+  usePriceAlerts,
+  type PriceAlertCondition,
+  type PriceAlertEvent,
+  type PriceAlertPriceSide,
+} from "@ui/hooks/usePriceAlerts";
 import { DexieSymbolSyncProgressRepository } from "@infrastructure/db/dexie/repositories";
 import { TokenStorage } from "@infrastructure/auth";
 import { hexToRgba } from "@lib/color";
 import { buildLocalServiceEndpoint } from "@lib/ctrader-live";
+import { priceDiffToPips } from "@lib/pnl-estimate";
 import { TimeGuidesControls } from "./TimeGuidesControls";
 import {
   readStoredTimeGuideSettings,
@@ -77,10 +86,21 @@ const CHART_TIMEFRAME_KEY = "chartTimeframe";
 const CHART_TIME_GUIDES_KEY = "chartTimeGuides_synced";
 const CHART_SHOW_TRADES_OVERLAY_KEY = "chartShowTrades_synced";
 const CHART_SHOW_TRADES_PANEL_KEY = "chartShowTradesPanel_synced";
+const CHART_SHOW_LIVE_TRADES_ON_CHART_KEY = "chartShowLiveTradesOnChart_v1";
 const CHART_CONTINUOUS_DRAWING_KEY = "chartContinuousDrawingEnabled_v1";
 const CHART_LIVE_MODE_KEY = "chartLiveModeEnabled_v1";
+const CHART_SHOW_ALERTS_ON_CHART_KEY = "chartShowAlertsOnChart_v1";
+const SYNCED_CHART_DRAWINGS_STORAGE_PREFIX = "syncedChartDrawings_v1";
+const CHART_NOTICE_DISMISS_MS = 10_000;
 const SYNCED_CHART_DISPLAY_OFFSET_MS = 3 * 60 * 60 * 1000;
+const ALERT_SOUND_PATH = "/sounds/price-alert-reached.wav";
 type ChartSelection = { broker: string; symbol: string };
+type StoredSyncedDrawingSnapshot = {
+  drawings: DrawingToolExport[];
+  centerTimestamp: number | null;
+  windowSeconds: number | null;
+  savedAt: number;
+};
 
 const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
   { id: "Brush", label: "Brush" },
@@ -94,12 +114,59 @@ const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
 ];
 
 const TIMEFRAMES: ChartTimeframe[] = ["M1", "M5", "M15", "H1"];
+const TIMEFRAME_MIN_RESTORE_WINDOW_SECONDS: Partial<Record<ChartTimeframe, number>> = {
+  M1: 3 * 60 * 60,
+  M5: 12 * 60 * 60,
+  M15: 2 * 24 * 60 * 60,
+  H1: 10 * 24 * 60 * 60,
+};
 const EDGE_FETCH_THRESHOLD = 10;
 const FETCH_THROTTLE_MS = 160;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 type LiveOrderType = "MARKET" | "LIMIT" | "STOP";
+type LiveTradeRequestResponse = {
+  execution?: {
+    positionId?: number | null;
+    orderId?: number | null;
+  } | null;
+  positions?: LivePositionSnapshot[];
+  orders?: LiveOrderSnapshot[];
+  error?: string;
+};
+
+function ChartNotice({
+  tone,
+  onClose,
+  children,
+}: {
+  tone: "error" | "warning" | "success";
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const toneClassName =
+    tone === "success"
+      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+      : tone === "warning"
+        ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+        : "border-destructive/40 bg-destructive/10 text-destructive";
+
+  return (
+    <div className={`mt-3 flex items-start justify-between gap-3 rounded-lg border p-3 text-xs ${toneClassName}`}>
+      <div className="min-w-0 flex-1">{children}</div>
+      <button
+        type="button"
+        onClick={onClose}
+        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-current/80 transition-colors hover:bg-black/10 hover:text-current dark:hover:bg-white/10"
+        aria-label="Close message"
+        title="Close"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
 
 function DrawingToolGlyph({ tool }: { tool: DrawingToolType }) {
   switch (tool) {
@@ -211,14 +278,41 @@ function formatLivePriceInput(value: number | null | undefined): string {
   return value.toFixed(inferDisplayDecimals(value));
 }
 
-function formatSpreadDisplay(bid: number | null | undefined, ask: number | null | undefined): string {
-  if (bid == null || ask == null || !Number.isFinite(bid) || !Number.isFinite(ask)) {
-    return "--";
-  }
+function normalizeTradeSymbol(symbol?: string | null): string {
+  return (symbol ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
 
-  const spread = Math.max(0, ask - bid);
-  const decimals = spread >= 1 ? 2 : spread >= 0.01 ? 3 : 5;
-  return spread.toFixed(decimals);
+function getDefaultChartLots(symbol?: string | null): number {
+  const normalized = normalizeTradeSymbol(symbol);
+  if (normalized === "GBPUSD" || normalized === "GU") {
+    return 0.05;
+  }
+  return 0.1;
+}
+
+function getPipStep(symbol?: string | null): number {
+  const pipsPerWholeUnit = priceDiffToPips(1, symbol ?? "");
+  if (!Number.isFinite(pipsPerWholeUnit) || pipsPerWholeUnit === 0) {
+    return 0.0001;
+  }
+  return 1 / Math.abs(pipsPerWholeUnit);
+}
+
+function formatPipsInput(value: number): string {
+  if (!Number.isFinite(value)) return "";
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function formatAlertConditionLabel(condition: PriceAlertCondition): string {
+  return condition === "below" ? "Crosses Below" : "Crosses Above";
+}
+
+function deriveAlertCondition(targetPrice: number, referencePrice: number | null | undefined): PriceAlertCondition {
+  if (referencePrice == null || !Number.isFinite(referencePrice)) {
+    return "above";
+  }
+  return targetPrice >= referencePrice ? "above" : "below";
 }
 
 function parseOptionalNumberInput(value: string): number | undefined {
@@ -543,12 +637,78 @@ function readStoredShowTradePanel(): boolean {
   }
 }
 
+function readStoredShowLiveTradesOnChart(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const storedValue = window.localStorage.getItem(CHART_SHOW_LIVE_TRADES_ON_CHART_KEY);
+    return storedValue == null ? true : storedValue === "true";
+  } catch {
+    return true;
+  }
+}
+
 function readStoredLiveMode(): boolean {
   if (typeof window === "undefined") return false;
   try {
     return window.localStorage.getItem(CHART_LIVE_MODE_KEY) === "true";
   } catch {
     return false;
+  }
+}
+
+function readStoredShowAlertsOnChart(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const storedValue = window.localStorage.getItem(CHART_SHOW_ALERTS_ON_CHART_KEY);
+    return storedValue == null ? true : storedValue === "true";
+  } catch {
+    return true;
+  }
+}
+
+function buildSyncedDrawingStorageKey(
+  broker?: string | null,
+  symbol?: string | null,
+  timeframe?: ChartTimeframe | null
+): string | null {
+  if (!broker || !symbol || !timeframe) return null;
+  return `${SYNCED_CHART_DRAWINGS_STORAGE_PREFIX}:${broker.toUpperCase()}:${symbol.toUpperCase()}:${timeframe}`;
+}
+
+function readStoredSyncedDrawingSnapshot(
+  broker?: string | null,
+  symbol?: string | null,
+  timeframe?: ChartTimeframe | null
+): StoredSyncedDrawingSnapshot | null {
+  if (typeof window === "undefined") return null;
+  const storageKey = buildSyncedDrawingStorageKey(broker, symbol, timeframe);
+  if (!storageKey) return null;
+
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<StoredSyncedDrawingSnapshot>;
+    return {
+      drawings: Array.isArray(parsed.drawings) ? parsed.drawings : [],
+      centerTimestamp:
+        typeof parsed.centerTimestamp === "number" &&
+        Number.isFinite(parsed.centerTimestamp)
+          ? parsed.centerTimestamp
+          : null,
+      windowSeconds:
+        typeof parsed.windowSeconds === "number" &&
+        Number.isFinite(parsed.windowSeconds) &&
+        parsed.windowSeconds > 0
+          ? parsed.windowSeconds
+          : null,
+      savedAt:
+        typeof parsed.savedAt === "number" && Number.isFinite(parsed.savedAt)
+          ? parsed.savedAt
+          : 0,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -631,6 +791,7 @@ function areDrawingsCoveredByBars(
 interface SyncedChartWorkspaceProps {
   initialSymbol?: string;
   initialBroker?: string;
+  initialTimeframe?: ChartTimeframe;
   initialGoToDate?: string;
   onSymbolChange?: (symbol: string, broker: string) => void;
   onTimeframeChange?: (timeframe: string) => void;
@@ -640,6 +801,7 @@ interface SyncedChartWorkspaceProps {
   onObservationLoadHandled?: (requestId: string) => void;
   isActive?: boolean;
   onTradePanelChange?: (panel: ChartTradeHistoryPanelData | null) => void;
+  keepLiveSessionWarm?: boolean;
   arePageTabsVisible?: boolean;
   onTogglePageTabsVisibility?: () => void;
   onHeaderControlsChange?: (controls: ReactNode | null) => void;
@@ -650,6 +812,7 @@ interface SyncedChartWorkspaceProps {
 export function SyncedChartWorkspace({
   initialSymbol,
   initialBroker,
+  initialTimeframe,
   initialGoToDate,
   onSymbolChange,
   onTimeframeChange,
@@ -659,12 +822,14 @@ export function SyncedChartWorkspace({
   onObservationLoadHandled,
   isActive = true,
   onTradePanelChange,
+  keepLiveSessionWarm = false,
   arePageTabsVisible = true,
   onTogglePageTabsVisibility,
   onHeaderControlsChange,
   compact = false,
 }: SyncedChartWorkspaceProps = {}) {
-  const { activeAccount, accounts } = useAccount();
+  const { activeAccount, accounts, syncTradesForAccount } = useAccount();
+  const { user, session } = useAuth();
   const progressRepo = useMemo(() => new DexieSymbolSyncProgressRepository(), []);
 
   const { symbolProgress } = useSyncProgress({
@@ -694,7 +859,9 @@ export function SyncedChartWorkspace({
     return { broker: first.broker, symbol: first.symbol };
   }, [storedSelection, symbolProgress]);
   const [timeframe, setTimeframe] = useState<ChartTimeframe>(() =>
-    readStoredTimeframe()
+    initialTimeframe && TIMEFRAMES.includes(initialTimeframe)
+      ? initialTimeframe
+      : readStoredTimeframe()
   );
   const [goToDate, setGoToDate] = useState(initialGoToDate ?? "");
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
@@ -715,12 +882,24 @@ export function SyncedChartWorkspace({
   const [calloutTextColor, setCalloutTextColor] = useState("#00ff66");
   const [calloutLineColor, setCalloutLineColor] = useState("#00ff66");
   const [calloutBoxColor, setCalloutBoxColor] = useState("rgba(0,0,0,0.88)");
-  const [longShortLots, setLongShortLots] = useState(1);
+  const [longShortLots, setLongShortLots] = useState(0.1);
   const [showTradeOverlay, setShowTradeOverlay] = useState(() => readStoredShowTrades());
   const [showTradePanel, setShowTradePanel] = useState(() => readStoredShowTradePanel());
+  const [showLiveTradesOnChart, setShowLiveTradesOnChart] = useState(() =>
+    readStoredShowLiveTradesOnChart()
+  );
   const [liveModeEnabled, setLiveModeEnabled] = useState(() => readStoredLiveMode());
+  const [showAlertsOnChart, setShowAlertsOnChart] = useState(() => readStoredShowAlertsOnChart());
   const [livePositions, setLivePositions] = useState<LivePositionSnapshot[]>([]);
   const [liveOrders, setLiveOrders] = useState<LiveOrderSnapshot[]>([]);
+  const [isAlertFormOpen, setIsAlertFormOpen] = useState(false);
+  const [alertTargetPrice, setAlertTargetPrice] = useState("");
+  const [alertCondition, setAlertCondition] = useState<PriceAlertCondition>("above");
+  const [alertPriceSide, setAlertPriceSide] = useState<PriceAlertPriceSide>("bid");
+  const [alertNote, setAlertNote] = useState("");
+  const [alertActionPending, setAlertActionPending] = useState(false);
+  const [alertActionError, setAlertActionError] = useState<string | null>(null);
+  const [alertFlashEvent, setAlertFlashEvent] = useState<PriceAlertEvent | null>(null);
   const [tradeActionError, setTradeActionError] = useState<string | null>(null);
   const [tradeActionPending, setTradeActionPending] = useState(false);
   const [isRichTradeOpen, setIsRichTradeOpen] = useState(false);
@@ -729,6 +908,8 @@ export function SyncedChartWorkspace({
   const [richTradePrice, setRichTradePrice] = useState("");
   const [richTradeStopLoss, setRichTradeStopLoss] = useState("");
   const [richTradeTakeProfit, setRichTradeTakeProfit] = useState("");
+  const [richTradeStopLossPips, setRichTradeStopLossPips] = useState("");
+  const [richTradeTakeProfitPips, setRichTradeTakeProfitPips] = useState("");
   const [richTradeComment, setRichTradeComment] = useState("");
   const [selectedTradeHistoryId, setSelectedTradeHistoryId] = useState<number | null>(null);
   const [timeGuides, setTimeGuides] = useState<TimeGuideSettings>(() =>
@@ -766,6 +947,9 @@ export function SyncedChartWorkspace({
   const tradesMenuRef = useRef<HTMLDivElement>(null);
   const richTradeButtonRef = useRef<HTMLButtonElement>(null);
   const richTradePopupRef = useRef<HTMLDivElement | null>(null);
+  const alertSoundRef = useRef<HTMLAudioElement | null>(null);
+  const alertSoundUnlockedRef = useRef(false);
+  const lastAlertSyncSignatureRef = useRef<string | null>(null);
   const [chartAreaHeight, setChartAreaHeight] = useState(520);
   const [compactDrawOpen, setCompactDrawOpen] = useState(false);
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
@@ -785,10 +969,48 @@ export function SyncedChartWorkspace({
     drawings: DrawingToolExport[];
     centerTimestamp: number | null;
     windowSeconds?: number | null;
+    preferLatestTimestamp?: boolean;
   } | null>(null);
   const lastHandledObservationRequestRef = useRef<string | null>(null);
   const skipNextCalloutApplyRef = useRef(false);
   const calloutTextInputRef = useRef<HTMLTextAreaElement>(null);
+  const richTradeStopLossEditModeRef = useRef<"price" | "pips">("price");
+  const richTradeTakeProfitEditModeRef = useRef<"price" | "pips">("price");
+  const [dismissedChartErrorKey, setDismissedChartErrorKey] = useState<string | null>(null);
+  const [dismissedLiveErrorKey, setDismissedLiveErrorKey] = useState<string | null>(null);
+  const [dismissedPriceAlertsErrorKey, setDismissedPriceAlertsErrorKey] = useState<string | null>(null);
+  const silentTradeSyncTimerRef = useRef<number | null>(null);
+  const previousLivePositionIdsRef = useRef<string[]>([]);
+  const restoredDrawingStorageKeyRef = useRef<string | null>(null);
+  const currentDrawingStorageKey = useMemo(
+    () => buildSyncedDrawingStorageKey(selection?.broker, selection?.symbol, timeframe),
+    [selection?.broker, selection?.symbol, timeframe]
+  );
+  const storedDrawingSnapshot = useMemo(
+    () =>
+      readStoredSyncedDrawingSnapshot(
+        selection?.broker,
+        selection?.symbol,
+        timeframe
+      ),
+    [selection?.broker, selection?.symbol, timeframe]
+  );
+  const persistCurrentDrawings = useCallback(
+    (storageKeyOverride?: string | null) => {
+      if (typeof window === "undefined") return;
+      const storageKey = storageKeyOverride ?? currentDrawingStorageKey;
+      if (!storageKey) return;
+
+      const snapshot: StoredSyncedDrawingSnapshot = {
+        drawings: chartRef.current?.exportAllDrawings() ?? [],
+        centerTimestamp: chartRef.current?.getViewportCenterTimestamp() ?? null,
+        windowSeconds: chartRef.current?.getVisibleWindowSeconds() ?? null,
+        savedAt: Date.now(),
+      };
+      window.localStorage.setItem(storageKey, JSON.stringify(snapshot));
+    },
+    [currentDrawingStorageKey]
+  );
 
   useEffect(() => {
     if (typeof window === "undefined" || !selection) return;
@@ -832,8 +1054,21 @@ export function SyncedChartWorkspace({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      CHART_SHOW_LIVE_TRADES_ON_CHART_KEY,
+      String(showLiveTradesOnChart)
+    );
+  }, [showLiveTradesOnChart]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     window.localStorage.setItem(CHART_LIVE_MODE_KEY, String(liveModeEnabled));
   }, [liveModeEnabled]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CHART_SHOW_ALERTS_ON_CHART_KEY, String(showAlertsOnChart));
+  }, [showAlertsOnChart]);
 
   useEffect(() => {
     setIsReplayPlaying(false);
@@ -956,13 +1191,14 @@ export function SyncedChartWorkspace({
   useEffect(() => {
     if (isActive) return;
 
+    persistCurrentDrawings();
     setIsReplayPlaying(false);
     setIsReplayPlacementMode(false);
     chartRef.current?.cancelActiveDrawing();
     setDrawingTool(null);
     setSelectedDrawingTool(null);
     setCompactDrawOpen(false);
-  }, [isActive]);
+  }, [isActive, persistCurrentDrawings]);
 
   useEffect(() => {
     if (!symbolMenuOpen) return;
@@ -1141,6 +1377,26 @@ export function SyncedChartWorkspace({
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, []);
 
+  useEffect(() => {
+    const storageKey = currentDrawingStorageKey;
+    return () => {
+      persistCurrentDrawings(storageKey);
+    };
+  }, [currentDrawingStorageKey, persistCurrentDrawings]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handlePageHide = () => {
+      persistCurrentDrawings();
+    };
+
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+    };
+  }, [persistCurrentDrawings]);
+
   const selectedProgress = useMemo(() => {
     if (!selection) return null;
     return (
@@ -1187,17 +1443,33 @@ export function SyncedChartWorkspace({
 
     return from <= to ? { from, to } : null;
   }, [selectedProgress?.firstBarDate, selectedProgress?.lastBarDate]);
+  const storedDrawingRestoreCenterTimestamp =
+    storedDrawingSnapshot?.centerTimestamp ?? null;
+  const effectiveRestoreCenterTimestamp =
+    timeframeRestoreAnchor.centerTimestamp ?? storedDrawingRestoreCenterTimestamp;
+  const storedDrawingWindowDays = useMemo(
+    () =>
+      getDrawingWindowDays(
+        storedDrawingRestoreCenterTimestamp,
+        storedDrawingSnapshot?.drawings ?? []
+      ),
+    [storedDrawingRestoreCenterTimestamp, storedDrawingSnapshot?.drawings]
+  );
 
   const chartTrade = useMemo<Trade | null>(() => {
     if (!selection) return null;
     const anchor =
-      focusTimestamp != null
-        ? new Date(focusTimestamp - SYNCED_CHART_DISPLAY_OFFSET_MS)
-        : timeframeRestoreAnchor.centerTimestamp != null
-        ? new Date(timeframeRestoreAnchor.centerTimestamp - SYNCED_CHART_DISPLAY_OFFSET_MS)
-        : selectedProgress?.lastBarDate
-          ? new Date(selectedProgress.lastBarDate)
-          : new Date();
+      effectiveRestoreCenterTimestamp != null
+        ? new Date(effectiveRestoreCenterTimestamp - SYNCED_CHART_DISPLAY_OFFSET_MS)
+        : liveModeEnabled
+          ? selectedProgress?.lastBarDate
+            ? new Date(selectedProgress.lastBarDate)
+            : new Date()
+          : focusTimestamp != null
+            ? new Date(focusTimestamp - SYNCED_CHART_DISPLAY_OFFSET_MS)
+            : selectedProgress?.lastBarDate
+              ? new Date(selectedProgress.lastBarDate)
+              : new Date();
     const now = new Date();
     return {
       accountId: accountForBroker?.accountNumber ?? "",
@@ -1211,7 +1483,14 @@ export function SyncedChartWorkspace({
       createdAt: now,
       updatedAt: now,
     };
-  }, [accountForBroker, focusTimestamp, selection, selectedProgress, timeframeRestoreAnchor.centerTimestamp]);
+  }, [
+    accountForBroker,
+    effectiveRestoreCenterTimestamp,
+    focusTimestamp,
+    liveModeEnabled,
+    selection,
+    selectedProgress,
+  ]);
 
   const accessToken = useMemo(() => {
     if (!accountForBroker) return undefined;
@@ -1222,7 +1501,11 @@ export function SyncedChartWorkspace({
     liveModeEnabled && !isReplayMode && !isReplayPlacementMode;
 
   const chartEnabled = Boolean(selection && chartTrade);
-  const requestedWindowDays = Math.max(windowDays, timeframeRestoreAnchor.windowDays);
+  const requestedWindowDays = Math.max(
+    windowDays,
+    timeframeRestoreAnchor.windowDays,
+    storedDrawingWindowDays
+  );
   const tradeFeaturesEnabled = showTradeOverlay || showTradePanel;
   const tradeHistoryQuery = useMemo(
     () => (tradeFeaturesEnabled && selection ? { symbol: selection.symbol } : null),
@@ -1249,17 +1532,63 @@ export function SyncedChartWorkspace({
     sessionId: liveSessionId,
     serviceUrl: liveServiceUrl,
   } = useCTraderLiveBar({
-    enabled: liveVisualsEnabled && chartEnabled && isActive,
+    enabled: liveVisualsEnabled && chartEnabled && (isActive || keepLiveSessionWarm),
     symbol: selection?.symbol,
     broker: selection?.broker,
     timeframe,
     accessToken,
     accountNumber: liveAccountNumber,
   });
+  const {
+    activeAlerts,
+    recentEvents: recentAlertEvents,
+    latestTriggeredEvent,
+    error: priceAlertsError,
+    createAlert,
+    updateAlert,
+    deleteAlert,
+    clearLatestTriggeredEvent,
+  } = usePriceAlerts({
+    userId: user?.id,
+    enabled: Boolean(user?.id && isActive),
+  });
   useEffect(() => {
     if (!liveVisualsEnabled || backfillCompletedAt == null) return;
     void refetch();
   }, [backfillCompletedAt, liveVisualsEnabled, refetch]);
+  useEffect(() => {
+    if (!currentDrawingStorageKey) {
+      restoredDrawingStorageKeyRef.current = null;
+      return;
+    }
+    if (pendingRestoreRef.current) return;
+    if (restoredDrawingStorageKeyRef.current === currentDrawingStorageKey) return;
+
+    restoredDrawingStorageKeyRef.current = currentDrawingStorageKey;
+    const snapshot = storedDrawingSnapshot;
+    const restoreCenterTimestamp =
+      snapshot?.centerTimestamp ??
+      (liveVisualsEnabled ? availableDateRange?.to ?? null : null);
+
+    pendingRestoreRef.current = {
+      drawings: snapshot?.drawings ?? [],
+      centerTimestamp: restoreCenterTimestamp,
+      windowSeconds: snapshot?.windowSeconds ?? null,
+      preferLatestTimestamp: false,
+    };
+    setTimeframeRestoreAnchor({
+      centerTimestamp: restoreCenterTimestamp,
+      windowDays: getDrawingWindowDays(
+        restoreCenterTimestamp,
+        snapshot?.drawings ?? []
+      ),
+    });
+  }, [
+    availableDateRange?.to,
+    currentDrawingStorageKey,
+    liveVisualsEnabled,
+    storedDrawingSnapshot,
+  ]);
   const liveMergedData = useMemo(() => {
     if (!liveVisualsEnabled || !liveCurrentBar) return data;
 
@@ -1371,6 +1700,69 @@ export function SyncedChartWorkspace({
       return closeTime >= visibleStart && openTime <= visibleEnd;
     });
   }, [brokerSymbolTrades, displayData, showTradeOverlay]);
+  const symbolPriceAlerts = useMemo(() => {
+    if (!selection) return [];
+    return activeAlerts.filter(
+      (alert) =>
+        alert.broker === selection.broker &&
+        alert.symbol === selection.symbol
+    );
+  }, [activeAlerts, selection]);
+  const symbolAlertEvents = useMemo(() => {
+    if (!selection) return [];
+    return recentAlertEvents.filter(
+      (event) =>
+        event.broker === selection.broker &&
+        event.symbol === selection.symbol
+    );
+  }, [recentAlertEvents, selection]);
+  const alertSyncPayload = useMemo(
+    () =>
+      symbolPriceAlerts
+        .map((alert) => ({
+          id: alert.id,
+          broker: alert.broker,
+          symbol: alert.symbol,
+          condition: alert.condition,
+          priceSide: alert.priceSide,
+          targetPrice: alert.targetPrice,
+          note: alert.note ?? null,
+          isActive: alert.isActive,
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id)),
+    [symbolPriceAlerts]
+  );
+  const alertSyncSignature = useMemo(() => {
+    if (!liveSessionId || !selection || !user?.id || !session?.accessToken) {
+      return null;
+    }
+
+    return JSON.stringify({
+      sessionId: liveSessionId,
+      userId: user.id,
+      broker: selection.broker,
+      symbol: selection.symbol,
+      accessToken: session.accessToken,
+      alerts: alertSyncPayload,
+    });
+  }, [
+    alertSyncPayload,
+    liveSessionId,
+    selection,
+    session?.accessToken,
+    user?.id,
+  ]);
+  const getAlertReferencePrice = useCallback((priceSide: PriceAlertPriceSide) => {
+    if (priceSide === "ask") {
+      return liveQuote?.ask ?? liveCurrentBar?.close ?? displayData[displayData.length - 1]?.close ?? null;
+    }
+    return liveQuote?.bid ?? liveCurrentBar?.close ?? displayData[displayData.length - 1]?.close ?? null;
+  }, [displayData, liveCurrentBar?.close, liveQuote?.ask, liveQuote?.bid]);
+  const deriveAlertConditionForSide = useCallback(
+    (targetPrice: number, priceSide: PriceAlertPriceSide) =>
+      deriveAlertCondition(targetPrice, getAlertReferencePrice(priceSide)),
+    [getAlertReferencePrice]
+  );
   const liveStatusLabel = useMemo(() => {
     if (!liveModeEnabled) return "Cached";
     if (isReplayMode || isReplayPlacementMode) return "Live Paused";
@@ -1400,10 +1792,6 @@ export function SyncedChartWorkspace({
     () => formatLivePrice(liveQuote?.ask ?? liveCurrentBar?.close ?? null),
     [liveCurrentBar?.close, liveQuote?.ask]
   );
-  const liveSpreadLabel = useMemo(
-    () => formatSpreadDisplay(liveQuote?.bid, liveQuote?.ask),
-    [liveQuote?.ask, liveQuote?.bid]
-  );
   const liveReferenceTradePrice = useMemo(
     () =>
       richTradeSide === "BUY"
@@ -1415,6 +1803,29 @@ export function SyncedChartWorkspace({
     () => formatLivePriceInput(liveReferenceTradePrice),
     [liveReferenceTradePrice]
   );
+  const defaultChartLots = useMemo(
+    () => getDefaultChartLots(selection?.symbol),
+    [selection?.symbol]
+  );
+  const resolvedLongShortLots = Number.isFinite(longShortLots) && longShortLots > 0
+    ? longShortLots
+    : defaultChartLots;
+  const richTradeEntryPrice = useMemo(() => {
+    if (richTradeOrderType === "MARKET") {
+      return liveReferenceTradePrice;
+    }
+
+    const parsedPrice = parseOptionalNumberInput(richTradePrice);
+    if (Number.isFinite(parsedPrice)) {
+      return parsedPrice;
+    }
+
+    return liveReferenceTradePrice;
+  }, [liveReferenceTradePrice, richTradeOrderType, richTradePrice]);
+  const richTradePipStep = useMemo(
+    () => getPipStep(selection?.symbol),
+    [selection?.symbol]
+  );
   const canTradeLive = Boolean(
     liveVisualsEnabled &&
       liveSessionId &&
@@ -1425,6 +1836,348 @@ export function SyncedChartWorkspace({
       !isReplayPlacementMode &&
       liveStatus !== "error"
   );
+
+  useEffect(() => {
+    setLongShortLots(getDefaultChartLots(selection?.symbol));
+  }, [selection?.symbol]);
+
+  useEffect(() => {
+    const parsedTargetPrice = Number(alertTargetPrice);
+    if (!Number.isFinite(parsedTargetPrice)) return;
+    const nextCondition = deriveAlertConditionForSide(parsedTargetPrice, alertPriceSide);
+    setAlertCondition((current) => (current === nextCondition ? current : nextCondition));
+  }, [alertPriceSide, alertTargetPrice, deriveAlertConditionForSide]);
+
+  useEffect(() => {
+    if (typeof Audio === "undefined") return;
+    const audio = new Audio(ALERT_SOUND_PATH);
+    audio.preload = "auto";
+    alertSoundRef.current = audio;
+    audio.load();
+
+    const unlockAudio = () => {
+      if (alertSoundUnlockedRef.current) return;
+
+      audio.muted = true;
+      void audio.play()
+        .then(() => {
+          audio.pause();
+          audio.currentTime = 0;
+          audio.muted = false;
+          alertSoundUnlockedRef.current = true;
+          window.removeEventListener("pointerdown", unlockAudio);
+          window.removeEventListener("keydown", unlockAudio);
+        })
+        .catch(() => {
+          audio.muted = false;
+        });
+    };
+
+    window.addEventListener("pointerdown", unlockAudio);
+    window.addEventListener("keydown", unlockAudio);
+
+    return () => {
+      audio.pause();
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+      alertSoundRef.current = null;
+      alertSoundUnlockedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!latestTriggeredEvent) return;
+
+    setAlertFlashEvent(latestTriggeredEvent);
+    const audio = alertSoundRef.current;
+    if (audio) {
+      audio.currentTime = 0;
+      void audio.play().catch(() => {});
+    }
+    clearLatestTriggeredEvent();
+
+    const timeoutId = window.setTimeout(() => {
+      setAlertFlashEvent((current) =>
+        current?.id === latestTriggeredEvent.id ? null : current
+      );
+    }, CHART_NOTICE_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [clearLatestTriggeredEvent, latestTriggeredEvent]);
+
+  useEffect(() => {
+    if (
+      !liveSessionId ||
+      !selection ||
+      !user?.id ||
+      !session?.accessToken
+    ) {
+      lastAlertSyncSignatureRef.current = null;
+      return;
+    }
+
+    if (alertSyncSignature && lastAlertSyncSignatureRef.current === alertSyncSignature) {
+      return;
+    }
+
+    lastAlertSyncSignatureRef.current = alertSyncSignature;
+
+    void fetch(
+      buildLocalServiceEndpoint("/api/ctrader/live/alerts/sync", liveServiceUrl),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: liveSessionId,
+          userId: user.id,
+          supabaseAccessToken: session.accessToken,
+          alerts: symbolPriceAlerts,
+        }),
+      }
+    ).catch(() => {});
+  }, [
+    alertSyncSignature,
+    liveServiceUrl,
+    liveSessionId,
+    selection,
+    session?.accessToken,
+    symbolPriceAlerts,
+    user?.id,
+  ]);
+
+  useEffect(() => {
+    if (!tradeActionError) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setTradeActionError((current) =>
+        current === tradeActionError ? null : current
+      );
+    }, CHART_NOTICE_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [tradeActionError]);
+
+  useEffect(() => {
+    if (!alertActionError) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setAlertActionError((current) =>
+        current === alertActionError ? null : current
+      );
+    }, CHART_NOTICE_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [alertActionError]);
+
+  useEffect(() => {
+    const nextKey = error?.message ?? null;
+    if (!nextKey) {
+      setDismissedChartErrorKey(null);
+      return;
+    }
+    if (dismissedChartErrorKey && dismissedChartErrorKey !== nextKey) {
+      setDismissedChartErrorKey(null);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setDismissedChartErrorKey((current) =>
+        current === nextKey ? current : nextKey
+      );
+    }, CHART_NOTICE_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [dismissedChartErrorKey, error?.message]);
+
+  useEffect(() => {
+    const nextKey = liveError ?? null;
+    if (!nextKey) {
+      setDismissedLiveErrorKey(null);
+      return;
+    }
+    if (dismissedLiveErrorKey && dismissedLiveErrorKey !== nextKey) {
+      setDismissedLiveErrorKey(null);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setDismissedLiveErrorKey((current) =>
+        current === nextKey ? current : nextKey
+      );
+    }, CHART_NOTICE_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [dismissedLiveErrorKey, liveError]);
+
+  useEffect(() => {
+    const nextKey = priceAlertsError ?? null;
+    if (!nextKey) {
+      setDismissedPriceAlertsErrorKey(null);
+      return;
+    }
+    if (dismissedPriceAlertsErrorKey && dismissedPriceAlertsErrorKey !== nextKey) {
+      setDismissedPriceAlertsErrorKey(null);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setDismissedPriceAlertsErrorKey((current) =>
+        current === nextKey ? current : nextKey
+      );
+    }, CHART_NOTICE_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [dismissedPriceAlertsErrorKey, priceAlertsError]);
+
+  const updateStopLossFromPrice = useCallback((priceText: string) => {
+    richTradeStopLossEditModeRef.current = "price";
+    setRichTradeStopLoss(priceText);
+
+    const entryPrice = richTradeEntryPrice;
+    const stopLossPrice = parseOptionalNumberInput(priceText);
+    if (
+      entryPrice == null ||
+      !Number.isFinite(entryPrice) ||
+      stopLossPrice == null ||
+      !Number.isFinite(stopLossPrice)
+    ) {
+      setRichTradeStopLossPips("");
+      return;
+    }
+
+    const pips = Math.abs(priceDiffToPips(stopLossPrice - entryPrice, selection?.symbol ?? ""));
+    setRichTradeStopLossPips(formatPipsInput(pips));
+  }, [richTradeEntryPrice, selection?.symbol]);
+
+  const updateTakeProfitFromPrice = useCallback((priceText: string) => {
+    richTradeTakeProfitEditModeRef.current = "price";
+    setRichTradeTakeProfit(priceText);
+
+    const entryPrice = richTradeEntryPrice;
+    const takeProfitPrice = parseOptionalNumberInput(priceText);
+    if (
+      entryPrice == null ||
+      !Number.isFinite(entryPrice) ||
+      takeProfitPrice == null ||
+      !Number.isFinite(takeProfitPrice)
+    ) {
+      setRichTradeTakeProfitPips("");
+      return;
+    }
+
+    const pips = Math.abs(priceDiffToPips(takeProfitPrice - entryPrice, selection?.symbol ?? ""));
+    setRichTradeTakeProfitPips(formatPipsInput(pips));
+  }, [richTradeEntryPrice, selection?.symbol]);
+
+  const updateStopLossFromPips = useCallback((pipsText: string) => {
+    richTradeStopLossEditModeRef.current = "pips";
+    setRichTradeStopLossPips(pipsText);
+
+    const entryPrice = richTradeEntryPrice;
+    const pips = parseOptionalNumberInput(pipsText);
+    if (
+      entryPrice == null ||
+      !Number.isFinite(entryPrice) ||
+      pips == null ||
+      !Number.isFinite(pips)
+    ) {
+      setRichTradeStopLoss("");
+      return;
+    }
+
+    const distance = Math.abs(pips) * richTradePipStep;
+    const nextPrice =
+      richTradeSide === "BUY"
+        ? entryPrice - distance
+        : entryPrice + distance;
+    setRichTradeStopLoss(formatLivePriceInput(nextPrice));
+  }, [richTradeEntryPrice, richTradePipStep, richTradeSide]);
+
+  const updateTakeProfitFromPips = useCallback((pipsText: string) => {
+    richTradeTakeProfitEditModeRef.current = "pips";
+    setRichTradeTakeProfitPips(pipsText);
+
+    const entryPrice = richTradeEntryPrice;
+    const pips = parseOptionalNumberInput(pipsText);
+    if (
+      entryPrice == null ||
+      !Number.isFinite(entryPrice) ||
+      pips == null ||
+      !Number.isFinite(pips)
+    ) {
+      setRichTradeTakeProfit("");
+      return;
+    }
+
+    const distance = Math.abs(pips) * richTradePipStep;
+    const nextPrice =
+      richTradeSide === "BUY"
+        ? entryPrice + distance
+        : entryPrice - distance;
+    setRichTradeTakeProfit(formatLivePriceInput(nextPrice));
+  }, [richTradeEntryPrice, richTradePipStep, richTradeSide]);
+
+  useEffect(() => {
+    if (richTradeStopLossEditModeRef.current === "pips") {
+      if (!richTradeStopLossPips.trim()) {
+        setRichTradeStopLoss("");
+        return;
+      }
+      updateStopLossFromPips(richTradeStopLossPips);
+      return;
+    }
+
+    if (!richTradeStopLoss.trim()) {
+      setRichTradeStopLossPips("");
+      return;
+    }
+    updateStopLossFromPrice(richTradeStopLoss);
+  }, [
+    richTradeEntryPrice,
+    richTradePipStep,
+    richTradeSide,
+    richTradeStopLoss,
+    richTradeStopLossPips,
+    updateStopLossFromPips,
+    updateStopLossFromPrice,
+  ]);
+
+  useEffect(() => {
+    if (richTradeTakeProfitEditModeRef.current === "pips") {
+      if (!richTradeTakeProfitPips.trim()) {
+        setRichTradeTakeProfit("");
+        return;
+      }
+      updateTakeProfitFromPips(richTradeTakeProfitPips);
+      return;
+    }
+
+    if (!richTradeTakeProfit.trim()) {
+      setRichTradeTakeProfitPips("");
+      return;
+    }
+    updateTakeProfitFromPrice(richTradeTakeProfit);
+  }, [
+    richTradeEntryPrice,
+    richTradePipStep,
+    richTradeSide,
+    richTradeTakeProfit,
+    richTradeTakeProfitPips,
+    updateTakeProfitFromPips,
+    updateTakeProfitFromPrice,
+  ]);
 
   const seedRichTradePrice = useCallback((
     nextOrderType: LiveOrderType,
@@ -1469,11 +2222,7 @@ export function SyncedChartWorkspace({
           }),
         }
       );
-      const payload = (await response.json()) as {
-        positions?: LivePositionSnapshot[];
-        orders?: LiveOrderSnapshot[];
-        error?: string;
-      };
+      const payload = (await response.json()) as LiveTradeRequestResponse;
 
       if (!response.ok) {
         throw new Error(
@@ -1485,6 +2234,7 @@ export function SyncedChartWorkspace({
       setLiveOrders(Array.isArray(payload.orders) ? payload.orders : []);
       setIsRichTradeOpen(false);
       setRichTradeComment("");
+      return payload;
     } catch (submitError) {
       const message =
         submitError instanceof Error
@@ -1496,6 +2246,24 @@ export function SyncedChartWorkspace({
       setTradeActionPending(false);
     }
   }, [liveServiceUrl, liveSessionId]);
+
+  const scheduleSilentTradeSync = useCallback(() => {
+    if (!accountForBroker) return;
+
+    if (silentTradeSyncTimerRef.current != null) {
+      window.clearTimeout(silentTradeSyncTimerRef.current);
+    }
+
+    silentTradeSyncTimerRef.current = window.setTimeout(() => {
+      silentTradeSyncTimerRef.current = null;
+      void syncTradesForAccount(
+        accountForBroker.accountNumber,
+        accountForBroker.ctraderAccountId
+      ).catch((syncError) => {
+        console.warn("[SyncedChartWorkspace] Failed to sync closed trades silently:", syncError);
+      });
+    }, 1200);
+  }, [accountForBroker, syncTradesForAccount]);
 
   const amendLivePosition = useCallback(async (positionId: string, stopLoss?: number | null, takeProfit?: number | null) => {
     if (!liveSessionId) {
@@ -1701,9 +2469,18 @@ export function SyncedChartWorkspace({
   }, [displayData]);
 
   useEffect(() => {
+    return () => {
+      if (silentTradeSyncTimerRef.current != null) {
+        window.clearTimeout(silentTradeSyncTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!liveVisualsEnabled || !liveSessionId) {
       setLivePositions([]);
       setLiveOrders([]);
+      previousLivePositionIdsRef.current = [];
       return;
     }
 
@@ -1715,6 +2492,25 @@ export function SyncedChartWorkspace({
     streamedLiveOrders,
     streamedLivePositions,
   ]);
+
+  useEffect(() => {
+    if (!liveVisualsEnabled || !accountForBroker) {
+      previousLivePositionIdsRef.current = [];
+      return;
+    }
+
+    const previousIds = previousLivePositionIdsRef.current;
+    const nextIds = livePositions.map((position) => position.positionId);
+    const closedPositionDetected =
+      previousIds.length > 0 &&
+      previousIds.some((positionId) => !nextIds.includes(positionId));
+
+    previousLivePositionIdsRef.current = nextIds;
+
+    if (closedPositionDetected) {
+      scheduleSilentTradeSync();
+    }
+  }, [accountForBroker, livePositions, liveVisualsEnabled, scheduleSilentTradeSync]);
 
   useEffect(() => {
     if (!isRichTradeOpen || richTradeOrderType === "MARKET") {
@@ -1970,15 +2766,25 @@ export function SyncedChartWorkspace({
   // Restore drawings and viewport after timeframe data loads
   useEffect(() => {
     const pending = pendingRestoreRef.current;
-    if (!pending || data.length === 0 || isLoading) return;
-    if (!areDrawingsCoveredByBars(pending.drawings, data)) return;
+    if (!pending || fullDisplayData.length === 0 || isLoading) return;
+    if (!areDrawingsCoveredByBars(pending.drawings, fullDisplayData)) return;
     pendingRestoreRef.current = null;
     // Small delay so chart processes the new data first
     const timer = window.setTimeout(() => {
+      chartRef.current?.removeAllDrawingTools();
       if (pending.drawings.length > 0) {
         chartRef.current?.importDrawings(pending.drawings);
       }
-      if (pending.centerTimestamp != null) {
+      if (pending.preferLatestTimestamp) {
+        const latestTimestamp =
+          fullDisplayData[fullDisplayData.length - 1]?.timestamp ?? null;
+        if (latestTimestamp != null) {
+          chartRef.current?.scrollToTimestamp(
+            latestTimestamp,
+            pending.windowSeconds ?? undefined
+          );
+        }
+      } else if (pending.centerTimestamp != null) {
         chartRef.current?.scrollToTimestamp(
           pending.centerTimestamp,
           pending.windowSeconds ?? undefined
@@ -1986,7 +2792,7 @@ export function SyncedChartWorkspace({
       }
     }, 80);
     return () => window.clearTimeout(timer);
-  }, [data, isLoading]);
+  }, [fullDisplayData, isLoading]);
 
   useEffect(() => {
     const request = observationLoadRequest;
@@ -2031,9 +2837,10 @@ export function SyncedChartWorkspace({
       (nextBroker == null || nextBroker === selection?.broker);
     const timeframeMatches = !nextTimeframe || nextTimeframe === timeframe;
 
-    if (selectionMatches && timeframeMatches && data.length > 0 && !isLoading) {
+    if (selectionMatches && timeframeMatches && fullDisplayData.length > 0 && !isLoading) {
       pendingRestoreRef.current = null;
       window.setTimeout(() => {
+        chartRef.current?.removeAllDrawingTools();
         if (pending.drawings.length > 0) {
           chartRef.current?.importDrawings(pending.drawings);
         }
@@ -2048,8 +2855,8 @@ export function SyncedChartWorkspace({
 
     onObservationLoadHandled?.(request.requestId);
   }, [
-    data.length,
     exitReplay,
+    fullDisplayData.length,
     isLoading,
     observationLoadRequest,
     onObservationLoadHandled,
@@ -2219,6 +3026,131 @@ export function SyncedChartWorkspace({
     [goToTimestamp]
   );
 
+  const openAlertForm = useCallback(() => {
+    const referencePrice = getAlertReferencePrice(alertPriceSide);
+    const nextTargetPrice = formatLivePriceInput(referencePrice);
+
+    setAlertTargetPrice(nextTargetPrice);
+    if (referencePrice != null && Number.isFinite(referencePrice)) {
+      setAlertCondition(deriveAlertConditionForSide(referencePrice, alertPriceSide));
+    }
+    setAlertNote("");
+    setAlertActionError(null);
+    setIsAlertFormOpen(true);
+  }, [alertPriceSide, deriveAlertConditionForSide, getAlertReferencePrice]);
+
+  const handleCreateAlert = useCallback(async () => {
+    if (!selection) {
+      setAlertActionError("Select a symbol before creating an alert.");
+      return;
+    }
+
+    const targetPrice = Number(alertTargetPrice);
+    if (!Number.isFinite(targetPrice)) {
+      setAlertActionError("Enter a valid target price.");
+      return;
+    }
+
+    try {
+      setAlertActionPending(true);
+      setAlertActionError(null);
+      const nextCondition = deriveAlertConditionForSide(targetPrice, alertPriceSide);
+      await createAlert({
+        broker: selection.broker,
+        symbol: selection.symbol,
+        condition: nextCondition,
+        priceSide: alertPriceSide,
+        targetPrice,
+        note: alertNote,
+      });
+      setIsAlertFormOpen(false);
+      setAlertNote("");
+    } catch (createError) {
+      setAlertActionError(
+        createError instanceof Error ? createError.message : "Failed to create alert."
+      );
+    } finally {
+      setAlertActionPending(false);
+    }
+  }, [
+    alertNote,
+    alertPriceSide,
+    alertTargetPrice,
+    createAlert,
+    deriveAlertConditionForSide,
+    selection,
+  ]);
+
+  const handleDeleteAlert = useCallback(async (alertId: string) => {
+    try {
+      setAlertActionError(null);
+      await deleteAlert(alertId);
+    } catch (deleteError) {
+      setAlertActionError(
+        deleteError instanceof Error ? deleteError.message : "Failed to delete alert."
+      );
+    }
+  }, [deleteAlert]);
+
+  const handleQuickChartAlertCreate = useCallback(async (targetPrice: number) => {
+    if (!selection || !Number.isFinite(targetPrice)) {
+      return;
+    }
+
+    try {
+      setAlertActionPending(true);
+      setAlertActionError(null);
+      await createAlert({
+        broker: selection.broker,
+        symbol: selection.symbol,
+        condition: deriveAlertConditionForSide(targetPrice, "bid"),
+        priceSide: "bid",
+        targetPrice,
+      });
+    } catch (createError) {
+      setAlertActionError(
+        createError instanceof Error ? createError.message : "Failed to create alert."
+      );
+    } finally {
+      setAlertActionPending(false);
+    }
+  }, [createAlert, deriveAlertConditionForSide, selection]);
+
+  const handleQuickChartOrderCreate = useCallback(async (
+    side: "BUY" | "SELL",
+    orderType: "LIMIT" | "STOP",
+    targetPrice: number
+  ) => {
+    if (!Number.isFinite(targetPrice) || !canTradeLive) {
+      return;
+    }
+
+    await submitTradeRequest({
+      side,
+      orderType,
+      lots: resolvedLongShortLots,
+      ...(orderType === "LIMIT"
+        ? { limitPrice: targetPrice }
+        : { stopPrice: targetPrice }),
+    });
+  }, [canTradeLive, resolvedLongShortLots, submitTradeRequest]);
+
+  const handleAlertChartMove = useCallback(async (alertId: string, targetPrice: number, priceSide: PriceAlertPriceSide) => {
+    if (!Number.isFinite(targetPrice)) return;
+
+    try {
+      setAlertActionError(null);
+      await updateAlert(alertId, {
+        targetPrice,
+        condition: deriveAlertConditionForSide(targetPrice, priceSide),
+      });
+    } catch (updateError) {
+      setAlertActionError(
+        updateError instanceof Error ? updateError.message : "Failed to update alert."
+      );
+    }
+  }, [deriveAlertConditionForSide, updateAlert]);
+
   const handleTradeHistoryPanelClose = useCallback(() => {
     setShowTradePanel(false);
   }, []);
@@ -2241,14 +3173,18 @@ export function SyncedChartWorkspace({
       liveOrders,
       liveBidPrice: liveQuote?.bid ?? null,
       liveAskPrice: liveQuote?.ask ?? null,
+      priceAlerts: symbolPriceAlerts,
+      recentAlertEvents: symbolAlertEvents,
       onClosePosition: closeLivePosition,
       onCancelOrder: cancelLiveOrder,
+      onDeleteAlert: handleDeleteAlert,
       onClose: handleTradeHistoryPanelClose,
     });
   }, [
     brokerSymbolTrades,
     cancelLiveOrder,
     closeLivePosition,
+    handleDeleteAlert,
     handleTradeHistoryPanelClose,
     handleTradeHistorySelect,
     isActive,
@@ -2258,6 +3194,8 @@ export function SyncedChartWorkspace({
     liveOrders,
     livePositions,
     onTradePanelChange,
+    symbolAlertEvents,
+    symbolPriceAlerts,
     selectedTradeHistoryId,
     selection?.broker,
     selection?.symbol,
@@ -2314,6 +3252,12 @@ export function SyncedChartWorkspace({
     () => hexToRgba(rectangleFillColor, rectangleFillOpacity),
     [rectangleFillColor, rectangleFillOpacity]
   );
+  const chartLoadErrorMessage = error?.message ?? null;
+  const liveModeIssueMessage = liveError ?? null;
+  const displayedAlertIssueMessage = alertActionError ?? priceAlertsError ?? null;
+  const alertTriggeredMessage = alertFlashEvent
+    ? `Alert triggered for ${alertFlashEvent.symbol}: ${formatAlertConditionLabel(alertFlashEvent.condition)} on ${alertFlashEvent.priceSide.toUpperCase()} at ${formatLivePrice(alertFlashEvent.triggerPrice)}.`
+    : null;
 
   const handleQuickTrade = useCallback(async (side: "BUY" | "SELL") => {
     if (!canTradeLive) return;
@@ -2321,16 +3265,20 @@ export function SyncedChartWorkspace({
     await submitTradeRequest({
       side,
       orderType: "MARKET",
-      lots: longShortLots,
+      lots: resolvedLongShortLots,
     });
-  }, [canTradeLive, longShortLots, submitTradeRequest]);
+  }, [canTradeLive, resolvedLongShortLots, submitTradeRequest]);
 
   const handleRichTradeSubmit = useCallback(async () => {
     if (!liveSessionId) return;
-    await submitTradeRequest({
+    const stopLoss = parseOptionalNumberInput(richTradeStopLoss);
+    const takeProfit = parseOptionalNumberInput(richTradeTakeProfit);
+    const hasStopLoss = Number.isFinite(stopLoss);
+    const hasTakeProfit = Number.isFinite(takeProfit);
+    const response = await submitTradeRequest({
       side: richTradeSide,
       orderType: richTradeOrderType,
-      lots: longShortLots,
+      lots: resolvedLongShortLots,
       ...(Number.isFinite(parseOptionalNumberInput(richTradePrice))
         ? richTradeOrderType === "LIMIT"
           ? { limitPrice: parseOptionalNumberInput(richTradePrice) }
@@ -2338,23 +3286,49 @@ export function SyncedChartWorkspace({
             ? { stopPrice: parseOptionalNumberInput(richTradePrice) }
             : {}
         : {}),
-      ...(Number.isFinite(parseOptionalNumberInput(richTradeStopLoss))
-        ? { stopLoss: parseOptionalNumberInput(richTradeStopLoss) }
-        : {}),
-      ...(Number.isFinite(parseOptionalNumberInput(richTradeTakeProfit))
-        ? { takeProfit: parseOptionalNumberInput(richTradeTakeProfit) }
-        : {}),
+      ...(richTradeOrderType !== "MARKET" && hasStopLoss ? { stopLoss } : {}),
+      ...(richTradeOrderType !== "MARKET" && hasTakeProfit ? { takeProfit } : {}),
       ...(richTradeComment.trim() ? { comment: richTradeComment.trim() } : {}),
     });
+
+    if (richTradeOrderType !== "MARKET" || (!hasStopLoss && !hasTakeProfit)) {
+      return;
+    }
+
+    const createdPositionId =
+      response?.execution?.positionId != null
+        ? String(response.execution.positionId)
+        : response?.positions?.find((position) =>
+            position.symbol === selection?.symbol &&
+            position.direction === (richTradeSide === "BUY" ? "Buy" : "Sell") &&
+            !livePositions.some(
+              (previousPosition) => previousPosition.positionId === position.positionId
+            )
+          )?.positionId ?? null;
+
+    if (!createdPositionId) {
+      throw new Error(
+        "Trade was opened, but stop loss / take profit could not be attached automatically."
+      );
+    }
+
+    await amendLivePosition(
+      createdPositionId,
+      hasStopLoss ? stopLoss : undefined,
+      hasTakeProfit ? takeProfit : undefined
+    );
   }, [
+    amendLivePosition,
+    livePositions,
     liveSessionId,
-    longShortLots,
+    resolvedLongShortLots,
     richTradeComment,
     richTradeOrderType,
     richTradePrice,
     richTradeSide,
     richTradeStopLoss,
     richTradeTakeProfit,
+    selection?.symbol,
     submitTradeRequest,
   ]);
 
@@ -2391,7 +3365,7 @@ export function SyncedChartWorkspace({
           type="button"
           onClick={() => setLiveModeEnabled((previous) => !previous)}
           disabled={!selection || !accessToken || !liveAccountNumber}
-          className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors disabled:opacity-50 ${
+          className={`inline-flex py-1 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors disabled:opacity-50 ${
             liveModeEnabled
               ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
               : "border-border text-muted-foreground hover:bg-muted"
@@ -2408,19 +3382,17 @@ export function SyncedChartWorkspace({
               type="button"
               onClick={() => void handleQuickTrade("SELL")}
               disabled={!canTradeLive || tradeActionPending}
-              className="flex min-w-[86px] flex-col rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-left text-rose-300 transition-colors hover:bg-rose-500/15 disabled:opacity-50"
+              className="flex min-w-[86px] items-center justify-center rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-center text-[12px] font-semibold uppercase tracking-wide text-rose-300 transition-colors hover:bg-rose-500/15 disabled:opacity-50"
             >
-              <span className="text-[10px] font-semibold uppercase tracking-wide">Sell</span>
-              <span className="text-[13px] font-semibold tabular-nums">{liveBidLabel}</span>
+              Sell
             </button>
             <div className="flex min-w-[62px] flex-col items-center gap-1">
-              <span className="text-[10px] font-medium text-muted-foreground">Spread {liveSpreadLabel}</span>
               <input
                 type="number"
                 inputMode="decimal"
                 min={0.01}
                 step={0.01}
-                value={Number.isFinite(longShortLots) ? longShortLots : 1}
+                value={resolvedLongShortLots}
                 onChange={(event) => setLongShortLots(Math.max(0.01, Number(event.target.value) || 0.01))}
                 className="h-7 w-[62px] rounded-md border border-border bg-background px-2 text-center text-[11px] tabular-nums text-foreground"
                 aria-label="Quick trade lot size"
@@ -2430,10 +3402,9 @@ export function SyncedChartWorkspace({
               type="button"
               onClick={() => void handleQuickTrade("BUY")}
               disabled={!canTradeLive || tradeActionPending}
-              className="flex min-w-[86px] flex-col rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-left text-emerald-300 transition-colors hover:bg-emerald-500/15 disabled:opacity-50"
+              className="flex min-w-[86px] items-center justify-center rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-center text-[12px] font-semibold uppercase tracking-wide text-emerald-300 transition-colors hover:bg-emerald-500/15 disabled:opacity-50"
             >
-              <span className="text-[10px] font-semibold uppercase tracking-wide">Buy</span>
-              <span className="text-[13px] font-semibold tabular-nums">{liveAskLabel}</span>
+              Buy
             </button>
           </div>
         ) : null}
@@ -2445,13 +3416,10 @@ export function SyncedChartWorkspace({
     compact,
     handleQuickTrade,
     liveAccountNumber,
-    liveAskLabel,
-    liveBidLabel,
     liveModeEnabled,
-    liveSpreadLabel,
     liveStatusClassName,
     liveStatusLabel,
-    longShortLots,
+    resolvedLongShortLots,
     selection,
     tradeActionPending,
   ]);
@@ -2514,6 +3482,7 @@ export function SyncedChartWorkspace({
                       key={`${broker.broker}-${symbol.symbol}`}
                       type="button"
                       onClick={() => {
+                        persistCurrentDrawings();
                         setStoredSelection({
                           broker: broker.broker,
                           symbol: symbol.symbol,
@@ -2546,6 +3515,7 @@ export function SyncedChartWorkspace({
           ref={timeframeButtonRef}
           type="button"
           onClick={() => {
+            persistCurrentDrawings();
             setTimeframeMenuOpen((open) => !open);
             setTradesMenuOpen(false);
           }}
@@ -2566,18 +3536,29 @@ export function SyncedChartWorkspace({
                 key={tf}
                 type="button"
                 onClick={() => {
+                  persistCurrentDrawings();
                   const drawings = chartRef.current?.exportAllDrawings() ?? [];
                   const centerTimestamp =
                     chartRef.current?.getViewportCenterTimestamp() ?? null;
+                  const latestDisplayTimestamp =
+                    availableDateRange?.to ??
+                    centerTimestamp;
                   // Save drawings and viewport before timeframe change
                   pendingRestoreRef.current = {
                     drawings,
-                    centerTimestamp,
+                    centerTimestamp: liveVisualsEnabled
+                      ? latestDisplayTimestamp
+                      : centerTimestamp,
                     windowSeconds: chartRef.current?.getVisibleWindowSeconds() ?? null,
+                    preferLatestTimestamp: liveVisualsEnabled,
                   };
                   setTimeframeRestoreAnchor({
-                    centerTimestamp,
-                    windowDays: getDrawingWindowDays(centerTimestamp, drawings),
+                    centerTimestamp: liveVisualsEnabled
+                      ? latestDisplayTimestamp
+                      : centerTimestamp,
+                    windowDays: liveVisualsEnabled
+                      ? 0
+                      : getDrawingWindowDays(centerTimestamp, drawings),
                   });
                   setTimeframe(tf);
                   onTimeframeChange?.(tf);
@@ -2645,7 +3626,7 @@ export function SyncedChartWorkspace({
           }}
           disabled={!selection}
           className={`flex h-7 items-center gap-1.5 rounded border border-border px-2 text-[11px] transition-colors ${
-            showTradeOverlay || showTradePanel
+            showTradeOverlay || showTradePanel || showLiveTradesOnChart
               ? "bg-primary/10 text-primary"
               : "text-muted-foreground hover:bg-muted"
           } disabled:cursor-not-allowed disabled:opacity-50`}
@@ -2677,9 +3658,35 @@ export function SyncedChartWorkspace({
               />
               <span>Sidebar</span>
             </label>
+            <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-xs transition-colors hover:bg-muted">
+              <input
+                type="checkbox"
+                checked={showLiveTradesOnChart}
+                onChange={(event) => setShowLiveTradesOnChart(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-border accent-primary"
+              />
+              <span>Live / pending</span>
+            </label>
           </div>
         ) : null}
       </div>
+
+      <button
+        type="button"
+        onClick={() => setShowAlertsOnChart((current) => !current)}
+        disabled={!selection}
+        className={`flex h-7 items-center gap-1.5 rounded border px-2 text-[11px] transition-colors ${
+          showAlertsOnChart
+            ? "border-primary/60 bg-primary/10 text-primary"
+            : "border-border text-muted-foreground hover:bg-muted"
+        } disabled:cursor-not-allowed disabled:opacity-50`}
+        title={showAlertsOnChart ? "Hide alert lines on chart" : "Show alert lines on chart"}
+      >
+        <Bell className="h-3.5 w-3.5" />
+              <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-foreground">
+          {symbolPriceAlerts.length}
+        </span>
+      </button>
 
       <div className="flex items-center gap-1">
         <button
@@ -2791,7 +3798,7 @@ export function SyncedChartWorkspace({
         </button>
 
         {isRichTradeOpen ? (
-          <div className="absolute left-0 top-full z-50 mt-1 w-[280px] rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-2xl">
+          <div className="absolute left-0 top-full z-50 mt-1 w-[320px] rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-2xl">
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -2801,7 +3808,7 @@ export function SyncedChartWorkspace({
                 }}
                 className={`rounded-md border px-3 py-2 text-left text-xs font-medium transition-colors ${
                   richTradeSide === "BUY"
-                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
                     : "border-border text-muted-foreground hover:bg-muted"
                 }`}
               >
@@ -2815,7 +3822,7 @@ export function SyncedChartWorkspace({
                 }}
                 className={`rounded-md border px-3 py-2 text-left text-xs font-medium transition-colors ${
                   richTradeSide === "SELL"
-                    ? "border-rose-500/40 bg-rose-500/10 text-rose-400"
+                    ? "border-rose-500/50 bg-rose-500/15 text-rose-300"
                     : "border-border text-muted-foreground hover:bg-muted"
                 }`}
               >
@@ -2848,7 +3855,7 @@ export function SyncedChartWorkspace({
                   inputMode="decimal"
                   min={0.01}
                   step={0.01}
-                  value={Number.isFinite(longShortLots) ? longShortLots : 1}
+                  value={resolvedLongShortLots}
                   onChange={(event) => setLongShortLots(Math.max(0.01, Number(event.target.value) || 0.01))}
                   className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
                 />
@@ -2866,24 +3873,48 @@ export function SyncedChartWorkspace({
                 />
               </label>
               <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                Stop Loss
+                Stop Loss Price
                 <input
                   type="number"
                   inputMode="decimal"
                   step="any"
                   value={richTradeStopLoss}
-                  onChange={(event) => setRichTradeStopLoss(event.target.value)}
+                  onChange={(event) => updateStopLossFromPrice(event.target.value)}
                   className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
                 />
               </label>
               <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                Take Profit
+                Stop Loss Pips
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="any"
+                  min={0}
+                  value={richTradeStopLossPips}
+                  onChange={(event) => updateStopLossFromPips(event.target.value)}
+                  className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Take Profit Price
                 <input
                   type="number"
                   inputMode="decimal"
                   step="any"
                   value={richTradeTakeProfit}
-                  onChange={(event) => setRichTradeTakeProfit(event.target.value)}
+                  onChange={(event) => updateTakeProfitFromPrice(event.target.value)}
+                  className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Take Profit Pips
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="any"
+                  min={0}
+                  value={richTradeTakeProfitPips}
+                  onChange={(event) => updateTakeProfitFromPips(event.target.value)}
                   className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
                 />
               </label>
@@ -2898,8 +3929,17 @@ export function SyncedChartWorkspace({
               </label>
             </div>
             {tradeActionError ? (
-              <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
-                {tradeActionError}
+              <div className="mt-3 flex items-start justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+                <span className="min-w-0 flex-1">{tradeActionError}</span>
+                <button
+                  type="button"
+                  onClick={() => setTradeActionError(null)}
+                  className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-current/80 transition-colors hover:bg-black/10 hover:text-current dark:hover:bg-white/10"
+                  aria-label="Close trade error"
+                  title="Close"
+                >
+                  <X className="h-3 w-3" />
+                </button>
               </div>
             ) : null}
             <div className="mt-3 flex items-center justify-between gap-2">
@@ -2914,7 +3954,11 @@ export function SyncedChartWorkspace({
                 type="button"
                 onClick={() => void handleRichTradeSubmit()}
                 disabled={tradeActionPending || !liveSessionId}
-                className="rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
+                className={`rounded-md border px-3 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+                  richTradeSide === "BUY"
+                    ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/20"
+                    : "border-rose-500/40 bg-rose-500/15 text-rose-300 hover:bg-rose-500/20"
+                }`}
               >
                 {tradeActionPending ? "Placing..." : `Place ${richTradeSide === "BUY" ? "Buy" : "Sell"}`}
               </button>
@@ -3074,7 +4118,7 @@ export function SyncedChartWorkspace({
                     inputMode="decimal"
                     min={0.01}
                     step={0.01}
-                    value={Number.isFinite(longShortLots) ? longShortLots : 1}
+                    value={resolvedLongShortLots}
                     onChange={(event) => setLongShortLots(Number(event.target.value))}
                     className="h-5 w-14 rounded border border-border bg-background px-1.5 text-[10px] text-foreground"
                   />
@@ -3233,7 +4277,7 @@ export function SyncedChartWorkspace({
                   inputMode="decimal"
                   min={0.01}
                   step={0.01}
-                  value={Number.isFinite(longShortLots) ? longShortLots : 1}
+                  value={resolvedLongShortLots}
                   onChange={(event) => setLongShortLots(Number(event.target.value))}
                   className="h-5 w-16 rounded border border-border bg-background px-1 text-[10px] text-foreground"
                 />
@@ -3273,6 +4317,7 @@ export function SyncedChartWorkspace({
             type="button"
             onClick={() => {
               chartRef.current?.removeAllDrawingTools();
+              persistCurrentDrawings();
               setDrawingTool(null);
               setSelectedDrawingTool(null);
             }}
@@ -3343,7 +4388,13 @@ export function SyncedChartWorkspace({
               </button>
               <button
                 type="button"
-                onClick={() => { chartRef.current?.removeAllDrawingTools(); setDrawingTool(null); setSelectedDrawingTool(null); setCompactActionsOpen(false); }}
+                onClick={() => {
+                  chartRef.current?.removeAllDrawingTools();
+                  persistCurrentDrawings();
+                  setDrawingTool(null);
+                  setSelectedDrawingTool(null);
+                  setCompactActionsOpen(false);
+                }}
                 disabled={!selection}
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
               >
@@ -3377,28 +4428,149 @@ export function SyncedChartWorkspace({
   const chartContent = (
     <div className="flex min-h-0 flex-1 flex-col">
       {toolbar}
+      {isAlertFormOpen && (
+        <div className="mt-3 rounded-lg border border-border bg-card/70 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold text-foreground">Create Price Alert</p>
+              <p className="text-xs text-muted-foreground">
+                {selection ? `${selection.broker} · ${selection.symbol}` : "Select a symbol first"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsAlertFormOpen(false)}
+              className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+            >
+              Close
+            </button>
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-4">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Target Price
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={alertTargetPrice}
+                onChange={(event) => setAlertTargetPrice(event.target.value)}
+                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Condition
+              </span>
+              <div className="flex h-9 w-full items-center rounded-md border border-border bg-muted/40 px-3 text-sm text-foreground">
+                {formatAlertConditionLabel(alertCondition)}
+              </div>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Price Side
+              </span>
+              <select
+                value={alertPriceSide}
+                onChange={(event) => setAlertPriceSide(event.target.value as PriceAlertPriceSide)}
+                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
+              >
+                <option value="bid">Bid</option>
+                <option value="ask">Ask</option>
+              </select>
+            </label>
+            <label className="block md:col-span-1">
+              <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Note
+              </span>
+              <input
+                type="text"
+                value={alertNote}
+                onChange={(event) => setAlertNote(event.target.value)}
+                placeholder="Optional note"
+                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
+              />
+            </label>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleCreateAlert()}
+              disabled={!selection || alertActionPending}
+              className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            >
+              {alertActionPending ? "Saving..." : "Save Alert"}
+            </button>
+            <button
+              type="button"
+              onClick={openAlertForm}
+              disabled={!selection}
+              className="rounded-md border border-border px-3 py-2 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+            >
+              Use Current Price
+            </button>
+            <span className="text-xs text-muted-foreground">
+              Current bid {liveBidLabel} · ask {liveAskLabel}
+            </span>
+          </div>
+        </div>
+      )}
       {!hasSymbols && (
         <div className="mt-3 rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
           No local symbols found. Sync chart data in settings to populate the dropdown.
         </div>
       )}
 
-      {error && (
-        <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-          Failed to load chart data: {error.message}
-        </div>
+      {chartLoadErrorMessage && dismissedChartErrorKey !== chartLoadErrorMessage && (
+        <ChartNotice
+          tone="error"
+          onClose={() => setDismissedChartErrorKey(chartLoadErrorMessage)}
+        >
+          Failed to load chart data: {chartLoadErrorMessage}
+        </ChartNotice>
       )}
 
-      {liveError && (
-        <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
-          Live mode issue: {liveError}
-        </div>
+      {liveModeIssueMessage && dismissedLiveErrorKey !== liveModeIssueMessage && (
+        <ChartNotice
+          tone="warning"
+          onClose={() => setDismissedLiveErrorKey(liveModeIssueMessage)}
+        >
+          Live mode issue: {liveModeIssueMessage}
+        </ChartNotice>
+      )}
+
+      {displayedAlertIssueMessage &&
+        (alertActionError || dismissedPriceAlertsErrorKey !== displayedAlertIssueMessage) && (
+          <ChartNotice
+            tone="error"
+            onClose={() => {
+              if (alertActionError) {
+                setAlertActionError(null);
+                return;
+              }
+              setDismissedPriceAlertsErrorKey(displayedAlertIssueMessage);
+            }}
+          >
+            Alert issue: {displayedAlertIssueMessage}
+          </ChartNotice>
+        )}
+
+      {alertTriggeredMessage && (
+        <ChartNotice
+          tone="success"
+          onClose={() => setAlertFlashEvent(null)}
+        >
+          {alertTriggeredMessage}
+        </ChartNotice>
       )}
 
       {tradeActionError && !isRichTradeOpen && (
-        <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+        <ChartNotice
+          tone="error"
+          onClose={() => setTradeActionError(null)}
+        >
           Trade action issue: {tradeActionError}
-        </div>
+        </ChartNotice>
       )}
 
       <div ref={chartAreaRef} className="mt-3 min-h-[420px] flex-1">
@@ -3425,11 +4597,13 @@ export function SyncedChartWorkspace({
           calloutBoxColor={calloutBoxColor}
           onDrawingSelectionChange={setSelectedDrawingTool}
           onDrawingToolComplete={() => {
+            persistCurrentDrawings();
             if (!continuousDrawingEnabled) {
               setDrawingTool(null);
             }
           }}
           onDrawingToolCancel={() => {
+            persistCurrentDrawings();
             setDrawingTool(null);
             setSelectedDrawingTool(null);
           }}
@@ -3443,14 +4617,24 @@ export function SyncedChartWorkspace({
           replayPlacementTimestamp={replayPlacementTimestamp}
           onReplayPlacementPreviewChange={setReplayPlacementTimestamp}
           onReplayPlacementSelect={startReplayAtTimestamp}
-          longShortLots={longShortLots}
+          longShortLots={resolvedLongShortLots}
           longShortSymbol={selection?.symbol}
-          activeLivePositions={liveVisualsEnabled ? livePositions : []}
+          activeLivePositions={
+            liveVisualsEnabled && showLiveTradesOnChart ? livePositions : []
+          }
           onActiveLivePositionChange={handleLivePositionAdjust}
           onActiveLivePositionClose={handleLivePositionClose}
-          activeLiveOrders={liveVisualsEnabled ? liveOrders : []}
+          activeLiveOrders={
+            liveVisualsEnabled && showLiveTradesOnChart ? liveOrders : []
+          }
           onActiveLiveOrderChange={handleLiveOrderAdjust}
           onActiveLiveOrderCancel={handleLiveOrderCancel}
+          activePriceAlerts={showAlertsOnChart ? symbolPriceAlerts : []}
+          showPriceAlerts={showAlertsOnChart}
+          onActivePriceAlertChange={handleAlertChartMove}
+          onActivePriceAlertDelete={handleDeleteAlert}
+          onCrosshairQuickAlertCreate={handleQuickChartAlertCreate}
+          onCrosshairQuickOrderCreate={liveVisualsEnabled ? handleQuickChartOrderCreate : undefined}
           liveBidPrice={liveVisualsEnabled ? liveQuote?.bid ?? null : null}
           liveAskPrice={liveVisualsEnabled ? liveQuote?.ask ?? null : null}
           showCandleCountdown={liveVisualsEnabled && liveCurrentBar != null}

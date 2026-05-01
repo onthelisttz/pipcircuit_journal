@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "pipcircuit";
-const CACHE_VERSION = "v164";
+const CACHE_VERSION = "v177";
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${CACHE_VERSION}`;
 const PAGE_CACHE = `${CACHE_PREFIX}-pages-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `${CACHE_PREFIX}-runtime-${CACHE_VERSION}`;
@@ -24,6 +24,7 @@ const PRECACHE_URLS = [
   "/pj-icon.svg",
   "/icon-192.png",
   "/icon-512.png",
+  "/sounds/price-alert-reached.wav",
 ];
 
 // ---------------------------------------------------------------------------
@@ -40,7 +41,7 @@ async function matchAny(cache, urls) {
 
 function isStaticAsset(pathname) {
   if (pathname.startsWith("/_next/static/")) return true;
-  return /\.(?:js|css|png|jpg|jpeg|webp|svg|gif|ico|woff2?)$/i.test(pathname);
+  return /\.(?:js|css|png|jpg|jpeg|webp|svg|gif|ico|woff2?|wav|mp3|ogg|m4a|aac)$/i.test(pathname);
 }
 
 function isNextDataOrRSC(pathname, search) {

@@ -40,6 +40,7 @@ import {
     type TimeGuideSettings,
 } from "./timeGuides";
 import { findReplayStartIndex } from "./replay";
+import type { PriceAlert, PriceAlertPriceSide } from "@ui/hooks/usePriceAlerts";
 
 export type DrawingToolType =
     | "Path"
@@ -282,6 +283,11 @@ type LiveTradeLineMeta =
           kind: "order-entry" | "order-stopLoss" | "order-takeProfit";
           orderId: string;
           orderType: string;
+      }
+    | {
+          kind: "alert-target";
+          alertId: string;
+          priceSide: PriceAlertPriceSide;
       };
 
 type LiveTradeLineSpec = {
@@ -296,7 +302,7 @@ type LiveTradeLineSpec = {
 
 type LiveTradeOverlayItem = {
     id: string;
-    lineType: "position-entry" | "position-sl" | "position-tp" | "order-entry" | "order-sl" | "order-tp";
+    lineType: "position-entry" | "position-sl" | "position-tp" | "order-entry" | "order-sl" | "order-tp" | "alert-target";
     y: number;
     color: string;
     lotsLabel: string;
@@ -317,10 +323,18 @@ type LiveTradeOverlayItem = {
     slDragToolId?: string;
     hasTp?: boolean;
     hasSl?: boolean;
+    alertId?: string;
 };
 
 type LiveTradeHtmlDragSession = {
     toolId: string;
+};
+
+type CrosshairQuickOrderSide = "BUY" | "SELL";
+type CrosshairQuickOrderType = "LIMIT" | "STOP";
+type CrosshairQuickActionState = {
+    y: number;
+    price: number;
 };
 
 function formatLiveTradeTitle(lots: number, text: string): string {
@@ -344,6 +358,31 @@ function formatLiveOrderLabel(direction: string, orderType: string): string {
             ? "Stop"
             : orderType;
     return `${direction} ${shortType}`.trim();
+}
+
+function formatAlertCondition(condition: PriceAlert["condition"]): string {
+    return condition === "below" ? "Cross Below" : "Cross Above";
+}
+
+function getCrosshairQuickOrderType(
+    side: CrosshairQuickOrderSide,
+    targetPrice: number,
+    bidPrice: number | null,
+    askPrice: number | null
+): CrosshairQuickOrderType {
+    if (side === "BUY") {
+        const buyReference = Number.isFinite(askPrice) ? askPrice : bidPrice;
+        if (buyReference == null || !Number.isFinite(buyReference)) {
+            return "LIMIT";
+        }
+        return targetPrice <= buyReference ? "LIMIT" : "STOP";
+    }
+
+    const sellReference = Number.isFinite(bidPrice) ? bidPrice : askPrice;
+    if (sellReference == null || !Number.isFinite(sellReference)) {
+        return "LIMIT";
+    }
+    return targetPrice >= sellReference ? "LIMIT" : "STOP";
 }
 
 function withColorAlpha(color: string, alpha: number): string {
@@ -695,6 +734,18 @@ export interface TradeCandlestickChartProps {
     ) => void;
     /** Called when a live pending order should be cancelled from the chart overlay */
     onActiveLiveOrderCancel?: (orderId: string) => void;
+    /** Active price alerts rendered as draggable alert lines */
+    activePriceAlerts?: PriceAlert[];
+    /** When false, alert lines are hidden even if alerts exist */
+    showPriceAlerts?: boolean;
+    /** Called when an alert target is dragged on chart */
+    onActivePriceAlertChange?: (alertId: string, targetPrice: number, priceSide: PriceAlertPriceSide) => void;
+    /** Called when an alert should be deleted from the chart overlay */
+    onActivePriceAlertDelete?: (alertId: string) => void;
+    /** Called when a crosshair quick alert action is chosen */
+    onCrosshairQuickAlertCreate?: (targetPrice: number) => void;
+    /** Called when a crosshair quick pending-order action is chosen */
+    onCrosshairQuickOrderCreate?: (side: CrosshairQuickOrderSide, orderType: CrosshairQuickOrderType, targetPrice: number) => void;
     /** Optional live bid price line */
     liveBidPrice?: number | null;
     /** Optional live ask price line */
@@ -761,6 +812,7 @@ function sameLiveTradeOverlayItems(left: LiveTradeOverlayItem[], right: LiveTrad
             a.dragToolId !== b.dragToolId ||
             a.positionId !== b.positionId ||
             a.orderId !== b.orderId ||
+            a.alertId !== b.alertId ||
             a.showTpToggle !== b.showTpToggle ||
             a.showSlToggle !== b.showSlToggle ||
             a.hasTp !== b.hasTp ||
@@ -855,6 +907,12 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     activeLiveOrders = [],
     onActiveLiveOrderChange,
     onActiveLiveOrderCancel,
+    activePriceAlerts = [],
+    showPriceAlerts = true,
+    onActivePriceAlertChange,
+    onActivePriceAlertDelete,
+    onCrosshairQuickAlertCreate,
+    onCrosshairQuickOrderCreate,
     liveBidPrice = null,
     liveAskPrice = null,
     showCandleCountdown = false,
@@ -871,6 +929,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const liveTradePriceLinesRef = useRef<Map<string, IPriceLine>>(new Map());
     const activeLivePositionsRef = useRef(activeLivePositions);
     const activeLiveOrdersRef = useRef(activeLiveOrders);
+    const activePriceAlertsRef = useRef(activePriceAlerts);
     const priceScaleUnlockFrameRef = useRef<number | null>(null);
     const [isChartReady, setIsChartReady] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
@@ -904,6 +963,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const [liveTradeOverlayPadRight, setLiveTradeOverlayPadRight] = useState(0);
     const [liveTradePreviewPrices, setLiveTradePreviewPrices] = useState<Record<string, number>>({});
     const [liveTradeDragSession, setLiveTradeDragSession] = useState<LiveTradeHtmlDragSession | null>(null);
+    const [crosshairQuickAction, setCrosshairQuickAction] = useState<CrosshairQuickActionState | null>(null);
+    const [isCrosshairQuickMenuOpen, setIsCrosshairQuickMenuOpen] = useState(false);
     const [selectionBox, setSelectionBox] = useState<SelectionBoxBounds | null>(null);
     const onVisibleRangeChangeRef = useRef<typeof onVisibleRangeChange>(onVisibleRangeChange);
     const onDrawingSelectionChangeRef = useRef<typeof onDrawingSelectionChange>(onDrawingSelectionChange);
@@ -964,14 +1025,25 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const liveTradeLineMetaRef = useRef<Map<string, LiveTradeLineMeta>>(new Map());
     const liveTradeLineSpecsRef = useRef<Map<string, LiveTradeLineSpec>>(new Map());
     const liveTradeAmendTimersRef = useRef<Map<string, number>>(new Map());
+    const liveTradePreviewPricesRef = useRef<Record<string, number>>({});
     const onActiveLivePositionChangeRef = useRef<typeof onActiveLivePositionChange>(onActiveLivePositionChange);
     const onActiveLivePositionCloseRef = useRef<typeof onActiveLivePositionClose>(onActiveLivePositionClose);
     const onActiveLiveOrderChangeRef = useRef<typeof onActiveLiveOrderChange>(onActiveLiveOrderChange);
     const onActiveLiveOrderCancelRef = useRef<typeof onActiveLiveOrderCancel>(onActiveLiveOrderCancel);
+    const onActivePriceAlertChangeRef = useRef<typeof onActivePriceAlertChange>(onActivePriceAlertChange);
+    const onActivePriceAlertDeleteRef = useRef<typeof onActivePriceAlertDelete>(onActivePriceAlertDelete);
+    const onCrosshairQuickAlertCreateRef = useRef<typeof onCrosshairQuickAlertCreate>(onCrosshairQuickAlertCreate);
+    const onCrosshairQuickOrderCreateRef = useRef<typeof onCrosshairQuickOrderCreate>(onCrosshairQuickOrderCreate);
+    const crosshairQuickActionRef = useRef<HTMLDivElement | null>(null);
+    const canShowCrosshairQuickActionsRef = useRef<boolean>(Boolean(
+        onCrosshairQuickAlertCreate || onCrosshairQuickOrderCreate
+    ));
+    const liveTradeDragSessionRef = useRef<LiveTradeHtmlDragSession | null>(null);
     const priceFormat = useMemo(
         () => buildSeriesPriceFormat(longShortSymbol ?? trade?.symbol, data),
         [data, longShortSymbol, trade?.symbol]
     );
+    const priceFormatRef = useRef(priceFormat);
     const clearTradeHistoryPlugins = useCallback((series: ISeriesApi<"Candlestick"> | null = seriesRef.current) => {
         if (!series || tradeHistoryPluginsRef.current.length === 0) {
             tradeHistoryPluginsRef.current = [];
@@ -1131,6 +1203,37 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         showCandleCountdown &&
         candleCountdownLabel != null &&
         candleCountdownPriceLabel != null;
+
+    const canShowCrosshairQuickActions = Boolean(
+        onCrosshairQuickAlertCreate || onCrosshairQuickOrderCreate
+    );
+    const crosshairQuickPriceLabel = useMemo(() => {
+        if (!crosshairQuickAction) {
+            return null;
+        }
+        return formatPriceScaleLabel(crosshairQuickAction.price, priceFormat.precision);
+    }, [crosshairQuickAction, priceFormat.precision]);
+    const crosshairBuyOrderType = useMemo(
+        () =>
+            crosshairQuickAction
+                ? getCrosshairQuickOrderType("BUY", crosshairQuickAction.price, liveBidPrice, liveAskPrice)
+                : "LIMIT",
+        [crosshairQuickAction, liveAskPrice, liveBidPrice]
+    );
+    const crosshairSellOrderType = useMemo(
+        () =>
+            crosshairQuickAction
+                ? getCrosshairQuickOrderType("SELL", crosshairQuickAction.price, liveBidPrice, liveAskPrice)
+                : "LIMIT",
+        [crosshairQuickAction, liveAskPrice, liveBidPrice]
+    );
+    const isCrosshairQuickActionBlocked = useMemo(() => {
+        if (!crosshairQuickAction) {
+            return false;
+        }
+
+        return liveTradeOverlayItems.some((item) => Math.abs(item.y - crosshairQuickAction.y) <= 14);
+    }, [crosshairQuickAction, liveTradeOverlayItems]);
 
     const refreshTimeGuideOverlay = useCallback(() => {
         const chart = chartRef.current;
@@ -1432,11 +1535,32 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }
         }
 
+        if (showPriceAlerts) {
+            for (const alert of activePriceAlerts) {
+                if (!Number.isFinite(alert.targetPrice)) continue;
+                const toolId = `${LIVE_TRADE_TOOL_ID_PREFIX}alert-target:${alert.id}`;
+                const alertColor =
+                    alert.condition === "below"
+                        ? "rgba(245, 158, 11, 0.95)"
+                        : "rgba(14, 165, 233, 0.95)";
+                addItem(alert.targetPrice, toolId, {
+                    id: `alert-target:${alert.id}`,
+                    lineType: "alert-target",
+                    color: alertColor,
+                    lotsLabel: alert.priceSide.toUpperCase(),
+                    label: alert.note?.trim() || formatAlertCondition(alert.condition),
+                    draggable: true,
+                    dragToolId: toolId,
+                    alertId: alert.id,
+                });
+            }
+        }
+
         nextItems.sort((left, right) => left.y - right.y);
         setLiveTradeOverlayItems((current) =>
             sameLiveTradeOverlayItems(current, nextItems) ? current : nextItems
         );
-    }, [activeLiveOrders, activeLivePositions, data, liveAskPrice, liveBidPrice, liveTradePreviewPrices]);
+    }, [activeLiveOrders, activeLivePositions, activePriceAlerts, data, liveAskPrice, liveBidPrice, liveTradePreviewPrices, showPriceAlerts]);
 
     const resolveLiveTradePreviewDescriptor = useCallback((
         toolId: string,
@@ -1454,7 +1578,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             };
         }
 
-        const parsed = toolId.match(/^live-trade:(position|order)-(entry|sl|tp):(.+)$/);
+        const parsed = toolId.match(/^live-trade:(position|order|alert)-(entry|sl|tp|target):(.+)$/);
         if (!parsed) return null;
 
         const [, scope, segment, id] = parsed;
@@ -1503,6 +1627,29 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }
 
             return null;
+        }
+
+        if (scope === "alert") {
+            const alert = activePriceAlerts.find((candidate) => candidate.id === id);
+            if (!alert || segment !== "target") return null;
+            const price = typeof fallbackPrice === "number" ? fallbackPrice : alert.targetPrice;
+            if (!Number.isFinite(price)) return null;
+            const color =
+                alert.condition === "below"
+                    ? "rgba(245, 158, 11, 0.95)"
+                    : "rgba(14, 165, 233, 0.95)";
+            return {
+                meta: { kind: "alert-target", alertId: id, priceSide: alert.priceSide },
+                spec: {
+                    id: toolId,
+                    price,
+                    title: alert.note?.trim() || formatAlertCondition(alert.condition),
+                    color,
+                    lineStyle: LineStyle.Dashed,
+                    editable: true,
+                    toolMeta: { kind: "alert-target", alertId: id, priceSide: alert.priceSide },
+                },
+            };
         }
 
         const order = activeLiveOrders.find((candidate) => candidate.orderId === id);
@@ -1567,7 +1714,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         }
 
         return null;
-    }, [activeLiveOrders, activeLivePositions]);
+    }, [activeLiveOrders, activeLivePositions, activePriceAlerts]);
 
     const applyLiveTradePreviewPrice = useCallback((toolId: string, nextPrice: number) => {
         if (!Number.isFinite(nextPrice)) return;
@@ -1579,10 +1726,12 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             if (current[toolId] != null && Math.abs(current[toolId] - nextPrice) <= 0.0000001) {
                 return current;
             }
-            return {
+            const next = {
                 ...current,
                 [toolId]: nextPrice,
             };
+            liveTradePreviewPricesRef.current = next;
+            return next;
         });
 
         liveTradeLineMetaRef.current.set(toolId, descriptor.meta);
@@ -1707,7 +1856,9 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         const finishDrag = () => {
             const { toolId } = liveTradeDragSession;
-            const previewPrice = liveTradePreviewPrices[toolId];
+            const previewPrice =
+                liveTradePreviewPricesRef.current[toolId] ??
+                liveTradeLineSpecsRef.current.get(toolId)?.price;
             setLiveTradeDragSession(null);
 
             const clearPreview = () => {
@@ -1715,6 +1866,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                     if (!(toolId in current)) return current;
                     const next = { ...current };
                     delete next[toolId];
+                    liveTradePreviewPricesRef.current = next;
                     return next;
                 });
             };
@@ -1724,7 +1876,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 return;
             }
 
-            const liveMeta = liveTradeLineMetaRef.current.get(toolId);
+            const resolvedDescriptor = resolveLiveTradePreviewDescriptor(toolId, previewPrice);
+            const liveMeta = liveTradeLineMetaRef.current.get(toolId) ?? resolvedDescriptor?.meta;
             if (!liveMeta) {
                 clearPreview();
                 return;
@@ -1776,6 +1929,15 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                             stopLoss: order?.stopLoss ?? undefined,
                             takeProfit: previewPrice,
                         });
+                        return;
+                    }
+
+                    if (liveMeta.kind === "alert-target") {
+                        await onActivePriceAlertChangeRef.current?.(
+                            liveMeta.alertId,
+                            previewPrice,
+                            liveMeta.priceSide
+                        );
                     }
                 } finally {
                     clearPreview();
@@ -1792,7 +1954,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             window.removeEventListener("pointerup", finishDrag);
             window.removeEventListener("pointercancel", finishDrag);
         };
-    }, [applyLiveTradePreviewPrice, liveTradeDragSession, liveTradePreviewPrices]);
+    }, [applyLiveTradePreviewPrice, liveTradeDragSession, resolveLiveTradePreviewDescriptor]);
 
     const formatMoney = (value: number) => {
         const sign = value >= 0 ? "+" : "-";
@@ -1941,12 +2103,74 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     }, [onActiveLiveOrderCancel]);
 
     useEffect(() => {
+        onActivePriceAlertChangeRef.current = onActivePriceAlertChange;
+    }, [onActivePriceAlertChange]);
+
+    useEffect(() => {
+        onActivePriceAlertDeleteRef.current = onActivePriceAlertDelete;
+    }, [onActivePriceAlertDelete]);
+
+    useEffect(() => {
+        onCrosshairQuickAlertCreateRef.current = onCrosshairQuickAlertCreate;
+    }, [onCrosshairQuickAlertCreate]);
+
+    useEffect(() => {
+        onCrosshairQuickOrderCreateRef.current = onCrosshairQuickOrderCreate;
+    }, [onCrosshairQuickOrderCreate]);
+
+    useEffect(() => {
+        canShowCrosshairQuickActionsRef.current = canShowCrosshairQuickActions;
+    }, [canShowCrosshairQuickActions]);
+
+    useEffect(() => {
+        liveTradeDragSessionRef.current = liveTradeDragSession;
+    }, [liveTradeDragSession]);
+
+    useEffect(() => {
+        priceFormatRef.current = priceFormat;
+    }, [priceFormat]);
+
+    useEffect(() => {
         activeLivePositionsRef.current = activeLivePositions;
     }, [activeLivePositions]);
 
     useEffect(() => {
         activeLiveOrdersRef.current = activeLiveOrders;
     }, [activeLiveOrders]);
+
+    useEffect(() => {
+        activePriceAlertsRef.current = activePriceAlerts;
+    }, [activePriceAlerts]);
+
+    useEffect(() => {
+        liveTradePreviewPricesRef.current = liveTradePreviewPrices;
+    }, [liveTradePreviewPrices]);
+
+    useEffect(() => {
+        if (!isCrosshairQuickMenuOpen) {
+            return;
+        }
+
+        const handlePointerDown = (event: PointerEvent) => {
+            const target = event.target as Node | null;
+            if (target && crosshairQuickActionRef.current?.contains(target)) {
+                return;
+            }
+            setIsCrosshairQuickMenuOpen(false);
+        };
+
+        window.addEventListener("pointerdown", handlePointerDown);
+        return () => {
+            window.removeEventListener("pointerdown", handlePointerDown);
+        };
+    }, [isCrosshairQuickMenuOpen]);
+
+    useEffect(() => {
+        if (crosshairQuickAction != null) {
+            return;
+        }
+        setIsCrosshairQuickMenuOpen(false);
+    }, [crosshairQuickAction]);
 
     const getLineToolsInternal = useCallback(() => lineToolsRef.current as LineToolsInternalApi | null, []);
 
@@ -2097,6 +2321,31 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const exportCurrentDrawings = useCallback((): DrawingToolExport[] => {
         if (!lineToolsRef.current) return [];
 
+        const toolsMap = getLineToolsInternal()?._tools;
+        if (toolsMap && toolsMap.size > 0) {
+            const hasUserDrawings = Array.from(toolsMap.values()).some((tool) => {
+                const toolId = tool.id();
+                if (!toolId || isLiveTradeToolId(toolId)) {
+                    return false;
+                }
+                try {
+                    const exportData = tool.getExportData();
+                    return (
+                        exportData != null &&
+                        !isLiveTradeToolId(exportData.id) &&
+                        isDrawingToolType(exportData.toolType) &&
+                        Array.isArray(exportData.points) &&
+                        exportData.points.length > 0
+                    );
+                } catch {
+                    return false;
+                }
+            });
+            if (!hasUserDrawings) {
+                return [];
+            }
+        }
+
         const exported = parseDrawingToolExports(lineToolsRef.current.exportLineTools?.()).filter(
             (tool) => !isLiveTradeToolId(tool.id)
         );
@@ -2104,7 +2353,6 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             return exported;
         }
 
-        const toolsMap = getLineToolsInternal()?._tools;
         if (!toolsMap || toolsMap.size === 0) return [];
 
         const fallbackExports: DrawingToolExport[] = [];
@@ -2970,12 +3218,13 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                         const latestTool = readDrawingToolById(toolId);
                         const nextPrice = latestTool?.points?.[0]?.price;
                         if (!Number.isFinite(nextPrice)) return;
+                        const nextValidatedPrice = nextPrice as number;
 
                         if (liveMeta.kind === "position-stopLoss") {
                             const position = activeLivePositionsRef.current.find((p) => p.positionId === liveMeta.positionId);
                             void onActiveLivePositionChangeRef.current?.(
                                 liveMeta.positionId,
-                                nextPrice,
+                                nextValidatedPrice,
                                 position?.takeProfit ?? undefined
                             );
                             return;
@@ -2986,7 +3235,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                             void onActiveLivePositionChangeRef.current?.(
                                 liveMeta.positionId,
                                 position?.stopLoss ?? undefined,
-                                nextPrice
+                                nextValidatedPrice
                             );
                             return;
                         }
@@ -2995,8 +3244,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                             const order = activeLiveOrdersRef.current.find((o) => o.orderId === liveMeta.orderId);
                             void onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
                                 ...(String(liveMeta.orderType).toUpperCase().includes("LIMIT")
-                                    ? { limitPrice: nextPrice }
-                                    : { stopPrice: nextPrice }),
+                                    ? { limitPrice: nextValidatedPrice }
+                                    : { stopPrice: nextValidatedPrice }),
                                 stopLoss: order?.stopLoss ?? undefined,
                                 takeProfit: order?.takeProfit ?? undefined,
                             });
@@ -3007,7 +3256,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                             const order = activeLiveOrdersRef.current.find((o) => o.orderId === liveMeta.orderId);
                             void onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
                                 takeProfit: order?.takeProfit ?? undefined,
-                                stopLoss: nextPrice,
+                                stopLoss: nextValidatedPrice,
                             });
                             return;
                         }
@@ -3016,8 +3265,17 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                             const order = activeLiveOrdersRef.current.find((o) => o.orderId === liveMeta.orderId);
                             void onActiveLiveOrderChangeRef.current?.(liveMeta.orderId, {
                                 stopLoss: order?.stopLoss ?? undefined,
-                                takeProfit: nextPrice,
+                                takeProfit: nextValidatedPrice,
                             });
+                            return;
+                        }
+
+                        if (liveMeta.kind === "alert-target") {
+                            void onActivePriceAlertChangeRef.current?.(
+                                liveMeta.alertId,
+                                nextValidatedPrice,
+                                liveMeta.priceSide
+                            );
                         }
                     }, 180);
 
@@ -3110,8 +3368,47 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }, 0);
         };
         const handleCrosshairMove = (param: ChartMouseEventParam) => {
-            if (!replayPlacementModeRef.current) return;
-            onReplayPlacementPreviewChangeRef.current?.(resolveReplayPlacementTimestamp(param));
+            if (replayPlacementModeRef.current) {
+                onReplayPlacementPreviewChangeRef.current?.(resolveReplayPlacementTimestamp(param));
+            }
+
+            if (!canShowCrosshairQuickActionsRef.current || liveTradeDragSessionRef.current) {
+                setCrosshairQuickAction((current) => (current == null ? current : null));
+                return;
+            }
+
+            const point = param.point;
+            const paneSize = chart.paneSize();
+            if (
+                !point ||
+                point.x < 0 ||
+                point.y < 0 ||
+                point.x > paneSize.width ||
+                point.y > paneSize.height
+            ) {
+                return;
+            }
+
+            const mappedPrice = series.coordinateToPrice(point.y);
+            const price =
+                typeof mappedPrice === "number" ? mappedPrice : Number(mappedPrice);
+            if (!Number.isFinite(price)) {
+                return;
+            }
+
+            setCrosshairQuickAction((current) => {
+                if (
+                    current &&
+                    Math.abs(current.y - point.y) <= 0.5 &&
+                    Math.abs(current.price - price) <= priceFormatRef.current.minMove / 2
+                ) {
+                    return current;
+                }
+                return {
+                    y: point.y,
+                    price,
+                };
+            });
         };
         lineTools.subscribeLineToolsAfterEdit?.(handleAfterEdit);
         lineTools.subscribeLineToolsDoubleClick?.(handleDoubleClick);
@@ -3575,9 +3872,35 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }
         }
 
+        if (showPriceAlerts) {
+            for (const alert of activePriceAlerts) {
+                if (!Number.isFinite(alert.targetPrice)) {
+                    continue;
+                }
+
+                const toolId = `${LIVE_TRADE_TOOL_ID_PREFIX}alert-target:${alert.id}`;
+                nextLiveToolIds.add(toolId);
+                pushSpec({
+                    id: toolId,
+                    price: alert.targetPrice,
+                    title: alert.note?.trim() || formatAlertCondition(alert.condition),
+                    color:
+                        alert.condition === "below"
+                            ? "rgba(245, 158, 11, 0.95)"
+                            : "rgba(14, 165, 233, 0.95)",
+                    lineStyle: LineStyle.Dashed,
+                    editable: true,
+                    toolMeta: {
+                        kind: "alert-target",
+                        alertId: alert.id,
+                        priceSide: alert.priceSide,
+                    },
+                });
+            }
+        }
+
         liveTradeLineSpecsRef.current = new Map(nextLiveLineSpecs.map((spec) => [spec.id, spec]));
 
-        const lastBarTimestamp = data[data.length - 1]?.timestamp ?? Date.now();
         for (const spec of nextLiveLineSpecs) {
             const existingPriceLine = liveTradePriceLinesRef.current.get(spec.id);
             if (existingPriceLine) {
@@ -3626,10 +3949,12 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     }, [
         activeLivePositions,
         activeLiveOrders,
+        activePriceAlerts,
         data,
         isChartReady,
         normalizeDrawingTimestampForCurrentData,
         removeLineToolsByIdSafely,
+        showPriceAlerts,
     ]);
 
     useEffect(() => {
@@ -4497,13 +4822,13 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         const existingTool = readDrawingToolById(toolId);
         const nextPrice =
             existingTool?.points?.[0]?.price ??
-            liveTradePreviewPrices[toolId] ??
+            liveTradePreviewPricesRef.current[toolId] ??
             liveTradeLineSpecsRef.current.get(toolId)?.price;
         if (Number.isFinite(nextPrice)) {
             applyLiveTradePreviewPrice(toolId, nextPrice);
         }
         setLiveTradeDragSession({ toolId });
-    }, [applyLiveTradePreviewPrice, liveTradePreviewPrices, readDrawingToolById]);
+    }, [applyLiveTradePreviewPrice, readDrawingToolById]);
 
     const handleLiveTradeActionClick = useCallback((
         event: ReactMouseEvent<HTMLButtonElement>,
@@ -4557,18 +4882,57 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
 
         if (item.orderId && item.lineType === "order-entry") {
             void onActiveLiveOrderCancelRef.current?.(item.orderId);
+            return;
+        }
+
+        if (item.alertId && item.lineType === "alert-target") {
+            void onActivePriceAlertDeleteRef.current?.(item.alertId);
         }
     }, []);
+
+    const handleCrosshairQuickActionToggle = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsCrosshairQuickMenuOpen((current) => !current);
+    }, []);
+
+    const handleCrosshairQuickAlertCreate = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!crosshairQuickAction) {
+            return;
+        }
+        onCrosshairQuickAlertCreateRef.current?.(crosshairQuickAction.price);
+        setIsCrosshairQuickMenuOpen(false);
+    }, [crosshairQuickAction]);
+
+    const handleCrosshairQuickOrderCreate = useCallback((
+        event: ReactMouseEvent<HTMLButtonElement>,
+        side: CrosshairQuickOrderSide,
+        orderType: CrosshairQuickOrderType
+    ) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!crosshairQuickAction) {
+            return;
+        }
+        onCrosshairQuickOrderCreateRef.current?.(side, orderType, crosshairQuickAction.price);
+        setIsCrosshairQuickMenuOpen(false);
+    }, [crosshairQuickAction]);
 
     return (
         <div
             className="relative w-full"
             style={{ height }}
             onMouseEnter={() => setIsHovered(true)}
-            onMouseLeave={() => setIsHovered(false)}
+            onMouseLeave={() => {
+                setIsHovered(false);
+                setCrosshairQuickAction(null);
+                setIsCrosshairQuickMenuOpen(false);
+            }}
         >
             {/* Loading overlay */}
-            {isLoading && (
+            {isLoading && data.length === 0 && (
                 <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-900/50">
                     <div className="flex items-center gap-2 text-gray-400">
                         <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
@@ -4799,6 +5163,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                                             ? "Cancel pending order"
                                             : item.lineType === "position-entry"
                                                 ? "Close position"
+                                                : item.lineType === "alert-target"
+                                                    ? "Delete alert"
                                                 : item.lineType.endsWith("-tp")
                                                     ? "Remove take profit"
                                                     : "Remove stop loss"
@@ -4809,6 +5175,69 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                             </div>
                         );
                     })}
+                </div>
+            )}
+
+            {canShowCrosshairQuickActions && isHovered && crosshairQuickAction && !isCrosshairQuickActionBlocked && !replayPlacementMode && !liveTradeDragSession && (
+                <div
+                    ref={crosshairQuickActionRef}
+                    className="absolute z-[6] -translate-y-1/2"
+                    style={{
+                        top: `${crosshairQuickAction.y}px`,
+                        right: `${Math.max(4, liveTradeOverlayPadRight)}px`,
+                    }}
+                >
+                    <button
+                        type="button"
+                        onClick={handleCrosshairQuickActionToggle}
+                        className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-500/70 bg-slate-800/95 text-[12px] font-semibold text-slate-50 shadow-lg transition-colors hover:bg-slate-700"
+                        title="Crosshair actions"
+                    >
+                        +
+                    </button>
+
+                    {isCrosshairQuickMenuOpen && crosshairQuickPriceLabel && (
+                        <div className="absolute right-7 top-1/2 w-[280px] -translate-y-1/2 overflow-hidden rounded-xl border border-border bg-popover/95 shadow-2xl backdrop-blur">
+                            <div className="border-b border-border/80 px-3 py-2">
+                                <button
+                                    type="button"
+                                    onClick={handleCrosshairQuickAlertCreate}
+                                    className="flex w-full items-center justify-between gap-3 text-left text-sm text-foreground transition-colors hover:text-primary"
+                                >
+                                    <span>Add alert on {(longShortSymbolRef.current ?? "symbol").toUpperCase()} at {crosshairQuickPriceLabel}</span>
+                                    <span className="text-[11px] text-muted-foreground">Alert</span>
+                                </button>
+                            </div>
+                            {onCrosshairQuickOrderCreate && (
+                                <>
+                                    <div className="border-b border-border/80 px-3 py-2">
+                                        <button
+                                            type="button"
+                                            onClick={(event) => handleCrosshairQuickOrderCreate(event, "SELL", crosshairSellOrderType)}
+                                            className="flex w-full items-center justify-between gap-3 text-left text-sm text-foreground transition-colors hover:text-rose-300"
+                                        >
+                                            <span>
+                                                Sell {formatLiveTradeLotsLabel(longShortLotsRef.current)} {(longShortSymbolRef.current ?? "symbol").toUpperCase()} @ {crosshairQuickPriceLabel} {crosshairSellOrderType.toLowerCase()}
+                                            </span>
+                                            <span className="text-[11px] text-muted-foreground">Sell</span>
+                                        </button>
+                                    </div>
+                                    <div className="px-3 py-2">
+                                        <button
+                                            type="button"
+                                            onClick={(event) => handleCrosshairQuickOrderCreate(event, "BUY", crosshairBuyOrderType)}
+                                            className="flex w-full items-center justify-between gap-3 text-left text-sm text-foreground transition-colors hover:text-emerald-300"
+                                        >
+                                            <span>
+                                                Buy {formatLiveTradeLotsLabel(longShortLotsRef.current)} {(longShortSymbolRef.current ?? "symbol").toUpperCase()} @ {crosshairQuickPriceLabel} {crosshairBuyOrderType.toLowerCase()}
+                                            </span>
+                                            <span className="text-[11px] text-muted-foreground">Buy</span>
+                                        </button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
 
