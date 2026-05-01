@@ -490,7 +490,9 @@ function buildCorsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Cache-Control, Last-Event-ID",
+    "Access-Control-Allow-Private-Network": "true",
+    "Access-Control-Max-Age": "600",
     Vary: "Origin",
   };
 }

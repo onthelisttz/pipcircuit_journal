@@ -155,6 +155,15 @@ function mergeAlertEventRows(current: PriceAlertEvent[], nextEvent: PriceAlertEv
     .slice(0, 50);
 }
 
+function sortAlerts(rows: PriceAlert[]): PriceAlert[] {
+  return [...rows].sort((left, right) => {
+    if (left.isActive !== right.isActive) {
+      return left.isActive ? -1 : 1;
+    }
+    return right.createdAt.localeCompare(left.createdAt);
+  });
+}
+
 export function usePriceAlerts({
   userId,
   enabled = true,
@@ -289,10 +298,18 @@ export function usePriceAlerts({
         updated_at: new Date().toISOString(),
       };
 
-      const { error: insertError } = await supabase.from("price_alerts").insert(payload);
+      const { data: insertedRow, error: insertError } = await supabase
+        .from("price_alerts")
+        .insert(payload)
+        .select("*")
+        .single();
       if (insertError) {
         setError(insertError.message);
         throw insertError;
+      }
+
+      if (insertedRow) {
+        setAlerts((current) => mergeAlertRows(current, mapAlertRow(insertedRow as AlertRow)));
       }
     },
     [userId]
@@ -306,6 +323,8 @@ export function usePriceAlerts({
 
       const supabase = getSupabaseClient();
       setError(null);
+      const previousAlerts = alerts;
+      setAlerts((current) => current.filter((alert) => alert.id !== alertId));
 
       const { error: deleteError } = await supabase
         .from("price_alerts")
@@ -314,11 +333,12 @@ export function usePriceAlerts({
         .eq("id", alertId);
 
       if (deleteError) {
+        setAlerts(previousAlerts);
         setError(deleteError.message);
         throw deleteError;
       }
     },
-    [userId]
+    [alerts, userId]
   );
 
   const updateAlert = useCallback(
@@ -349,19 +369,46 @@ export function usePriceAlerts({
 
       const supabase = getSupabaseClient();
       setError(null);
+      const previousAlerts = alerts;
+      setAlerts((current) =>
+        sortAlerts(
+          current.map((alert) =>
+            alert.id !== alertId
+              ? alert
+              : {
+                  ...alert,
+                  ...(input.condition != null ? { condition: input.condition } : {}),
+                  ...(input.priceSide != null ? { priceSide: input.priceSide } : {}),
+                  ...(typeof input.targetPrice === "number" && Number.isFinite(input.targetPrice)
+                    ? { targetPrice: input.targetPrice }
+                    : {}),
+                  ...("note" in input ? { note: input.note?.trim() || null } : {}),
+                  ...(typeof input.isActive === "boolean" ? { isActive: input.isActive } : {}),
+                  updatedAt: payload.updated_at as string,
+                }
+          )
+        )
+      );
 
-      const { error: updateError } = await supabase
+      const { data: updatedRow, error: updateError } = await supabase
         .from("price_alerts")
         .update(payload)
         .eq("user_id", userId)
-        .eq("id", alertId);
+        .eq("id", alertId)
+        .select("*")
+        .single();
 
       if (updateError) {
+        setAlerts(previousAlerts);
         setError(updateError.message);
         throw updateError;
       }
+
+      if (updatedRow) {
+        setAlerts((current) => mergeAlertRows(current, mapAlertRow(updatedRow as AlertRow)));
+      }
     },
-    [userId]
+    [alerts, userId]
   );
 
   const clearLatestTriggeredEvent = useCallback(() => {
