@@ -451,7 +451,9 @@ export function ChartTradeHistoryPanel({
     [priceAlerts, recentAlertEvents.length]
   );
 
-  const subtitle = broker && symbol ? `${broker} - ${symbol}` : symbol ?? "Trade history";
+  const subtitle = broker
+    ? `${broker} - ${symbol ?? "All symbols"}`
+    : symbol ?? "All symbols";
   const rangeLabel = `${format(from, "MMM d, yyyy")} - ${format(to, "MMM d, yyyy")}`;
 
   const openDatePicker = () => {
@@ -651,7 +653,7 @@ export function ChartTradeHistoryPanel({
         {alertDetailTab === "active" ? (
           priceAlerts.length === 0 ? (
             <div className="px-4 py-5 text-center text-xs text-muted-foreground">
-              No active alerts for this chart symbol.
+              No active alerts for this workspace.
             </div>
           ) : (
           priceAlerts.map((alert) => (

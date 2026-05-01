@@ -245,6 +245,20 @@ function mapOrder(order, symbol, symbolMeta = null) {
   };
 }
 
+function buildSymbolMetaSnapshot(symbolRow) {
+  if (!symbolRow || typeof symbolRow !== "object") {
+    return null;
+  }
+
+  return {
+    lotSize: toNumber(symbolRow?.lotSize),
+    minVolume: toNumber(symbolRow?.minVolume),
+    maxVolume: toNumber(symbolRow?.maxVolume),
+    stepVolume: toNumber(symbolRow?.stepVolume),
+    digits: toNumber(symbolRow?.digits),
+  };
+}
+
 function sanitizeExecutionEvent(payload) {
   if (!payload || typeof payload !== "object") {
     return {
@@ -737,11 +751,29 @@ class LiveSessionManager {
     const rawPositions = Array.isArray(reconcile?.position) ? reconcile.position : [];
     const rawOrders = Array.isArray(reconcile?.order) ? reconcile.order : [];
     const positions = rawPositions
-      .filter((position) => toNumber(position?.tradeData?.symbolId) === session.config.symbolId)
-      .map((position) => mapPosition(position, session.config.symbol, session.config.symbolMeta));
+      .map((position) => {
+        const symbolId =
+          toNumber(position?.tradeData?.symbolId) ??
+          toNumber(position?.symbolId);
+        const symbolEntry = symbolId != null ? session.config.symbolDirectory?.get(symbolId) : null;
+        return mapPosition(
+          position,
+          symbolEntry?.symbol ?? session.config.symbol,
+          symbolEntry?.symbolMeta ?? session.config.symbolMeta
+        );
+      });
     const orders = rawOrders
-      .filter((order) => toNumber(order?.tradeData?.symbolId) === session.config.symbolId)
-      .map((order) => mapOrder(order, session.config.symbol, session.config.symbolMeta));
+      .map((order) => {
+        const symbolId =
+          toNumber(order?.tradeData?.symbolId) ??
+          toNumber(order?.symbolId);
+        const symbolEntry = symbolId != null ? session.config.symbolDirectory?.get(symbolId) : null;
+        return mapOrder(
+          order,
+          symbolEntry?.symbol ?? session.config.symbol,
+          symbolEntry?.symbolMeta ?? session.config.symbolMeta
+        );
+      });
 
     return {
       symbol: session.config.symbol,
@@ -1324,6 +1356,21 @@ class LiveSessionManager {
       ctidTraderAccountId: session.config.accountId,
     });
     const symbols = Array.isArray(symbolsRes?.symbol) ? symbolsRes.symbol : [];
+    session.config.symbolDirectory = new Map(
+      symbols
+        .map((item) => {
+          const itemSymbolId = toNumber(item?.symbolId ?? item?.id);
+          if (!itemSymbolId) return null;
+          return [
+            itemSymbolId,
+            {
+              symbol: normalizeSymbol(item?.symbolName ?? item?.name) || String(itemSymbolId),
+              symbolMeta: buildSymbolMetaSnapshot(item),
+            },
+          ];
+        })
+        .filter(Boolean)
+    );
     const normalizedSymbol = normalizeSymbol(session.config.symbol);
     const symbolRow = symbols.find((item) => {
       const name = normalizeSymbol(item?.symbolName ?? item?.name);
@@ -1352,6 +1399,10 @@ class LiveSessionManager {
           digits: toNumber(fullSymbol?.digits),
         }
       : null;
+    session.config.symbolDirectory?.set(symbolId, {
+      symbol: normalizedSymbol,
+      symbolMeta: session.config.symbolMeta,
+    });
 
     const period = trendbarMap[session.config.timeframe.toUpperCase()];
     if (!period) {
@@ -1481,6 +1532,11 @@ class LiveSessionManager {
 
     session.alerts = nextAlerts;
     session.lastTouchedAt = Date.now();
+    if (session.latestPayload) {
+      void this.evaluateAlerts(session, session.latestPayload).catch((error) => {
+        console.warn("[ctrader-live-service] Failed to evaluate alerts after sync:", error);
+      });
+    }
 
     return {
       ok: true,

@@ -802,6 +802,8 @@ interface SyncedChartWorkspaceProps {
   isActive?: boolean;
   onTradePanelChange?: (panel: ChartTradeHistoryPanelData | null) => void;
   keepLiveSessionWarm?: boolean;
+  isTradePanelOpen?: boolean;
+  onTradePanelOpenChange?: (open: boolean) => void;
   arePageTabsVisible?: boolean;
   onTogglePageTabsVisibility?: () => void;
   onHeaderControlsChange?: (controls: ReactNode | null) => void;
@@ -823,6 +825,8 @@ export function SyncedChartWorkspace({
   isActive = true,
   onTradePanelChange,
   keepLiveSessionWarm = false,
+  isTradePanelOpen,
+  onTradePanelOpenChange,
   arePageTabsVisible = true,
   onTogglePageTabsVisibility,
   onHeaderControlsChange,
@@ -1499,6 +1503,7 @@ export function SyncedChartWorkspace({
   const liveAccountNumber = accountForBroker?.accountNumber ?? null;
   const liveVisualsEnabled =
     liveModeEnabled && !isReplayMode && !isReplayPlacementMode;
+  const showTradePanelVisible = isTradePanelOpen ?? showTradePanel;
 
   const chartEnabled = Boolean(selection && chartTrade);
   const requestedWindowDays = Math.max(
@@ -1506,12 +1511,16 @@ export function SyncedChartWorkspace({
     timeframeRestoreAnchor.windowDays,
     storedDrawingWindowDays
   );
-  const tradeFeaturesEnabled = showTradeOverlay || showTradePanel;
-  const tradeHistoryQuery = useMemo(
-    () => (tradeFeaturesEnabled && selection ? { symbol: selection.symbol } : null),
-    [selection, tradeFeaturesEnabled]
+  const overlayTradeQuery = useMemo(
+    () => (showTradeOverlay && selection ? { symbol: selection.symbol } : null),
+    [selection, showTradeOverlay]
   );
-  const { trades: symbolTrades } = useTradesByQuery(tradeHistoryQuery);
+  const panelTradeQuery = useMemo(
+    () => (showTradePanelVisible ? {} : null),
+    [showTradePanelVisible]
+  );
+  const { trades: symbolTrades } = useTradesByQuery(overlayTradeQuery);
+  const { trades: panelTrades } = useTradesByQuery(panelTradeQuery);
 
   const { data, dataUpdateMode, isLoading, error, refetch, fetchPrevious, fetchNext } = useChartData({
     trade: chartTrade ?? PLACEHOLDER_TRADE,
@@ -1526,6 +1535,7 @@ export function SyncedChartWorkspace({
     quote: liveQuote,
     positions: streamedLivePositions,
     orders: streamedLiveOrders,
+    latestAlertEvent: liveTriggeredAlertEvent,
     status: liveStatus,
     error: liveError,
     backfillCompletedAt,
@@ -1547,11 +1557,31 @@ export function SyncedChartWorkspace({
     createAlert,
     updateAlert,
     deleteAlert,
+    registerTriggeredEvent,
     clearLatestTriggeredEvent,
   } = usePriceAlerts({
     userId: user?.id,
     enabled: Boolean(user?.id),
   });
+  useEffect(() => {
+    if (!liveTriggeredAlertEvent) return;
+
+    registerTriggeredEvent({
+      id: liveTriggeredAlertEvent.id,
+      alertId: liveTriggeredAlertEvent.alertId,
+      userId: user?.id ?? "",
+      broker: liveTriggeredAlertEvent.broker,
+      symbol: liveTriggeredAlertEvent.symbol,
+      condition: liveTriggeredAlertEvent.condition,
+      priceSide: liveTriggeredAlertEvent.priceSide,
+      targetPrice: liveTriggeredAlertEvent.targetPrice,
+      triggerPrice: liveTriggeredAlertEvent.triggerPrice,
+      note: liveTriggeredAlertEvent.note,
+      firedAt: liveTriggeredAlertEvent.firedAt,
+      createdAt: liveTriggeredAlertEvent.firedAt,
+    });
+  }, [liveTriggeredAlertEvent, registerTriggeredEvent, user?.id]);
+
   useEffect(() => {
     if (!liveVisualsEnabled || backfillCompletedAt == null) return;
     void refetch();
@@ -1663,7 +1693,7 @@ export function SyncedChartWorkspace({
   const replayCanStepForward =
     effectiveReplayIndex != null && effectiveReplayIndex < fullDisplayData.length - 1;
   const brokerSymbolTrades = useMemo(() => {
-    if (!tradeFeaturesEnabled || !selection || brokerAccountNumbers.length === 0) {
+    if (!showTradeOverlay || !selection || brokerAccountNumbers.length === 0) {
       return [];
     }
 
@@ -1682,7 +1712,23 @@ export function SyncedChartWorkspace({
           : trade.closeTime,
       }))
       .sort((left, right) => new Date(left.openTime).getTime() - new Date(right.openTime).getTime());
-  }, [brokerAccountNumbers, selection, symbolTrades, tradeFeaturesEnabled]);
+  }, [brokerAccountNumbers, selection, showTradeOverlay, symbolTrades]);
+  const brokerWideTrades = useMemo(() => {
+    if (!showTradePanelVisible) return [];
+
+    return panelTrades
+      .filter((trade) =>
+        brokerAccountNumbers.length === 0 || brokerAccountNumbers.includes(trade.accountId)
+      )
+      .map((trade) => ({
+        ...trade,
+        openTime: new Date(new Date(trade.openTime).getTime() + SYNCED_CHART_DISPLAY_OFFSET_MS),
+        closeTime: trade.closeTime
+          ? new Date(new Date(trade.closeTime).getTime() + SYNCED_CHART_DISPLAY_OFFSET_MS)
+          : trade.closeTime,
+      }))
+      .sort((left, right) => new Date(left.openTime).getTime() - new Date(right.openTime).getTime());
+  }, [brokerAccountNumbers, panelTrades, showTradePanelVisible]);
 
   const displayTradeHistory = useMemo(() => {
     if (!showTradeOverlay || brokerSymbolTrades.length === 0 || displayData.length === 0) {
@@ -1708,13 +1754,13 @@ export function SyncedChartWorkspace({
         alert.symbol === selection.symbol
     );
   }, [activeAlerts, selection]);
-  const symbolAlertEvents = useMemo(() => {
-    if (!selection) return [];
-    return recentAlertEvents.filter(
-      (event) =>
-        event.broker === selection.broker &&
-        event.symbol === selection.symbol
-    );
+  const brokerPriceAlerts = useMemo(() => {
+    if (!selection) return activeAlerts;
+    return activeAlerts.filter((alert) => alert.broker === selection.broker);
+  }, [activeAlerts, selection]);
+  const brokerAlertEvents = useMemo(() => {
+    if (!selection) return recentAlertEvents;
+    return recentAlertEvents.filter((event) => event.broker === selection.broker);
   }, [recentAlertEvents, selection]);
   const alertSyncPayload = useMemo(
     () =>
@@ -1836,6 +1882,14 @@ export function SyncedChartWorkspace({
       !isReplayPlacementMode &&
       liveStatus !== "error"
   );
+  const chartLivePositions = useMemo(() => {
+    if (!selection) return [];
+    return livePositions.filter((position) => position.symbol === selection.symbol);
+  }, [livePositions, selection]);
+  const chartLiveOrders = useMemo(() => {
+    if (!selection) return [];
+    return liveOrders.filter((order) => order.symbol === selection.symbol);
+  }, [liveOrders, selection]);
 
   useEffect(() => {
     setLongShortLots(getDefaultChartLots(selection?.symbol));
@@ -1932,21 +1986,29 @@ export function SyncedChartWorkspace({
       return;
     }
 
-    lastAlertSyncSignatureRef.current = alertSyncSignature;
-
-    void fetch(
-      buildLocalServiceEndpoint("/api/ctrader/live/alerts/sync", liveServiceUrl),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: liveSessionId,
-          userId: user.id,
-          supabaseAccessToken: session.accessToken,
-          alerts: symbolPriceAlerts,
-        }),
+    void (async () => {
+      try {
+        const response = await fetch(
+          buildLocalServiceEndpoint("/api/ctrader/live/alerts/sync", liveServiceUrl),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sessionId: liveSessionId,
+              userId: user.id,
+              supabaseAccessToken: session.accessToken,
+              alerts: symbolPriceAlerts,
+            }),
+          }
+        );
+        if (!response.ok) {
+          throw new Error(`Alert sync failed (${response.status})`);
+        }
+        lastAlertSyncSignatureRef.current = alertSyncSignature;
+      } catch (syncError) {
+        console.warn("[SyncedChartWorkspace] Failed to sync alerts to live service:", syncError);
       }
-    ).catch(() => {});
+    })();
   }, [
     alertSyncSignature,
     liveServiceUrl,
@@ -3163,19 +3225,20 @@ export function SyncedChartWorkspace({
 
   const handleTradeHistoryPanelClose = useCallback(() => {
     setShowTradePanel(false);
-  }, []);
+    onTradePanelOpenChange?.(false);
+  }, [onTradePanelOpenChange]);
 
   useLayoutEffect(() => {
     if (!onTradePanelChange) return;
-    if (!isActive || !showTradePanel) {
+    if (!showTradePanelVisible) {
       onTradePanelChange(null);
       return;
     }
 
     onTradePanelChange({
-      symbol: selection?.symbol ?? null,
+      symbol: null,
       broker: selection?.broker ?? null,
-      trades: brokerSymbolTrades,
+      trades: brokerWideTrades,
       selectedTradeId: selectedTradeHistoryId,
       onSelectTrade: handleTradeHistorySelect,
       liveModeEnabled,
@@ -3183,41 +3246,32 @@ export function SyncedChartWorkspace({
       liveOrders,
       liveBidPrice: liveQuote?.bid ?? null,
       liveAskPrice: liveQuote?.ask ?? null,
-      priceAlerts: symbolPriceAlerts,
-      recentAlertEvents: symbolAlertEvents,
+      priceAlerts: brokerPriceAlerts,
+      recentAlertEvents: brokerAlertEvents,
       onClosePosition: closeLivePosition,
       onCancelOrder: cancelLiveOrder,
       onDeleteAlert: handleDeleteAlert,
       onClose: handleTradeHistoryPanelClose,
     });
   }, [
-    brokerSymbolTrades,
+    brokerAlertEvents,
+    brokerPriceAlerts,
+    brokerWideTrades,
     cancelLiveOrder,
     closeLivePosition,
     handleDeleteAlert,
     handleTradeHistoryPanelClose,
     handleTradeHistorySelect,
-    isActive,
     liveModeEnabled,
     liveQuote?.ask,
     liveQuote?.bid,
     liveOrders,
     livePositions,
     onTradePanelChange,
-    symbolAlertEvents,
-    symbolPriceAlerts,
     selectedTradeHistoryId,
     selection?.broker,
-    selection?.symbol,
-    showTradePanel,
+    showTradePanelVisible,
   ]);
-
-  useEffect(() => {
-    if (!onTradePanelChange) return;
-    return () => {
-      onTradePanelChange(null);
-    };
-  }, [onTradePanelChange]);
 
   useEffect(() => {
     fetchingPrevRef.current = false;
@@ -3636,7 +3690,7 @@ export function SyncedChartWorkspace({
           }}
           disabled={!selection}
           className={`flex h-7 items-center gap-1.5 rounded border border-border px-2 text-[11px] transition-colors ${
-            showTradeOverlay || showTradePanel || showLiveTradesOnChart
+            showTradeOverlay || showTradePanelVisible || showLiveTradesOnChart
               ? "bg-primary/10 text-primary"
               : "text-muted-foreground hover:bg-muted"
           } disabled:cursor-not-allowed disabled:opacity-50`}
@@ -3662,8 +3716,12 @@ export function SyncedChartWorkspace({
             <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-xs transition-colors hover:bg-muted">
               <input
                 type="checkbox"
-                checked={showTradePanel}
-                onChange={(event) => setShowTradePanel(event.target.checked)}
+                checked={showTradePanelVisible}
+                onChange={(event) => {
+                  const nextChecked = event.target.checked;
+                  setShowTradePanel(nextChecked);
+                  onTradePanelOpenChange?.(nextChecked);
+                }}
                 className="h-3.5 w-3.5 rounded border-border accent-primary"
               />
               <span>Sidebar</span>
@@ -4630,12 +4688,12 @@ export function SyncedChartWorkspace({
           longShortLots={resolvedLongShortLots}
           longShortSymbol={selection?.symbol}
           activeLivePositions={
-            liveVisualsEnabled && showLiveTradesOnChart ? livePositions : []
+            liveVisualsEnabled && showLiveTradesOnChart ? chartLivePositions : []
           }
           onActiveLivePositionChange={handleLivePositionAdjust}
           onActiveLivePositionClose={handleLivePositionClose}
           activeLiveOrders={
-            liveVisualsEnabled && showLiveTradesOnChart ? liveOrders : []
+            liveVisualsEnabled && showLiveTradesOnChart ? chartLiveOrders : []
           }
           onActiveLiveOrderChange={handleLiveOrderAdjust}
           onActiveLiveOrderCancel={handleLiveOrderCancel}

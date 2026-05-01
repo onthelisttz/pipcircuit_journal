@@ -149,6 +149,7 @@ export default function ChartPage() {
   const [syncTimeframes, setSyncTimeframes] = useState(false);
   const [workspaceHeaderControls, setWorkspaceHeaderControls] = useState<ReactNode | null>(null);
   const [isObservationPanelOpen, setIsObservationPanelOpen] = useState(false);
+  const [isSyncedTradePanelOpen, setIsSyncedTradePanelOpen] = useState(false);
   const [activeObservationWorkspace, setActiveObservationWorkspace] =
     useState<ChartObservationWorkspaceApi | null>(null);
   const [observationLoadRequest, setObservationLoadRequest] =
@@ -471,7 +472,13 @@ export default function ChartPage() {
             }
             isActive={tabIsVisible && (!isMulti || paneIsActive)}
             keepLiveSessionWarm={mode === "synced"}
-            onTradePanelChange={handleTradePanelChange}
+            isTradePanelOpen={isSyncedTradePanelOpen}
+            onTradePanelOpenChange={setIsSyncedTradePanelOpen}
+            onTradePanelChange={
+              tabIsVisible && (!isMulti || paneIsActive)
+                ? handleTradePanelChange
+                : undefined
+            }
             onHeaderControlsChange={
               tabIsVisible && (!isMulti || paneIsActive)
                 ? setWorkspaceHeaderControls
@@ -518,6 +525,7 @@ export default function ChartPage() {
     [
       handleTimeframeChangeForPane,
       handleTradePanelChange,
+      isSyncedTradePanelOpen,
       mode,
       observationLoadRequest,
       showHeaderTabs,

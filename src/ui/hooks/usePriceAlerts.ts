@@ -68,6 +68,7 @@ interface UsePriceAlertsResult {
   createAlert: (input: CreatePriceAlertInput) => Promise<void>;
   updateAlert: (alertId: string, input: UpdatePriceAlertInput) => Promise<void>;
   deleteAlert: (alertId: string) => Promise<void>;
+  registerTriggeredEvent: (event: PriceAlertEvent) => void;
   clearLatestTriggeredEvent: () => void;
 }
 
@@ -411,6 +412,31 @@ export function usePriceAlerts({
     [alerts, userId]
   );
 
+  const registerTriggeredEvent = useCallback((event: PriceAlertEvent) => {
+    setRecentEvents((current) => mergeAlertEventRows(current, event));
+    setLatestTriggeredEvent(event);
+    setAlerts((current) =>
+      mergeAlertRows(
+        current,
+        mapAlertRow({
+          id: event.alertId,
+          user_id: event.userId,
+          broker: event.broker,
+          symbol: event.symbol,
+          condition: event.condition,
+          price_side: event.priceSide,
+          target_price: event.targetPrice,
+          note: event.note,
+          is_active: false,
+          last_triggered_at: event.firedAt,
+          created_at:
+            current.find((alert) => alert.id === event.alertId)?.createdAt ?? event.createdAt,
+          updated_at: event.firedAt,
+        })
+      )
+    );
+  }, []);
+
   const clearLatestTriggeredEvent = useCallback(() => {
     setLatestTriggeredEvent(null);
   }, []);
@@ -430,6 +456,7 @@ export function usePriceAlerts({
     createAlert,
     updateAlert,
     deleteAlert,
+    registerTriggeredEvent,
     clearLatestTriggeredEvent,
   };
 }

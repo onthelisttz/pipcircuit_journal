@@ -81,11 +81,25 @@ export interface LiveOrderSnapshot {
   positionId: number | null;
 }
 
+export interface LiveAlertTriggerEvent {
+  id: string;
+  alertId: string;
+  broker: string;
+  symbol: string;
+  condition: "above" | "below";
+  priceSide: "bid" | "ask";
+  targetPrice: number;
+  triggerPrice: number;
+  note: string | null;
+  firedAt: string;
+}
+
 interface UseCTraderLiveBarResult {
   currentBar: ChartBar | null;
   quote: LiveQuote | null;
   positions: LivePositionSnapshot[];
   orders: LiveOrderSnapshot[];
+  latestAlertEvent: LiveAlertTriggerEvent | null;
   status: LiveChartStatus;
   error: string | null;
   backfillCompletedAt: number | null;
@@ -192,6 +206,7 @@ export function useCTraderLiveBar({
   const [quote, setQuote] = useState<LiveQuote | null>(null);
   const [positions, setPositions] = useState<LivePositionSnapshot[]>([]);
   const [orders, setOrders] = useState<LiveOrderSnapshot[]>([]);
+  const [latestAlertEvent, setLatestAlertEvent] = useState<LiveAlertTriggerEvent | null>(null);
   const [status, setStatus] = useState<LiveChartStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [backfillCompletedAt, setBackfillCompletedAt] = useState<number | null>(null);
@@ -232,6 +247,7 @@ export function useCTraderLiveBar({
       setQuote(null);
       setPositions([]);
       setOrders([]);
+      setLatestAlertEvent(null);
       setStatus("idle");
       setError(null);
       setSessionIdState(null);
@@ -297,6 +313,7 @@ export function useCTraderLiveBar({
 
       const next = payload as {
         type?: string;
+        event?: LiveAlertTriggerEvent | null;
         bid?: number;
         ask?: number;
         spotTimestamp?: number;
@@ -320,6 +337,9 @@ export function useCTraderLiveBar({
       }
 
       if (next.type === "alert-fired") {
+        if (next.event?.id) {
+          setLatestAlertEvent(next.event);
+        }
         return;
       }
 
@@ -609,6 +629,7 @@ export function useCTraderLiveBar({
     quote,
     positions,
     orders,
+    latestAlertEvent,
     status,
     error,
     backfillCompletedAt,
