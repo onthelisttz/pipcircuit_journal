@@ -1852,34 +1852,38 @@ export function SyncedChartWorkspace({
     if (typeof Audio === "undefined") return;
     const audio = new Audio(ALERT_SOUND_PATH);
     audio.preload = "auto";
+    audio.muted = true;
+    audio.volume = 1;
     alertSoundRef.current = audio;
     audio.load();
 
     const unlockAudio = () => {
       if (alertSoundUnlockedRef.current) return;
 
-      audio.muted = true;
       void audio.play()
         .then(() => {
           audio.pause();
           audio.currentTime = 0;
           audio.muted = false;
           alertSoundUnlockedRef.current = true;
-          window.removeEventListener("pointerdown", unlockAudio);
-          window.removeEventListener("keydown", unlockAudio);
+          window.removeEventListener("pointerdown", unlockAudio, true);
+          window.removeEventListener("touchstart", unlockAudio, true);
+          window.removeEventListener("keydown", unlockAudio, true);
         })
         .catch(() => {
           audio.muted = false;
         });
     };
 
-    window.addEventListener("pointerdown", unlockAudio);
-    window.addEventListener("keydown", unlockAudio);
+    window.addEventListener("pointerdown", unlockAudio, true);
+    window.addEventListener("touchstart", unlockAudio, true);
+    window.addEventListener("keydown", unlockAudio, true);
 
     return () => {
       audio.pause();
-      window.removeEventListener("pointerdown", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
+      window.removeEventListener("pointerdown", unlockAudio, true);
+      window.removeEventListener("touchstart", unlockAudio, true);
+      window.removeEventListener("keydown", unlockAudio, true);
       alertSoundRef.current = null;
       alertSoundUnlockedRef.current = false;
     };
@@ -1891,8 +1895,14 @@ export function SyncedChartWorkspace({
     setAlertFlashEvent(latestTriggeredEvent);
     const audio = alertSoundRef.current;
     if (audio) {
-      audio.currentTime = 0;
-      void audio.play().catch(() => {});
+      void (async () => {
+        try {
+          audio.currentTime = 0;
+          await audio.play();
+        } catch (error) {
+          console.error("[SyncedChartWorkspace] Alert sound play failed:", error);
+        }
+      })();
     }
     clearLatestTriggeredEvent();
 

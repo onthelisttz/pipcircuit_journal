@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "pipcircuit";
-const CACHE_VERSION = "v177";
+const CACHE_VERSION = "v179";
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${CACHE_VERSION}`;
 const PAGE_CACHE = `${CACHE_PREFIX}-pages-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `${CACHE_PREFIX}-runtime-${CACHE_VERSION}`;
@@ -112,6 +112,9 @@ self.addEventListener("fetch", (event) => {
 
   // Never cache API calls
   if (url.pathname.startsWith("/api/")) return;
+
+  // Let audio and sounds bypass the service worker to avoid failed media fetches
+  if (request.destination === "audio" || url.pathname.startsWith("/sounds/")) return;
 
   // ----- Navigation requests (HTML pages) -----
   if (request.mode === "navigate") {
