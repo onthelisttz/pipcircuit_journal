@@ -267,6 +267,31 @@ function buildBarFromTicks(
   }, symbol, prices[prices.length - 1]);
 }
 
+function buildBarsFromTicksRange(
+  ticks: Array<{ timestamp: number; price: number }>,
+  timeframe: ChartTimeframe,
+  broker: string,
+  symbol: string
+): ChartBar[] {
+  if (ticks.length === 0) return [];
+
+  const buckets = new Map<number, Array<{ timestamp: number; price: number }>>();
+  for (const tick of ticks) {
+    if (!Number.isFinite(tick?.timestamp) || !Number.isFinite(tick?.price) || tick.price <= 0) {
+      continue;
+    }
+    const bucketTimestamp = floorTimestamp(tick.timestamp, timeframe);
+    const bucket = buckets.get(bucketTimestamp) ?? [];
+    bucket.push(tick);
+    buckets.set(bucketTimestamp, bucket);
+  }
+
+  return Array.from(buckets.entries())
+    .sort((left, right) => left[0] - right[0])
+    .map(([, bucketTicks]) => buildBarFromTicks(bucketTicks, timeframe, broker, symbol))
+    .filter((bar): bar is ChartBar => bar != null);
+}
+
 function mergeQuoteIntoBar(params: {
   existingBar: ChartBar | null;
   seededBar?: ChartBar | null;
@@ -342,6 +367,7 @@ export function useCTraderLiveBar({
   const apiRef = useRef(new CTraderAPI());
   const chartRepoRef = useRef(new DexieChartBarRepository());
   const progressRepoRef = useRef(new DexieSymbolSyncProgressRepository());
+  const lastPersistedClosedBarTimestampRef = useRef<number | null>(null);
   const key = useMemo(
     () => `${broker ?? ""}:${symbol ?? ""}:${timeframe}:${accountNumber ?? ""}`,
     [accountNumber, broker, symbol, timeframe]
@@ -377,6 +403,7 @@ export function useCTraderLiveBar({
       setStatus("idle");
       setError(null);
       setSessionIdState(null);
+      lastPersistedClosedBarTimestampRef.current = null;
       return;
     }
 
@@ -389,6 +416,7 @@ export function useCTraderLiveBar({
     let eventSource: EventSource | null = null;
     let sessionId: string | null = null;
     let fallbackTimer: number | null = null;
+    let reconcilePromise: Promise<void> = Promise.resolve();
 
     const refreshLocalProgressMetadata = async () => {
       try {
@@ -429,10 +457,135 @@ export function useCTraderLiveBar({
       if (!sanitizedBar) return;
       try {
         await chartRepo.upsertMany([sanitizedBar]);
+        lastPersistedClosedBarTimestampRef.current = sanitizedBar.timestamp;
         await refreshLocalProgressMetadata();
       } catch (persistError) {
         console.warn("[useCTraderLiveBar] Failed to persist completed live bar:", persistError);
       }
+    };
+
+    const mapAuthoritativeBars = (bars: Awaited<ReturnType<typeof api.getBars>>) =>
+      bars
+        .map((bar) => ({
+          ...CTraderMapper.toChartBar(bar),
+          broker,
+        }))
+        .filter((bar) => sanitizeLiveBar(bar, normalizedSymbol, bar.close) != null)
+        .sort((left, right) => left.timestamp - right.timestamp);
+
+    const reconcileClosedBars = (
+      nextOpenBucketTimestamp: number,
+      fallbackBar?: ChartBar | null
+    ) => {
+      reconcilePromise = reconcilePromise.then(async () => {
+        if (cancelled) return;
+
+        const intervalMs = TIMEFRAME_TO_MS[timeframe];
+        const latestPersistedClosedTimestamp = lastPersistedClosedBarTimestampRef.current;
+        const firstMissingBucketTimestamp =
+          latestPersistedClosedTimestamp != null
+            ? latestPersistedClosedTimestamp + intervalMs
+            : fallbackBar?.timestamp ?? null;
+
+        if (
+          firstMissingBucketTimestamp == null ||
+          !Number.isFinite(firstMissingBucketTimestamp) ||
+          firstMissingBucketTimestamp >= nextOpenBucketTimestamp
+        ) {
+          return;
+        }
+
+        const historyTo = nextOpenBucketTimestamp - 1;
+        if (!Number.isFinite(historyTo) || historyTo < firstMissingBucketTimestamp) {
+          return;
+        }
+
+        try {
+          const apiBars = await api.getBars(
+            accessToken,
+            normalizedSymbol,
+            timeframe,
+            firstMissingBucketTimestamp,
+            historyTo,
+            accountNumber
+          );
+          const authoritativeBars = mapAuthoritativeBars(apiBars);
+          if (authoritativeBars.length > 0) {
+            await chartRepo.upsertMany(authoritativeBars);
+            lastPersistedClosedBarTimestampRef.current =
+              authoritativeBars[authoritativeBars.length - 1]?.timestamp ??
+              lastPersistedClosedBarTimestampRef.current;
+            await refreshLocalProgressMetadata();
+            return;
+          }
+        } catch {
+          // Fall through to tick or synthetic fallback.
+        }
+
+        try {
+          if (sessionId) {
+            const ticksResponse = await fetch(
+              buildLocalServiceEndpoint(
+                `/api/ctrader/live/ticks?sessionId=${encodeURIComponent(
+                  sessionId
+                )}&from=${firstMissingBucketTimestamp}&to=${historyTo}`,
+                effectiveServiceUrl
+              )
+            );
+            const ticksPayload = (await ticksResponse.json()) as {
+              bidTicks?: Array<{ timestamp: number; price: number }>;
+              askTicks?: Array<{ timestamp: number; price: number }>;
+            };
+
+            if (ticksResponse.ok) {
+              const referencePrice =
+                previousBarRef.current?.close ?? getReferencePriceFromQuote(previousQuoteRef.current);
+              const bidTicks = sanitizeTickSeries(
+                Array.isArray(ticksPayload.bidTicks) ? ticksPayload.bidTicks : [],
+                normalizedSymbol,
+                referencePrice
+              );
+              const askTicks = sanitizeTickSeries(
+                Array.isArray(ticksPayload.askTicks) ? ticksPayload.askTicks : [],
+                normalizedSymbol,
+                bidTicks[bidTicks.length - 1]?.price ?? referencePrice
+              );
+              const authoritativeBars = buildBarsFromTicksRange(
+                bidTicks.length > 0 ? bidTicks : askTicks,
+                timeframe,
+                broker,
+                normalizedSymbol
+              ).filter((bar) => bar.timestamp >= firstMissingBucketTimestamp && bar.timestamp < nextOpenBucketTimestamp);
+
+              if (authoritativeBars.length > 0) {
+                await chartRepo.upsertMany(authoritativeBars);
+                lastPersistedClosedBarTimestampRef.current =
+                  authoritativeBars[authoritativeBars.length - 1]?.timestamp ??
+                  lastPersistedClosedBarTimestampRef.current;
+                await refreshLocalProgressMetadata();
+                return;
+              }
+            }
+          }
+        } catch {
+          // Ignore tick fallback failures and continue to guarded synthetic fallback.
+        }
+
+        const sanitizedFallbackBar = sanitizeLiveBar(
+          fallbackBar,
+          normalizedSymbol,
+          fallbackBar?.close
+        );
+        if (
+          sanitizedFallbackBar &&
+          sanitizedFallbackBar.timestamp >= firstMissingBucketTimestamp &&
+          sanitizedFallbackBar.timestamp < nextOpenBucketTimestamp &&
+          (sanitizedFallbackBar.volume > 1 ||
+            sanitizedFallbackBar.high !== sanitizedFallbackBar.low)
+        ) {
+          await persistCompletedBar(sanitizedFallbackBar);
+        }
+      }).catch(() => {});
     };
 
     const applyPayload = (payload: unknown) => {
@@ -550,7 +703,7 @@ export function useCTraderLiveBar({
       }
 
       if (previousBar && liveBar.timestamp > previousBar.timestamp) {
-        void persistCompletedBar(previousBar);
+        reconcileClosedBars(liveBar.timestamp, previousBar);
       }
 
       previousBarRef.current = liveBar;
@@ -569,6 +722,10 @@ export function useCTraderLiveBar({
         const intervalMs = TIMEFRAME_TO_MS[timeframe];
         const currentBucketStart = floorTimestamp(Date.now(), timeframe);
         const latestLocalTimestamp = range.lastBarDate?.getTime() ?? null;
+        lastPersistedClosedBarTimestampRef.current =
+          latestLocalTimestamp != null && latestLocalTimestamp < currentBucketStart
+            ? latestLocalTimestamp
+            : null;
         const backfillFrom =
           latestLocalTimestamp != null ? latestLocalTimestamp + intervalMs : null;
         // Include the current bar being formed to avoid gaps if live stream has any delay
@@ -588,13 +745,13 @@ export function useCTraderLiveBar({
             accountNumber
           );
           if (bars.length > 0) {
-            const mappedBars = bars
-              .map((bar) => ({
-                ...CTraderMapper.toChartBar(bar),
-                broker,
-              }))
-              .filter((bar) => sanitizeLiveBar(bar, normalizedSymbol, bar.close) != null);
+            const mappedBars = mapAuthoritativeBars(bars);
             await chartRepo.upsertMany(mappedBars);
+            lastPersistedClosedBarTimestampRef.current =
+              [...mappedBars]
+                .reverse()
+                .find((bar) => bar.timestamp < currentBucketStart)?.timestamp ??
+              lastPersistedClosedBarTimestampRef.current;
             await refreshLocalProgressMetadata();
             if (!cancelled) {
               setBackfillCompletedAt(Date.now());
@@ -645,6 +802,8 @@ export function useCTraderLiveBar({
           applyPayload(sessionPayload.snapshot);
         }
 
+        reconcileClosedBars(floorTimestamp(Date.now(), timeframe));
+
         eventSource = new EventSource(
           buildLocalServiceEndpoint(
             `/api/ctrader/live/stream?sessionId=${encodeURIComponent(sessionId)}`,
@@ -687,6 +846,8 @@ export function useCTraderLiveBar({
 
         fallbackTimer = window.setInterval(async () => {
           if (cancelled) return;
+
+          reconcileClosedBars(floorTimestamp(Date.now(), timeframe));
 
           const staleForMs = Date.now() - lastLiveEventAtRef.current;
           if (lastLiveEventAtRef.current !== 0 && staleForMs < 5_000) {
@@ -742,7 +903,7 @@ export function useCTraderLiveBar({
 
             const previousBar = previousBarRef.current;
             if (previousBar && liveBar.timestamp > previousBar.timestamp) {
-              void persistCompletedBar(previousBar);
+              reconcileClosedBars(liveBar.timestamp, previousBar);
             }
 
             previousBarRef.current = liveBar;

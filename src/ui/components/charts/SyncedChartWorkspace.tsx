@@ -672,6 +672,18 @@ function buildSyncedDrawingStorageKey(
   timeframe?: ChartTimeframe | null
 ): string | null {
   if (!broker || !symbol || !timeframe) return null;
+  const normalizedBroker = broker.trim().toUpperCase();
+  const normalizedSymbol = normalizeTradeSymbol(symbol);
+  if (!normalizedBroker || !normalizedSymbol) return null;
+  return `${SYNCED_CHART_DRAWINGS_STORAGE_PREFIX}:${normalizedBroker}:${normalizedSymbol}:${timeframe}`;
+}
+
+function buildLegacySyncedDrawingStorageKey(
+  broker?: string | null,
+  symbol?: string | null,
+  timeframe?: ChartTimeframe | null
+): string | null {
+  if (!broker || !symbol || !timeframe) return null;
   return `${SYNCED_CHART_DRAWINGS_STORAGE_PREFIX}:${broker.toUpperCase()}:${symbol.toUpperCase()}:${timeframe}`;
 }
 
@@ -681,35 +693,53 @@ function readStoredSyncedDrawingSnapshot(
   timeframe?: ChartTimeframe | null
 ): StoredSyncedDrawingSnapshot | null {
   if (typeof window === "undefined") return null;
-  const storageKey = buildSyncedDrawingStorageKey(broker, symbol, timeframe);
-  if (!storageKey) return null;
+  const storageKeys = Array.from(
+    new Set([
+      buildSyncedDrawingStorageKey(broker, symbol, timeframe),
+      buildLegacySyncedDrawingStorageKey(broker, symbol, timeframe),
+    ].filter((value): value is string => Boolean(value)))
+  );
+  if (storageKeys.length === 0) return null;
 
-  try {
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) return null;
+  for (const storageKey of storageKeys) {
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) continue;
 
-    const parsed = JSON.parse(raw) as Partial<StoredSyncedDrawingSnapshot>;
-    return {
-      drawings: Array.isArray(parsed.drawings) ? parsed.drawings : [],
-      centerTimestamp:
-        typeof parsed.centerTimestamp === "number" &&
-        Number.isFinite(parsed.centerTimestamp)
-          ? parsed.centerTimestamp
-          : null,
-      windowSeconds:
-        typeof parsed.windowSeconds === "number" &&
-        Number.isFinite(parsed.windowSeconds) &&
-        parsed.windowSeconds > 0
-          ? parsed.windowSeconds
-          : null,
-      savedAt:
-        typeof parsed.savedAt === "number" && Number.isFinite(parsed.savedAt)
-          ? parsed.savedAt
-          : 0,
-    };
-  } catch {
-    return null;
+      const parsed = JSON.parse(raw) as Partial<StoredSyncedDrawingSnapshot>;
+      return {
+        drawings: Array.isArray(parsed.drawings) ? parsed.drawings : [],
+        centerTimestamp:
+          typeof parsed.centerTimestamp === "number" &&
+          Number.isFinite(parsed.centerTimestamp)
+            ? parsed.centerTimestamp
+            : null,
+        windowSeconds:
+          typeof parsed.windowSeconds === "number" &&
+          Number.isFinite(parsed.windowSeconds) &&
+          parsed.windowSeconds > 0
+            ? parsed.windowSeconds
+            : null,
+        savedAt:
+          typeof parsed.savedAt === "number" && Number.isFinite(parsed.savedAt)
+            ? parsed.savedAt
+            : 0,
+      };
+    } catch {
+      // ignore invalid snapshot and continue to fallback key
+    }
   }
+  return null;
+}
+
+function serializeSyncedDrawingSnapshotForComparison(
+  snapshot: Pick<StoredSyncedDrawingSnapshot, "drawings" | "centerTimestamp" | "windowSeconds">
+): string {
+  return JSON.stringify({
+    drawings: snapshot.drawings,
+    centerTimestamp: snapshot.centerTimestamp,
+    windowSeconds: snapshot.windowSeconds,
+  });
 }
 
 const PLACEHOLDER_TRADE: Trade = {
@@ -757,18 +787,48 @@ function getDrawingWindowDays(
   centerTimestamp: number | null,
   drawings: DrawingToolExport[]
 ): number {
-  if (centerTimestamp == null || drawings.length === 0) return 0;
+  if (drawings.length === 0) return 0;
 
-    let maxDistance = 0;
+  const resolvedCenterTimestamp =
+    centerTimestamp ?? deriveDrawingCenterTimestamp(drawings);
+  if (resolvedCenterTimestamp == null) return 0;
+
+  let maxDistance = 0;
   for (const drawing of drawings) {
     for (const point of drawing.points) {
       if (!Number.isFinite(point.timestamp)) continue;
-      const distance = Math.abs(drawingTimestampToMs(point.timestamp) - centerTimestamp);
+      const distance = Math.abs(
+        drawingTimestampToMs(point.timestamp) - resolvedCenterTimestamp
+      );
       maxDistance = Math.max(maxDistance, distance);
     }
   }
 
   return maxDistance > 0 ? Math.ceil(maxDistance / DAY_MS) + 1 : 0;
+}
+
+function deriveDrawingCenterTimestamp(
+  drawings: DrawingToolExport[]
+): number | null {
+  if (drawings.length === 0) return null;
+
+  let minTimestamp = Number.POSITIVE_INFINITY;
+  let maxTimestamp = Number.NEGATIVE_INFINITY;
+
+  for (const drawing of drawings) {
+    for (const point of drawing.points) {
+      if (!Number.isFinite(point.timestamp)) continue;
+      const timestamp = drawingTimestampToMs(point.timestamp);
+      minTimestamp = Math.min(minTimestamp, timestamp);
+      maxTimestamp = Math.max(maxTimestamp, timestamp);
+    }
+  }
+
+  if (!Number.isFinite(minTimestamp) || !Number.isFinite(maxTimestamp)) {
+    return null;
+  }
+
+  return Math.round((minTimestamp + maxTimestamp) / 2);
 }
 
 function areDrawingsCoveredByBars(
@@ -969,6 +1029,7 @@ export function SyncedChartWorkspace({
   const compactDrawRef = useRef<HTMLDivElement>(null);
   const compactActionsRef = useRef<HTMLDivElement>(null);
   const replayTimerRef = useRef<number | null>(null);
+  const drawingPersistTimerRef = useRef<number | null>(null);
   const pendingReplayViewportRef = useRef<{ from: number; to: number } | null>(null);
   const pendingRestoreRef = useRef<{
     drawings: DrawingToolExport[];
@@ -986,7 +1047,9 @@ export function SyncedChartWorkspace({
   const [dismissedPriceAlertsErrorKey, setDismissedPriceAlertsErrorKey] = useState<string | null>(null);
   const silentTradeSyncTimerRef = useRef<number | null>(null);
   const previousLivePositionIdsRef = useRef<string[]>([]);
+  const previousIsActiveRef = useRef(isActive);
   const restoredDrawingStorageKeyRef = useRef<string | null>(null);
+  const lastSavedDrawingSnapshotsRef = useRef<Map<string, string>>(new Map());
   const currentDrawingStorageKey = useMemo(
     () => buildSyncedDrawingStorageKey(selection?.broker, selection?.symbol, timeframe),
     [selection?.broker, selection?.symbol, timeframe]
@@ -1001,7 +1064,10 @@ export function SyncedChartWorkspace({
     [selection?.broker, selection?.symbol, timeframe]
   );
   const persistCurrentDrawings = useCallback(
-    (storageKeyOverride?: string | null) => {
+    (
+      storageKeyOverride?: string | null,
+      options?: { allowEmptyOverwrite?: boolean }
+    ) => {
       if (typeof window === "undefined") return;
       const storageKey = storageKeyOverride ?? currentDrawingStorageKey;
       if (!storageKey) return;
@@ -1010,7 +1076,8 @@ export function SyncedChartWorkspace({
       if (!chart) return;
 
       const drawings = chart.exportAllDrawings();
-      const centerTimestamp = chart.getViewportCenterTimestamp();
+      const centerTimestamp =
+        chart.getViewportCenterTimestamp() ?? deriveDrawingCenterTimestamp(drawings);
       const windowSeconds = chart.getVisibleWindowSeconds();
       const hasInitializedViewport =
         centerTimestamp != null ||
@@ -1019,15 +1086,50 @@ export function SyncedChartWorkspace({
         return;
       }
 
+      if (drawings.length === 0 && !options?.allowEmptyOverwrite) {
+        const existingSnapshot = readStoredSyncedDrawingSnapshot(
+          selection?.broker,
+          selection?.symbol,
+          timeframe
+        );
+        if ((existingSnapshot?.drawings?.length ?? 0) > 0) {
+          return;
+        }
+      }
+
       const snapshot: StoredSyncedDrawingSnapshot = {
         drawings,
         centerTimestamp,
         windowSeconds,
         savedAt: Date.now(),
       };
+      const comparisonSnapshot = serializeSyncedDrawingSnapshotForComparison(snapshot);
+      if (lastSavedDrawingSnapshotsRef.current.get(storageKey) === comparisonSnapshot) {
+        return;
+      }
+
       window.localStorage.setItem(storageKey, JSON.stringify(snapshot));
+      lastSavedDrawingSnapshotsRef.current.set(storageKey, comparisonSnapshot);
     },
-    [currentDrawingStorageKey]
+    [currentDrawingStorageKey, selection?.broker, selection?.symbol, timeframe]
+  );
+
+  const schedulePersistCurrentDrawings = useCallback(
+    (
+      delayMs = 180,
+      storageKeyOverride?: string | null,
+      options?: { allowEmptyOverwrite?: boolean }
+    ) => {
+      if (typeof window === "undefined") return;
+      if (drawingPersistTimerRef.current != null) {
+        window.clearTimeout(drawingPersistTimerRef.current);
+      }
+      drawingPersistTimerRef.current = window.setTimeout(() => {
+        drawingPersistTimerRef.current = null;
+        persistCurrentDrawings(storageKeyOverride, options);
+      }, delayMs);
+    },
+    [persistCurrentDrawings]
   );
 
   useEffect(() => {
@@ -1105,8 +1207,34 @@ export function SyncedChartWorkspace({
       if (replayTimerRef.current != null) {
         window.clearTimeout(replayTimerRef.current);
       }
+      if (drawingPersistTimerRef.current != null) {
+        window.clearTimeout(drawingPersistTimerRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isActive || typeof window === "undefined") return;
+
+    const handlePersistRequest = () => {
+      schedulePersistCurrentDrawings();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        persistCurrentDrawings();
+      }
+    };
+
+    window.addEventListener("pointerup", handlePersistRequest, true);
+    window.addEventListener("keyup", handlePersistRequest, true);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("pointerup", handlePersistRequest, true);
+      window.removeEventListener("keyup", handlePersistRequest, true);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [isActive, persistCurrentDrawings, schedulePersistCurrentDrawings]);
 
   useEffect(() => {
     if (!showTradeOverlay && !showTradePanel) {
@@ -1207,15 +1335,24 @@ export function SyncedChartWorkspace({
   }, [isActive, observationApi, onObservationApiChange]);
 
   useEffect(() => {
-    if (isActive) return;
+    const wasActive = previousIsActiveRef.current;
+    previousIsActiveRef.current = isActive;
 
-    persistCurrentDrawings();
-    setIsReplayPlaying(false);
-    setIsReplayPlacementMode(false);
-    chartRef.current?.cancelActiveDrawing();
-    setDrawingTool(null);
-    setSelectedDrawingTool(null);
-    setCompactDrawOpen(false);
+    if (!isActive) {
+      if (drawingPersistTimerRef.current != null) {
+        window.clearTimeout(drawingPersistTimerRef.current);
+        drawingPersistTimerRef.current = null;
+      }
+      if (wasActive) {
+        persistCurrentDrawings();
+      }
+      setIsReplayPlaying(false);
+      setIsReplayPlacementMode(false);
+      chartRef.current?.cancelActiveDrawing();
+      setDrawingTool(null);
+      setSelectedDrawingTool(null);
+      setCompactDrawOpen(false);
+    }
   }, [isActive, persistCurrentDrawings]);
 
   useEffect(() => {
@@ -1397,15 +1534,18 @@ export function SyncedChartWorkspace({
 
   useEffect(() => {
     const storageKey = currentDrawingStorageKey;
+    const shouldPersistOnCleanup = isActive;
     return () => {
+      if (!shouldPersistOnCleanup) return;
       persistCurrentDrawings(storageKey);
     };
-  }, [currentDrawingStorageKey, persistCurrentDrawings]);
+  }, [currentDrawingStorageKey, isActive, persistCurrentDrawings]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const handlePageHide = () => {
+      if (!isActive) return;
       persistCurrentDrawings();
     };
 
@@ -1413,7 +1553,7 @@ export function SyncedChartWorkspace({
     return () => {
       window.removeEventListener("pagehide", handlePageHide);
     };
-  }, [persistCurrentDrawings]);
+  }, [isActive, persistCurrentDrawings]);
 
   const selectedProgress = useMemo(() => {
     if (!selection) return null;
@@ -1462,7 +1602,9 @@ export function SyncedChartWorkspace({
     return from <= to ? { from, to } : null;
   }, [selectedProgress?.firstBarDate, selectedProgress?.lastBarDate]);
   const storedDrawingRestoreCenterTimestamp =
-    storedDrawingSnapshot?.centerTimestamp ?? null;
+    storedDrawingSnapshot?.centerTimestamp ??
+    deriveDrawingCenterTimestamp(storedDrawingSnapshot?.drawings ?? []) ??
+    null;
   const effectiveRestoreCenterTimestamp =
     timeframeRestoreAnchor.centerTimestamp ?? storedDrawingRestoreCenterTimestamp;
   const storedDrawingWindowDays = useMemo(
@@ -1605,6 +1747,14 @@ export function SyncedChartWorkspace({
       restoredDrawingStorageKeyRef.current = null;
       return;
     }
+    if (storedDrawingSnapshot) {
+      lastSavedDrawingSnapshotsRef.current.set(
+        currentDrawingStorageKey,
+        serializeSyncedDrawingSnapshotForComparison(storedDrawingSnapshot)
+      );
+    } else {
+      lastSavedDrawingSnapshotsRef.current.delete(currentDrawingStorageKey);
+    }
     if (pendingRestoreRef.current) return;
     if (restoredDrawingStorageKeyRef.current === currentDrawingStorageKey) return;
 
@@ -1612,6 +1762,7 @@ export function SyncedChartWorkspace({
     const snapshot = storedDrawingSnapshot;
     const restoreCenterTimestamp =
       snapshot?.centerTimestamp ??
+      deriveDrawingCenterTimestamp(snapshot?.drawings ?? []) ??
       (liveVisualsEnabled ? availableDateRange?.to ?? null : null);
 
     pendingRestoreRef.current = {
@@ -4409,7 +4560,7 @@ export function SyncedChartWorkspace({
             type="button"
             onClick={() => {
               chartRef.current?.removeAllDrawingTools();
-              persistCurrentDrawings();
+              persistCurrentDrawings(undefined, { allowEmptyOverwrite: true });
               setDrawingTool(null);
               setSelectedDrawingTool(null);
             }}
@@ -4482,7 +4633,7 @@ export function SyncedChartWorkspace({
                 type="button"
                 onClick={() => {
                   chartRef.current?.removeAllDrawingTools();
-                  persistCurrentDrawings();
+                  persistCurrentDrawings(undefined, { allowEmptyOverwrite: true });
                   setDrawingTool(null);
                   setSelectedDrawingTool(null);
                   setCompactActionsOpen(false);

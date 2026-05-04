@@ -144,6 +144,10 @@ export class PreciseBrushTool<HorzScaleItem> extends BaseLineTool<HorzScaleItem>
       return null;
     }
 
-    return compositeRenderer.hitTest(x, y);
+    try {
+      return compositeRenderer.hitTest(x, y);
+    } catch {
+      return null;
+    }
   }
 }

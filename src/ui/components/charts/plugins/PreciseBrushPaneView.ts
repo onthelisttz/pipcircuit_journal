@@ -67,7 +67,13 @@ export class PreciseBrushPaneView<HorzScaleItem> extends LineToolPaneView<HorzSc
 
     const options = this._tool.options() as LineToolOptionsInternal<"Brush">;
     const permanentPoints = this._tool.getPermanentPointsForTranslation();
-    const hasScreenPoints = this._updatePoints();
+    let hasScreenPoints = false;
+    try {
+      hasScreenPoints = this._updatePoints();
+    } catch {
+      this._renderer.clear();
+      return;
+    }
 
     if (!options.visible || !hasScreenPoints || this._points.length === 0) {
       return;
