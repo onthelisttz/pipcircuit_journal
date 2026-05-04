@@ -1006,10 +1006,23 @@ export function SyncedChartWorkspace({
       const storageKey = storageKeyOverride ?? currentDrawingStorageKey;
       if (!storageKey) return;
 
+      const chart = chartRef.current;
+      if (!chart) return;
+
+      const drawings = chart.exportAllDrawings();
+      const centerTimestamp = chart.getViewportCenterTimestamp();
+      const windowSeconds = chart.getVisibleWindowSeconds();
+      const hasInitializedViewport =
+        centerTimestamp != null ||
+        (windowSeconds != null && Number.isFinite(windowSeconds) && windowSeconds > 0);
+      if (!hasInitializedViewport && drawings.length === 0) {
+        return;
+      }
+
       const snapshot: StoredSyncedDrawingSnapshot = {
-        drawings: chartRef.current?.exportAllDrawings() ?? [],
-        centerTimestamp: chartRef.current?.getViewportCenterTimestamp() ?? null,
-        windowSeconds: chartRef.current?.getVisibleWindowSeconds() ?? null,
+        drawings,
+        centerTimestamp,
+        windowSeconds,
         savedAt: Date.now(),
       };
       window.localStorage.setItem(storageKey, JSON.stringify(snapshot));
