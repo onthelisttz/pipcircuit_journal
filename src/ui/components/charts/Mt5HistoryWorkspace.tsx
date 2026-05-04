@@ -1335,6 +1335,29 @@ export function Mt5HistoryWorkspace({
     setReplayCursorTimestamp(bars[anchorIndex]?.timestamp ?? anchorTimestamp);
   }, [bars, replayStartIndex, replayStartTimestamp]);
 
+  useEffect(() => {
+    if (!isReplayMode) return;
+
+    const handleReplayKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      if (event.key !== "ArrowUp") return;
+      event.preventDefault();
+      event.stopPropagation();
+      stepReplay(1);
+    };
+
+    window.addEventListener("keydown", handleReplayKeyDown, true);
+    return () => window.removeEventListener("keydown", handleReplayKeyDown, true);
+  }, [isReplayMode, stepReplay]);
+
   const observationApi = useMemo<ChartObservationWorkspaceApi>(
     () => ({
       workspaceMode: "history",

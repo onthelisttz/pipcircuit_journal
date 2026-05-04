@@ -201,6 +201,84 @@ function normalizePriceForSymbol(price, symbolMeta = null) {
   return Number(price.toFixed(5));
 }
 
+function getMinimumReasonablePrice(symbol) {
+  const normalized = normalizeSymbol(symbol);
+  if (normalized === "XAUUSD" || normalized === "GOLD") {
+    return 1;
+  }
+  if (normalized === "XAGUSD" || normalized === "SILVER") {
+    return 0.1;
+  }
+  if (/^[A-Z]{6}$/.test(normalized)) {
+    return 0.01;
+  }
+  return 0.0001;
+}
+
+function isPriceReasonableAgainstAnchor(price, anchorPrice) {
+  if (!Number.isFinite(anchorPrice) || anchorPrice <= 0) {
+    return true;
+  }
+  return price >= anchorPrice * 0.2 && price <= anchorPrice * 5;
+}
+
+function sanitizeLivePrice(price, symbol, anchorPrice) {
+  if (!Number.isFinite(price) || price <= 0) return undefined;
+  if (price < getMinimumReasonablePrice(symbol)) return undefined;
+  if (!isPriceReasonableAgainstAnchor(price, anchorPrice)) return undefined;
+  return price;
+}
+
+function getAnchorPriceFromPayload(payload) {
+  const candidates = [
+    payload?.bid,
+    payload?.ask,
+    payload?.currentBar?.close,
+    payload?.currentBar?.open,
+  ];
+
+  for (const candidate of candidates) {
+    if (Number.isFinite(candidate) && candidate > 0) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
+function sanitizeTrendbar(bar, symbol, anchorPrice) {
+  if (!bar || typeof bar !== "object") return null;
+
+  const open = sanitizeLivePrice(toNumber(bar.open), symbol, anchorPrice);
+  const high = sanitizeLivePrice(toNumber(bar.high), symbol, anchorPrice);
+  const low = sanitizeLivePrice(toNumber(bar.low), symbol, anchorPrice);
+  const close = sanitizeLivePrice(toNumber(bar.close), symbol, anchorPrice);
+  const timestamp = toNumber(bar.timestamp);
+  const volume = toNumber(bar.volume) ?? 0;
+
+  if (
+    open === undefined ||
+    high === undefined ||
+    low === undefined ||
+    close === undefined ||
+    !Number.isFinite(timestamp)
+  ) {
+    return null;
+  }
+  if (high < low || open < low || open > high || close < low || close > high) {
+    return null;
+  }
+
+  return {
+    timestamp,
+    open,
+    high,
+    low,
+    close,
+    volume,
+  };
+}
+
 function toTradeSide(value) {
   return String(value ?? "").toUpperCase().includes("SELL") ? "Sell" : "Buy";
 }
@@ -412,11 +490,12 @@ function mapTrendbar(bar) {
   };
 }
 
-function mapTickSeries(tickData) {
+function mapTickSeries(tickData, options = {}) {
   if (!Array.isArray(tickData) || tickData.length === 0) return [];
 
   const ticks = [];
   let currentTimestamp = 0;
+  let anchorPrice = Number.isFinite(options.anchorPrice) ? options.anchorPrice : undefined;
 
   for (let index = 0; index < tickData.length; index += 1) {
     const entry = tickData[index] ?? {};
@@ -425,13 +504,17 @@ function mapTickSeries(tickData) {
     if (rawTick === undefined || rawTimestamp === undefined) continue;
 
     currentTimestamp = index === 0 ? rawTimestamp : currentTimestamp + rawTimestamp;
+    const price = sanitizeLivePrice(rawTick / 100_000, options.symbol, anchorPrice);
+    if (price === undefined) continue;
+
+    anchorPrice = price;
     ticks.push({
       timestamp: currentTimestamp,
-      price: rawTick / 100_000,
+      price,
     });
   }
 
-  return ticks;
+  return ticks.sort((left, right) => left.timestamp - right.timestamp);
 }
 
 async function fetchAccounts(accessToken) {
@@ -1272,11 +1355,18 @@ class LiveSessionManager {
       }),
     ]);
 
+    const referencePrice = getAnchorPriceFromPayload(session.latestPayload);
     return {
       symbol: session.config.symbol,
       timeframe: session.config.timeframe,
-      bidTicks: mapTickSeries(bidResponse?.tickData),
-      askTicks: mapTickSeries(askResponse?.tickData),
+      bidTicks: mapTickSeries(bidResponse?.tickData, {
+        symbol: session.config.symbol,
+        anchorPrice: referencePrice,
+      }),
+      askTicks: mapTickSeries(askResponse?.tickData, {
+        symbol: session.config.symbol,
+        anchorPrice: referencePrice,
+      }),
     };
   }
 
@@ -1414,13 +1504,34 @@ class LiveSessionManager {
       const eventSymbolId = toNumber(payload?.symbolId);
       if (eventSymbolId !== symbolId) return;
 
-      const currentBar = Array.isArray(payload?.trendbar) ? mapTrendbar(payload.trendbar[0]) : null;
+      const referencePrice = getAnchorPriceFromPayload(session.latestPayload);
+      const bid = sanitizeLivePrice(
+        normalizePrice(payload?.bid),
+        session.config.symbol,
+        referencePrice
+      );
+      const ask = sanitizeLivePrice(
+        normalizePrice(payload?.ask),
+        session.config.symbol,
+        bid ?? referencePrice
+      );
+      const currentBar = Array.isArray(payload?.trendbar)
+        ? sanitizeTrendbar(
+            mapTrendbar(payload.trendbar[0]),
+            session.config.symbol,
+            bid ?? ask ?? referencePrice
+          )
+        : null;
+      if (bid === undefined && ask === undefined && !currentBar) {
+        return;
+      }
+
       const nextPayload = {
         type: "price",
         symbol: session.config.symbol,
         timeframe: session.config.timeframe,
-        bid: normalizePrice(payload?.bid),
-        ask: normalizePrice(payload?.ask),
+        bid,
+        ask,
         currentBar,
         spotTimestamp: toNumber(payload?.timestamp) ?? Date.now(),
       };

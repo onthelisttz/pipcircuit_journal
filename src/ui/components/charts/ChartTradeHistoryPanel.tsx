@@ -78,6 +78,22 @@ function parseDateInputValue(value: string, fallback: Date, endOfSelectedDay = f
   return endOfSelectedDay ? endOfDay(nextDate) : startOfDay(nextDate);
 }
 
+function getTodayRange() {
+  const today = new Date();
+  return {
+    from: startOfDay(today),
+    to: endOfDay(today),
+  };
+}
+
+function getYesterdayRange() {
+  const yesterday = subDays(new Date(), 1);
+  return {
+    from: startOfDay(yesterday),
+    to: endOfDay(yesterday),
+  };
+}
+
 function inferPriceDecimals(price: number | null | undefined): number {
   if (price == null || !Number.isFinite(price)) return 5;
   if (price >= 100000) return 0;
@@ -307,22 +323,28 @@ export function ChartTradeHistoryPanel({
     from: Date;
     to: Date;
     direction: DirectionFilter;
-  }>(() => ({
-    key: filterKey,
-    from: tradeBounds.from,
-    to: tradeBounds.to,
-    direction: "Both",
-  }));
+  }>(() => {
+    const todayRange = getTodayRange();
+    return {
+      key: filterKey,
+      from: todayRange.from,
+      to: todayRange.to,
+      direction: "Both",
+    };
+  });
 
   const activeFilters =
     filterState.key === filterKey
       ? filterState
-      : {
-          key: filterKey,
-          from: tradeBounds.from,
-          to: tradeBounds.to,
-          direction: "Both" as DirectionFilter,
-        };
+      : (() => {
+          const todayRange = getTodayRange();
+          return {
+            key: filterKey,
+            from: todayRange.from,
+            to: todayRange.to,
+            direction: "Both" as DirectionFilter,
+          };
+        })();
   const { from, to, direction } = activeFilters;
 
   useEffect(() => {
@@ -834,6 +856,28 @@ export function ChartTradeHistoryPanel({
                 </div>
 
                 <div className="mb-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const todayRange = getTodayRange();
+                      setDateDraftFrom(formatDateInputValue(todayRange.from));
+                      setDateDraftTo(formatDateInputValue(todayRange.to));
+                    }}
+                    className="rounded-full border border-border px-2.5 py-1 text-[11px] text-foreground transition-colors hover:bg-accent"
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const yesterdayRange = getYesterdayRange();
+                      setDateDraftFrom(formatDateInputValue(yesterdayRange.from));
+                      setDateDraftTo(formatDateInputValue(yesterdayRange.to));
+                    }}
+                    className="rounded-full border border-border px-2.5 py-1 text-[11px] text-foreground transition-colors hover:bg-accent"
+                  >
+                    Yesterday
+                  </button>
                   <button
                     type="button"
                     onClick={() => {

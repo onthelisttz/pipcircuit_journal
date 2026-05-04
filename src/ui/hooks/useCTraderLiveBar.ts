@@ -107,6 +107,10 @@ interface UseCTraderLiveBarResult {
   serviceUrl: string;
 }
 
+function normalizeSymbol(symbol?: string | null): string {
+  return String(symbol ?? "").replace("/", "").trim().toUpperCase();
+}
+
 function floorTimestamp(timestamp: number, timeframe: ChartTimeframe): number {
   if (timeframe === "D1") {
     const date = new Date(timestamp);
@@ -118,19 +122,139 @@ function floorTimestamp(timestamp: number, timeframe: ChartTimeframe): number {
   return Math.floor(timestamp / interval) * interval;
 }
 
+function getMinimumReasonablePrice(symbol?: string | null): number {
+  const normalized = normalizeSymbol(symbol);
+  if (normalized === "XAUUSD" || normalized === "GOLD") {
+    return 1;
+  }
+  if (normalized === "XAGUSD" || normalized === "SILVER") {
+    return 0.1;
+  }
+  if (/^[A-Z]{6}$/.test(normalized)) {
+    return 0.01;
+  }
+  return 0.0001;
+}
+
+function isPriceReasonableAgainstAnchor(price: number, anchorPrice?: number): boolean {
+  if (!Number.isFinite(anchorPrice) || anchorPrice == null || anchorPrice <= 0) {
+    return true;
+  }
+  return price >= anchorPrice * 0.2 && price <= anchorPrice * 5;
+}
+
+function sanitizeLivePrice(
+  price: number | null | undefined,
+  symbol?: string | null,
+  anchorPrice?: number
+): number | undefined {
+  if (price == null || !Number.isFinite(price) || price <= 0) {
+    return undefined;
+  }
+  if (price < getMinimumReasonablePrice(symbol)) {
+    return undefined;
+  }
+  if (!isPriceReasonableAgainstAnchor(price, anchorPrice)) {
+    return undefined;
+  }
+  return price;
+}
+
+function getReferencePriceFromQuote(quote: LiveQuote | null | undefined): number | undefined {
+  return sanitizeLivePrice(quote?.bid) ?? sanitizeLivePrice(quote?.ask);
+}
+
+function isStructurallyValidBar(bar: ChartBar | null | undefined): bar is ChartBar {
+  if (!bar) return false;
+  if (
+    !Number.isFinite(bar.timestamp) ||
+    !Number.isFinite(bar.open) ||
+    !Number.isFinite(bar.high) ||
+    !Number.isFinite(bar.low) ||
+    !Number.isFinite(bar.close) ||
+    !Number.isFinite(bar.volume)
+  ) {
+    return false;
+  }
+  if (bar.open <= 0 || bar.high <= 0 || bar.low <= 0 || bar.close <= 0) {
+    return false;
+  }
+  if (bar.high < bar.low) {
+    return false;
+  }
+  if (bar.open < bar.low || bar.open > bar.high) {
+    return false;
+  }
+  if (bar.close < bar.low || bar.close > bar.high) {
+    return false;
+  }
+  return true;
+}
+
+function sanitizeLiveBar(
+  bar: ChartBar | null | undefined,
+  symbol?: string | null,
+  anchorPrice?: number
+): ChartBar | null {
+  if (!isStructurallyValidBar(bar)) {
+    return null;
+  }
+
+  const prices = [bar.open, bar.high, bar.low, bar.close];
+  if (prices.some((price) => sanitizeLivePrice(price, symbol, anchorPrice) == null)) {
+    return null;
+  }
+
+  return bar;
+}
+
+function sanitizeTickSeries(
+  ticks: Array<{ timestamp: number; price: number }>,
+  symbol?: string | null,
+  initialAnchorPrice?: number
+): Array<{ timestamp: number; price: number }> {
+  let anchorPrice = initialAnchorPrice;
+
+  return [...ticks]
+    .filter(
+      (tick) =>
+        Number.isFinite(tick?.timestamp) &&
+        Number.isFinite(tick?.price)
+    )
+    .sort((left, right) => left.timestamp - right.timestamp)
+    .reduce<Array<{ timestamp: number; price: number }>>((next, tick) => {
+      const sanitizedPrice = sanitizeLivePrice(tick.price, symbol, anchorPrice);
+      if (sanitizedPrice == null) {
+        return next;
+      }
+      anchorPrice = sanitizedPrice;
+      next.push({
+        timestamp: tick.timestamp,
+        price: sanitizedPrice,
+      });
+      return next;
+    }, []);
+}
+
 function buildBarFromTicks(
   ticks: Array<{ timestamp: number; price: number }>,
   timeframe: ChartTimeframe,
   broker: string,
   symbol: string
 ): ChartBar | null {
-  if (ticks.length === 0) return null;
-
-  const sorted = [...ticks].sort((left, right) => left.timestamp - right.timestamp);
+  const sorted = ticks
+    .filter(
+      (tick) =>
+        Number.isFinite(tick?.timestamp) &&
+        Number.isFinite(tick?.price) &&
+        tick.price > 0
+    )
+    .sort((left, right) => left.timestamp - right.timestamp);
+  if (sorted.length === 0) return null;
   const bucketTimestamp = floorTimestamp(sorted[0].timestamp, timeframe);
   const prices = sorted.map((tick) => tick.price);
 
-  return {
+  return sanitizeLiveBar({
     broker,
     symbol,
     timeframe,
@@ -140,7 +264,7 @@ function buildBarFromTicks(
     low: Math.min(...prices),
     close: prices[prices.length - 1],
     volume: sorted.length,
-  };
+  }, symbol, prices[prices.length - 1]);
 }
 
 function mergeQuoteIntoBar(params: {
@@ -213,6 +337,7 @@ export function useCTraderLiveBar({
   const [sessionIdState, setSessionIdState] = useState<string | null>(null);
 
   const previousBarRef = useRef<ChartBar | null>(null);
+  const previousQuoteRef = useRef<LiveQuote | null>(null);
   const lastLiveEventAtRef = useRef(0);
   const apiRef = useRef(new CTraderAPI());
   const chartRepoRef = useRef(new DexieChartBarRepository());
@@ -243,6 +368,7 @@ export function useCTraderLiveBar({
   useEffect(() => {
     if (!enabled || !symbol || !broker || !accessToken || !accountNumber) {
       previousBarRef.current = null;
+      previousQuoteRef.current = null;
       setCurrentBar(null);
       setQuote(null);
       setPositions([]);
@@ -299,9 +425,10 @@ export function useCTraderLiveBar({
     };
 
     const persistCompletedBar = async (bar: ChartBar | null) => {
-      if (!bar) return;
+      const sanitizedBar = sanitizeLiveBar(bar, normalizedSymbol, bar?.close);
+      if (!sanitizedBar) return;
       try {
-        await chartRepo.upsertMany([bar]);
+        await chartRepo.upsertMany([sanitizedBar]);
         await refreshLocalProgressMetadata();
       } catch (persistError) {
         console.warn("[useCTraderLiveBar] Failed to persist completed live bar:", persistError);
@@ -343,25 +470,36 @@ export function useCTraderLiveBar({
         return;
       }
 
+      const previousQuote = previousQuoteRef.current;
+      const previousBarCandidate = sanitizeLiveBar(
+        previousBarRef.current,
+        normalizedSymbol,
+        getReferencePriceFromQuote(previousQuote)
+      );
+      if (!previousBarCandidate) {
+        previousBarRef.current = null;
+      }
+
+      const referencePrice =
+        previousBarCandidate?.close ?? getReferencePriceFromQuote(previousQuote);
+      const sanitizedBid = sanitizeLivePrice(
+        typeof next.bid === "number" ? next.bid : undefined,
+        normalizedSymbol,
+        referencePrice
+      );
+      const sanitizedAsk = sanitizeLivePrice(
+        typeof next.ask === "number" ? next.ask : undefined,
+        normalizedSymbol,
+        sanitizedBid ?? referencePrice
+      );
       const livePrice =
-        typeof next.bid === "number"
-          ? next.bid
-          : typeof next.ask === "number"
-            ? next.ask
-            : undefined;
+        sanitizedBid ?? sanitizedAsk;
       const spotTimestamp =
         typeof next.spotTimestamp === "number" ? next.spotTimestamp : Date.now();
 
-      setQuote({
-        bid: next.bid,
-        ask: next.ask,
-        spotTimestamp,
-      });
-      lastLiveEventAtRef.current = Date.now();
-
-      const previousBar = previousBarRef.current;
-      const seededBar = next.currentBar
-        ? {
+      const seededBar = sanitizeLiveBar(
+        next.currentBar
+          ? {
             broker,
             symbol: normalizedSymbol,
             timeframe,
@@ -372,7 +510,29 @@ export function useCTraderLiveBar({
             close: Number(next.currentBar.close),
             volume: Number(next.currentBar.volume),
           }
-        : null;
+          : null,
+        normalizedSymbol,
+        livePrice ?? referencePrice
+      );
+      if (livePrice == null && !seededBar) {
+        return;
+      }
+
+      const nextQuote =
+        livePrice != null || previousQuote != null
+          ? {
+              bid: sanitizedBid ?? previousQuote?.bid,
+              ask: sanitizedAsk ?? previousQuote?.ask,
+              spotTimestamp,
+            }
+          : null;
+      if (nextQuote) {
+        previousQuoteRef.current = nextQuote;
+        setQuote(nextQuote);
+      }
+      lastLiveEventAtRef.current = Date.now();
+
+      const previousBar = previousBarCandidate;
       const liveBar = mergeQuoteIntoBar({
         existingBar: previousBar,
         seededBar,
@@ -428,10 +588,12 @@ export function useCTraderLiveBar({
             accountNumber
           );
           if (bars.length > 0) {
-            const mappedBars = bars.map((bar) => ({
-              ...CTraderMapper.toChartBar(bar),
-              broker,
-            }));
+            const mappedBars = bars
+              .map((bar) => ({
+                ...CTraderMapper.toChartBar(bar),
+                broker,
+              }))
+              .filter((bar) => sanitizeLiveBar(bar, normalizedSymbol, bar.close) != null);
             await chartRepo.upsertMany(mappedBars);
             await refreshLocalProgressMetadata();
             if (!cancelled) {
@@ -556,15 +718,22 @@ export function useCTraderLiveBar({
 
             if (cancelled) return;
 
-            const bidTicks = Array.isArray(ticksPayload.bidTicks)
-              ? ticksPayload.bidTicks
-              : [];
-            const askTicks = Array.isArray(ticksPayload.askTicks)
-              ? ticksPayload.askTicks
-              : [];
+            const referencePrice =
+              previousBarRef.current?.close ??
+              getReferencePriceFromQuote(previousQuoteRef.current);
+            const bidTicks = sanitizeTickSeries(
+              Array.isArray(ticksPayload.bidTicks) ? ticksPayload.bidTicks : [],
+              normalizedSymbol,
+              referencePrice
+            );
+            const askTicks = sanitizeTickSeries(
+              Array.isArray(ticksPayload.askTicks) ? ticksPayload.askTicks : [],
+              normalizedSymbol,
+              bidTicks[bidTicks.length - 1]?.price ?? referencePrice
+            );
 
             const liveBar = buildBarFromTicks(
-              bidTicks,
+              bidTicks.length > 0 ? bidTicks : askTicks,
               timeframe,
               broker,
               normalizedSymbol
@@ -578,13 +747,16 @@ export function useCTraderLiveBar({
 
             previousBarRef.current = liveBar;
             setCurrentBar(liveBar);
-            setQuote({
-              bid: bidTicks[bidTicks.length - 1]?.price,
-              ask: askTicks[askTicks.length - 1]?.price,
+            const nextQuote = {
+              bid: bidTicks[bidTicks.length - 1]?.price ?? previousQuoteRef.current?.bid,
+              ask: askTicks[askTicks.length - 1]?.price ?? previousQuoteRef.current?.ask,
               spotTimestamp:
                 bidTicks[bidTicks.length - 1]?.timestamp ??
-                askTicks[askTicks.length - 1]?.timestamp,
-            });
+                askTicks[askTicks.length - 1]?.timestamp ??
+                Date.now(),
+            };
+            previousQuoteRef.current = nextQuote;
+            setQuote(nextQuote);
             setStatus("live");
             setError(null);
           } catch {

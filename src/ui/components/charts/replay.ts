@@ -1,6 +1,7 @@
 import type { ChartBar } from "@domain/entities";
 
 export const REPLAY_SPEED_OPTIONS = [
+  { label: "0.1x", intervalMs: 1800 },
   { label: "0.25x", intervalMs: 900 },
   { label: "0.5x", intervalMs: 600 },
   { label: "1x", intervalMs: 320 },

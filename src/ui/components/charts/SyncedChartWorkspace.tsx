@@ -804,6 +804,7 @@ interface SyncedChartWorkspaceProps {
   keepLiveSessionWarm?: boolean;
   isTradePanelOpen?: boolean;
   onTradePanelOpenChange?: (open: boolean) => void;
+  onAlertTriggered?: (event: PriceAlertEvent) => void;
   arePageTabsVisible?: boolean;
   onTogglePageTabsVisibility?: () => void;
   onHeaderControlsChange?: (controls: ReactNode | null) => void;
@@ -827,6 +828,7 @@ export function SyncedChartWorkspace({
   keepLiveSessionWarm = false,
   isTradePanelOpen,
   onTradePanelOpenChange,
+  onAlertTriggered,
   arePageTabsVisible = true,
   onTogglePageTabsVisibility,
   onHeaderControlsChange,
@@ -903,7 +905,6 @@ export function SyncedChartWorkspace({
   const [alertNote, setAlertNote] = useState("");
   const [alertActionPending, setAlertActionPending] = useState(false);
   const [alertActionError, setAlertActionError] = useState<string | null>(null);
-  const [alertFlashEvent, setAlertFlashEvent] = useState<PriceAlertEvent | null>(null);
   const [tradeActionError, setTradeActionError] = useState<string | null>(null);
   const [tradeActionPending, setTradeActionPending] = useState(false);
   const [isRichTradeOpen, setIsRichTradeOpen] = useState(false);
@@ -1946,7 +1947,7 @@ export function SyncedChartWorkspace({
   useEffect(() => {
     if (!latestTriggeredEvent) return;
 
-    setAlertFlashEvent(latestTriggeredEvent);
+    onAlertTriggered?.(latestTriggeredEvent);
     const audio = alertSoundRef.current;
     if (audio) {
       void (async () => {
@@ -1959,17 +1960,7 @@ export function SyncedChartWorkspace({
       })();
     }
     clearLatestTriggeredEvent();
-
-    const timeoutId = window.setTimeout(() => {
-      setAlertFlashEvent((current) =>
-        current?.id === latestTriggeredEvent.id ? null : current
-      );
-    }, CHART_NOTICE_DISMISS_MS);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [clearLatestTriggeredEvent, latestTriggeredEvent]);
+  }, [clearLatestTriggeredEvent, latestTriggeredEvent, onAlertTriggered]);
 
   useEffect(() => {
     if (
@@ -2706,6 +2697,29 @@ export function SyncedChartWorkspace({
   }, [fullDisplayData, replayStartIndex, replayStartTimestamp]);
 
   useEffect(() => {
+    if (!isReplayMode) return;
+
+    const handleReplayKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      if (event.key !== "ArrowUp") return;
+      event.preventDefault();
+      event.stopPropagation();
+      stepReplay(1);
+    };
+
+    window.addEventListener("keydown", handleReplayKeyDown, true);
+    return () => window.removeEventListener("keydown", handleReplayKeyDown, true);
+  }, [isReplayMode, stepReplay]);
+
+  useEffect(() => {
     if (!availableDateRange) {
       if (goToDate) setGoToDate("");
       if (focusTimestamp != null) setFocusTimestamp(null);
@@ -3319,9 +3333,6 @@ export function SyncedChartWorkspace({
   const chartLoadErrorMessage = error?.message ?? null;
   const liveModeIssueMessage = liveError ?? null;
   const displayedAlertIssueMessage = alertActionError ?? priceAlertsError ?? null;
-  const alertTriggeredMessage = alertFlashEvent
-    ? `Alert triggered for ${alertFlashEvent.symbol}: ${formatAlertConditionLabel(alertFlashEvent.condition)} on ${alertFlashEvent.priceSide.toUpperCase()} at ${formatLivePrice(alertFlashEvent.triggerPrice)}.`
-    : null;
 
   const handleQuickTrade = useCallback(async (side: "BUY" | "SELL") => {
     if (!canTradeLive) return;
@@ -4622,15 +4633,6 @@ export function SyncedChartWorkspace({
             Alert issue: {displayedAlertIssueMessage}
           </ChartNotice>
         )}
-
-      {alertTriggeredMessage && (
-        <ChartNotice
-          tone="success"
-          onClose={() => setAlertFlashEvent(null)}
-        >
-          {alertTriggeredMessage}
-        </ChartNotice>
-      )}
 
       {tradeActionError && !isRichTradeOpen && (
         <ChartNotice

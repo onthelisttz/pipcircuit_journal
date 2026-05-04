@@ -52,9 +52,15 @@ export function TradePanelDetailTabs({
   const { trade, isLoading, error } = useTrade(tradeId);
   const { accounts } = useAccount();
   const token = TokenStorage.getGlobal();
+  const resolvedTrade =
+    fallbackTrade?.id === tradeId
+      ? fallbackTrade
+      : trade?.id === tradeId
+        ? trade
+        : fallbackTrade ?? trade;
 
   if (activeTab === "chart" || activeTab === "pnl") {
-    const chartTrade = trade ?? fallbackTrade;
+    const chartTrade = resolvedTrade;
     if (!chartTrade) {
       return (
         <div className="flex h-48 items-center justify-center">
@@ -69,6 +75,7 @@ export function TradePanelDetailTabs({
       return (
         <div className="-mx-2 h-full">
           <TradeChartView
+            key={`chart-${chartTrade.id ?? tradeId}`}
             trade={chartTrade}
             viewMode="chart"
             fillAvailableHeight={isPanelExpanded}
@@ -93,6 +100,7 @@ export function TradePanelDetailTabs({
     return (
       <div className="-mx-2 h-full">
         <TradeChartView
+          key={`pnl-${chartTrade.id ?? tradeId}`}
           trade={chartTrade}
           viewMode="pnl"
           fillAvailableHeight={isPanelExpanded}

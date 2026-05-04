@@ -19,6 +19,7 @@ import type {
 } from "@ui/components/charts";
 import { useChartObservationPanel, useChartTradeHistoryPanel } from "@ui/providers";
 import type { Observation, ObservationChartArea } from "@domain/entities";
+import type { PriceAlertEvent } from "@ui/hooks/usePriceAlerts";
 
 type ChartMode = "synced" | "history";
 
@@ -142,6 +143,27 @@ function findTabForObservation(
   return null;
 }
 
+function inferAlertPriceDecimals(price: number): number {
+  if (!Number.isFinite(price)) return 5;
+  if (price >= 100000) return 0;
+  if (price >= 10000) return 1;
+  if (price >= 1000) return 2;
+  if (price >= 100) return 3;
+  return 5;
+}
+
+function formatAlertPrice(price: number): string {
+  if (!Number.isFinite(price)) return "--";
+  return price.toLocaleString(undefined, {
+    minimumFractionDigits: inferAlertPriceDecimals(price),
+    maximumFractionDigits: inferAlertPriceDecimals(price),
+  });
+}
+
+function formatAlertCondition(condition: PriceAlertEvent["condition"]): string {
+  return condition === "below" ? "Crosses Below" : "Crosses Above";
+}
+
 export default function ChartPage() {
   const [mode, setMode] = useState<ChartMode>(() => readStoredMode());
   const [showHeaderTabs, setShowHeaderTabs] = useState(true);
@@ -150,6 +172,7 @@ export default function ChartPage() {
   const [workspaceHeaderControls, setWorkspaceHeaderControls] = useState<ReactNode | null>(null);
   const [isObservationPanelOpen, setIsObservationPanelOpen] = useState(false);
   const [isSyncedTradePanelOpen, setIsSyncedTradePanelOpen] = useState(false);
+  const [triggeredAlertToasts, setTriggeredAlertToasts] = useState<PriceAlertEvent[]>([]);
   const [activeObservationWorkspace, setActiveObservationWorkspace] =
     useState<ChartObservationWorkspaceApi | null>(null);
   const [observationLoadRequest, setObservationLoadRequest] =
@@ -419,6 +442,21 @@ export default function ChartPage() {
     [mode, syncTimeframes, updatePaneField]
   );
 
+  const handleTriggeredAlertToast = useCallback((event: PriceAlertEvent) => {
+    setTriggeredAlertToasts((current) => {
+      if (current.some((item) => item.id === event.id)) {
+        return current;
+      }
+      return [event, ...current].slice(0, 6);
+    });
+  }, []);
+
+  const handleDismissTriggeredAlertToast = useCallback((eventId: string) => {
+    setTriggeredAlertToasts((current) =>
+      current.filter((event) => event.id !== eventId)
+    );
+  }, []);
+
   const renderPaneForTab = useCallback(
     (
       tabId: string,
@@ -474,6 +512,7 @@ export default function ChartPage() {
             keepLiveSessionWarm={mode === "synced"}
             isTradePanelOpen={isSyncedTradePanelOpen}
             onTradePanelOpenChange={setIsSyncedTradePanelOpen}
+            onAlertTriggered={handleTriggeredAlertToast}
             onTradePanelChange={
               tabIsVisible && (!isMulti || paneIsActive)
                 ? handleTradePanelChange
@@ -524,6 +563,7 @@ export default function ChartPage() {
     },
     [
       handleTimeframeChangeForPane,
+      handleTriggeredAlertToast,
       handleTradePanelChange,
       isSyncedTradePanelOpen,
       mode,
@@ -536,6 +576,36 @@ export default function ChartPage() {
 
   return (
     <div className={`flex h-full min-h-0 ${hasChartDock ? "md:-mr-10" : "md:-mr-6"}`}>
+      {mode === "synced" && triggeredAlertToasts.length > 0 ? (
+        <div className="pointer-events-none fixed inset-x-0 top-2 z-50 flex flex-col items-center gap-2 px-3 sm:top-3">
+          {triggeredAlertToasts.map((event) => (
+            <div
+              key={event.id}
+              className="pointer-events-auto flex w-full max-w-2xl items-start justify-between gap-3 rounded-xl border border-white/10 bg-background/98 px-4 py-3 text-sm shadow-[0_18px_40px_rgba(0,0,0,0.45)] backdrop-blur"
+            >
+              <div className="min-w-0">
+                <p className="font-medium text-foreground">
+                  {event.symbol} alert triggered
+                </p>
+                <p className="text-muted-foreground">
+                  {formatAlertCondition(event.condition)} on {event.priceSide.toUpperCase()} at{" "}
+                  {formatAlertPrice(event.triggerPrice)}
+                </p>
+                {event.note ? (
+                  <p className="mt-1 text-xs text-muted-foreground">{event.note}</p>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => handleDismissTriggeredAlertToast(event.id)}
+                className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                Close
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3" />
 

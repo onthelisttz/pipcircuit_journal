@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Trade, ChartTimeframe } from "@domain/entities";
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw, SkipBack, SkipForward, X } from "lucide-react";
 import { TradeCandlestickChart } from "./TradeCandlestickChart";
 import { ProfitTimelineChart } from "./ProfitTimelineChart";
 import { TimeframeSelector } from "./TimeframeSelector";
@@ -13,6 +13,13 @@ import { TradePositionInput } from "@ui/components/common/TradePositionInput";
 import { volumeToLots } from "@lib/pnl-estimate";
 import { hexToRgba } from "@lib/color";
 import { TimeGuidesControls } from "./TimeGuidesControls";
+import {
+    clampReplayIndex,
+    DEFAULT_REPLAY_INTERVAL_MS,
+    findNearestReplayIndex,
+    findReplayStartIndex,
+    REPLAY_SPEED_OPTIONS,
+} from "./replay";
 import {
     readStoredTimeGuideSettings,
     type TimeGuideSettings,
@@ -38,6 +45,13 @@ function formatHeaderDate(value: Date | number | string | undefined): string {
         minute: "2-digit",
         hour12: false,
     }).format(date);
+}
+
+function toTimestamp(value: Date | number | string | null | undefined): number | null {
+    if (!value) return null;
+    const timestamp =
+        value instanceof Date ? value.getTime() : new Date(value).getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 export interface TradeChartViewProps {
@@ -140,6 +154,7 @@ export function TradeChartView({
     const profitChartRef = useRef<{ fitContent: () => void } | null>(null);
     const skipNextCalloutApplyRef = useRef(false);
     const pendingTradeCenterRef = useRef(true);
+    const replayTimerRef = useRef<number | null>(null);
     const showsCandlestick = viewMode !== "pnl";
     const allowsProfitToggle = viewMode === "combined";
     const allowsProfitMarkers = viewMode !== "chart";
@@ -182,12 +197,40 @@ export function TradeChartView({
             )
             : null,
     }), [trade]);
-
-    // Handle timeframe change
-    const handleTimeframeChange = useCallback((newTimeframe: ChartTimeframe) => {
-        pendingTradeCenterRef.current = true;
-        setTimeframe(newTimeframe);
-    }, []);
+    const tradeDisplayOpenTimestamp = useMemo(
+        () => toTimestamp(displayTrade.openTime),
+        [displayTrade.openTime]
+    );
+    const tradeDisplayCloseTimestamp = useMemo(
+        () => toTimestamp(displayTrade.closeTime) ?? tradeDisplayOpenTimestamp,
+        [displayTrade.closeTime, tradeDisplayOpenTimestamp]
+    );
+    const [isReplayMode, setIsReplayMode] = useState(false);
+    const [isReplayPlacementMode, setIsReplayPlacementMode] = useState(false);
+    const [isReplayPlaying, setIsReplayPlaying] = useState(false);
+    const [replayIndex, setReplayIndex] = useState<number | null>(null);
+    const [replayStartIndex, setReplayStartIndex] = useState<number | null>(null);
+    const [replayCursorTimestamp, setReplayCursorTimestamp] = useState<number | null>(null);
+    const [replayStartTimestamp, setReplayStartTimestamp] = useState<number | null>(null);
+    const [replayIntervalMs, setReplayIntervalMs] = useState<number>(DEFAULT_REPLAY_INTERVAL_MS);
+    const [replayPlacementTimestamp, setReplayPlacementTimestamp] = useState<number | null>(null);
+    const effectiveReplayIndex = useMemo(() => {
+        if (!isReplayMode || replayIndex == null || displayData.length === 0) {
+            return null;
+        }
+        return clampReplayIndex(replayIndex, displayData.length);
+    }, [displayData.length, isReplayMode, replayIndex]);
+    const displayBars = useMemo(() => {
+        if (effectiveReplayIndex == null) return displayData;
+        return displayData.slice(0, effectiveReplayIndex + 1);
+    }, [displayData, effectiveReplayIndex]);
+    const replayFutureTimestamps = useMemo(() => {
+        if (effectiveReplayIndex == null) return [];
+        return displayData.slice(effectiveReplayIndex + 1).map((bar) => bar.timestamp);
+    }, [displayData, effectiveReplayIndex]);
+    const replayCanStepBack = effectiveReplayIndex != null && effectiveReplayIndex > 0;
+    const replayCanStepForward =
+        effectiveReplayIndex != null && effectiveReplayIndex < displayData.length - 1;
 
     useEffect(() => {
         setShowProfitTimeline(viewMode !== "chart");
@@ -312,13 +355,133 @@ export function TradeChartView({
         event.currentTarget.blur();
     }, []);
 
+    const clearReplayState = useCallback(() => {
+        setIsReplayPlaying(false);
+        setIsReplayMode(false);
+        setIsReplayPlacementMode(false);
+        setReplayIndex(null);
+        setReplayStartIndex(null);
+        setReplayCursorTimestamp(null);
+        setReplayStartTimestamp(null);
+        setReplayPlacementTimestamp(null);
+    }, []);
+
+    const exitReplay = useCallback(() => {
+        clearReplayState();
+    }, [clearReplayState]);
+
+    const startReplayAtTimestamp = useCallback((timestamp: number) => {
+        if (displayData.length === 0) return;
+        const anchorIndex = findReplayStartIndex(displayData, timestamp);
+        const anchorTimestamp = displayData[anchorIndex]?.timestamp ?? timestamp;
+        setIsReplayPlaying(false);
+        setIsReplayPlacementMode(false);
+        setReplayPlacementTimestamp(anchorTimestamp);
+        setIsReplayMode(true);
+        setReplayStartIndex(anchorIndex);
+        setReplayStartTimestamp(anchorTimestamp);
+        setReplayIndex(anchorIndex);
+        setReplayCursorTimestamp(anchorTimestamp);
+    }, [displayData]);
+
+    const getReplayAnchorIndex = useCallback(() => {
+        if (displayData.length === 0) return 0;
+        const anchorTimestamp =
+            candlestickChartRef.current?.getViewportCenterTimestamp() ??
+            tradeDisplayCloseTimestamp ??
+            tradeDisplayOpenTimestamp ??
+            displayData[displayData.length - 1]?.timestamp ??
+            null;
+        return findNearestReplayIndex(displayData, anchorTimestamp);
+    }, [displayData, tradeDisplayCloseTimestamp, tradeDisplayOpenTimestamp]);
+
+    const handleReplayToggle = useCallback(() => {
+        if (isReplayMode) {
+            exitReplay();
+            return;
+        }
+
+        if (isReplayPlacementMode) {
+            setIsReplayPlacementMode(false);
+            setReplayPlacementTimestamp(null);
+            return;
+        }
+
+        if (displayData.length === 0) return;
+
+        const anchorIndex = getReplayAnchorIndex();
+        setIsReplayPlaying(false);
+        setIsReplayPlacementMode(true);
+        setReplayPlacementTimestamp(displayData[anchorIndex]?.timestamp ?? null);
+    }, [displayData, exitReplay, getReplayAnchorIndex, isReplayMode, isReplayPlacementMode]);
+
+    const stepReplay = useCallback((delta: number) => {
+        if (displayData.length === 0) return;
+        setIsReplayPlaying(false);
+        const baseIndex = replayIndex ?? getReplayAnchorIndex();
+        const nextIndex = clampReplayIndex(baseIndex + delta, displayData.length);
+        setReplayIndex(nextIndex);
+        setReplayCursorTimestamp(displayData[nextIndex]?.timestamp ?? null);
+    }, [displayData, getReplayAnchorIndex, replayIndex]);
+
+    const handleReplayReset = useCallback(() => {
+        if (displayData.length === 0) return;
+        const anchorTimestamp =
+            replayStartTimestamp ??
+            (replayStartIndex != null ? displayData[replayStartIndex]?.timestamp ?? null : null);
+        if (anchorTimestamp == null) return;
+        const anchorIndex = findReplayStartIndex(displayData, anchorTimestamp);
+        setIsReplayPlaying(false);
+        setReplayStartIndex(anchorIndex);
+        setReplayIndex(anchorIndex);
+        setReplayCursorTimestamp(displayData[anchorIndex]?.timestamp ?? anchorTimestamp);
+    }, [displayData, replayStartIndex, replayStartTimestamp]);
+
+    useEffect(() => {
+        if (!isReplayMode) return;
+
+        const handleReplayKeyDown = (event: KeyboardEvent) => {
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
+            const target = event.target as HTMLElement | null;
+            if (
+                target?.tagName === "INPUT" ||
+                target?.tagName === "TEXTAREA" ||
+                target?.isContentEditable
+            ) {
+                return;
+            }
+            if (event.key !== "ArrowUp") return;
+            event.preventDefault();
+            event.stopPropagation();
+            stepReplay(1);
+        };
+
+        window.addEventListener("keydown", handleReplayKeyDown, true);
+        return () => window.removeEventListener("keydown", handleReplayKeyDown, true);
+    }, [isReplayMode, stepReplay]);
+
+    const handleTimeframeChange = useCallback((newTimeframe: ChartTimeframe) => {
+        clearReplayState();
+        pendingTradeCenterRef.current = true;
+        setTimeframe(newTimeframe);
+    }, [clearReplayState]);
+
     useEffect(() => {
         setLongShortLots(initialLots);
     }, [initialLots, trade.id]);
 
     useEffect(() => {
+        clearReplayState();
         pendingTradeCenterRef.current = true;
-    }, [trade.id, trade.openTime, trade.closeTime]);
+    }, [clearReplayState, trade.id, trade.openTime, trade.closeTime]);
+
+    useEffect(() => {
+        return () => {
+            if (replayTimerRef.current != null) {
+                window.clearTimeout(replayTimerRef.current);
+            }
+        };
+    }, []);
 
     useEffect(() => {
         if (typeof window === "undefined") return;
@@ -335,6 +498,7 @@ export function TradeChartView({
 
     // Reset view - switch to M1, scroll to trade, fit charts, remove all drawing tools (delay to allow M1 data to load)
     const handleResetView = useCallback(() => {
+        exitReplay();
         if (showsCandlestick) {
             // Remove drawing tools immediately when candlestick chart is visible.
             candlestickChartRef.current?.removeAllDrawingTools();
@@ -351,7 +515,7 @@ export function TradeChartView({
             }
             profitChartRef.current?.fitContent();
         }, 150);
-    }, [showsCandlestick, activeZoomOutMultiplier]);
+    }, [activeZoomOutMultiplier, exitReplay, showsCandlestick]);
 
     // Close expanded view on Escape, prevent body scroll when expanded
     useEffect(() => {
@@ -418,8 +582,21 @@ export function TradeChartView({
     }, [showsCandlestick]);
 
     useEffect(() => {
-        if (!showsCandlestick || !trade || isLoading || displayData.length === 0) return;
+        if (!showsCandlestick || !trade || isLoading || displayBars.length === 0) return;
         if (!pendingTradeCenterRef.current) return;
+        if (tradeDisplayOpenTimestamp == null) return;
+
+        const loadedFrom = displayBars[0]?.timestamp ?? null;
+        const loadedTo = displayBars[displayBars.length - 1]?.timestamp ?? null;
+        const targetCloseTimestamp = tradeDisplayCloseTimestamp ?? tradeDisplayOpenTimestamp;
+        if (
+            loadedFrom == null ||
+            loadedTo == null ||
+            tradeDisplayOpenTimestamp < loadedFrom ||
+            targetCloseTimestamp > loadedTo
+        ) {
+            return;
+        }
 
         pendingTradeCenterRef.current = false;
         const timer = window.setTimeout(() => {
@@ -429,7 +606,78 @@ export function TradeChartView({
         return () => {
             window.clearTimeout(timer);
         };
-    }, [activeZoomOutMultiplier, displayData.length, isLoading, showsCandlestick, trade]);
+    }, [
+        activeZoomOutMultiplier,
+        displayBars,
+        isLoading,
+        showsCandlestick,
+        trade,
+        tradeDisplayCloseTimestamp,
+        tradeDisplayOpenTimestamp,
+    ]);
+
+    useEffect(() => {
+        if (!isReplayMode) return;
+        if (displayData.length === 0) {
+            clearReplayState();
+            return;
+        }
+
+        const fallbackIndex = getReplayAnchorIndex();
+        const resolvedStartTimestamp =
+            replayStartTimestamp ?? displayData[fallbackIndex]?.timestamp ?? null;
+        const resolvedCursorTimestamp =
+            replayCursorTimestamp ?? resolvedStartTimestamp;
+
+        const nextStartIndex =
+            resolvedStartTimestamp == null
+                ? fallbackIndex
+                : findReplayStartIndex(displayData, resolvedStartTimestamp);
+        const nextCursorIndex =
+            resolvedCursorTimestamp == null
+                ? nextStartIndex
+                : findReplayStartIndex(displayData, resolvedCursorTimestamp);
+
+        setReplayStartIndex(nextStartIndex);
+        setReplayIndex(nextCursorIndex);
+        setReplayStartTimestamp(displayData[nextStartIndex]?.timestamp ?? resolvedStartTimestamp);
+        setReplayCursorTimestamp(displayData[nextCursorIndex]?.timestamp ?? resolvedCursorTimestamp);
+    }, [
+        clearReplayState,
+        displayData,
+        getReplayAnchorIndex,
+        isReplayMode,
+        replayCursorTimestamp,
+        replayStartTimestamp,
+    ]);
+
+    useEffect(() => {
+        if (!isReplayMode || !isReplayPlaying || effectiveReplayIndex == null) return;
+
+        if (effectiveReplayIndex >= displayData.length - 1) {
+            setIsReplayPlaying(false);
+            return;
+        }
+
+        replayTimerRef.current = window.setTimeout(() => {
+            const nextIndex = clampReplayIndex(effectiveReplayIndex + 1, displayData.length);
+            setReplayIndex(nextIndex);
+            setReplayCursorTimestamp(displayData[nextIndex]?.timestamp ?? null);
+        }, replayIntervalMs);
+
+        return () => {
+            if (replayTimerRef.current != null) {
+                window.clearTimeout(replayTimerRef.current);
+                replayTimerRef.current = null;
+            }
+        };
+    }, [
+        displayData,
+        effectiveReplayIndex,
+        isReplayMode,
+        isReplayPlaying,
+        replayIntervalMs,
+    ]);
 
     // Handle visible range change for lazy loading
     const handleVisibleRangeChange = useCallback(
@@ -454,7 +702,7 @@ export function TradeChartView({
     const chartContent = (hideTimeframeInToolbar = false) => (
         <div className="flex min-h-0 flex-1 flex-col">
             <div
-                className={`z-30 -mx-2 -mt-2 flex flex-nowrap items-center gap-2 overflow-visible border-b border-border/70 bg-card px-2 py-1.5 ${
+                className={`z-30 -mx-2 flex flex-nowrap items-center gap-2 overflow-visible border-b border-border/70 bg-card px-2 py-1.5 ${
                     hideTimeframeInToolbar ? "justify-end" : "justify-between"
                 }`}
             >
@@ -469,6 +717,86 @@ export function TradeChartView({
                 )}
                 {showsCandlestick && (
                     <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
+                        <div className="flex items-center gap-1">
+                            <button
+                                type="button"
+                                onClick={handleReplayToggle}
+                                disabled={isLoading || displayData.length === 0}
+                                className={`flex h-7 items-center gap-1.5 rounded border px-2 text-[11px] font-medium transition-colors ${
+                                    isReplayMode || isReplayPlacementMode
+                                        ? "border-primary/60 bg-primary/10 text-primary"
+                                        : "border-border text-muted-foreground hover:bg-muted"
+                                } disabled:cursor-not-allowed disabled:opacity-50`}
+                                title={
+                                    isReplayMode
+                                        ? "Exit replay mode"
+                                        : isReplayPlacementMode
+                                            ? "Cancel replay placement"
+                                            : "Pick replay start on chart"
+                                }
+                            >
+                                {isReplayMode ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                                <span>
+                                    {isReplayMode ? "Exit Replay" : isReplayPlacementMode ? "Cancel Pick" : "Replay"}
+                                </span>
+                            </button>
+
+                            {isReplayMode ? (
+                                <div className="flex h-7 items-center gap-1 rounded border border-border bg-background px-1.5">
+                                    <button
+                                        type="button"
+                                        onClick={handleReplayReset}
+                                        disabled={replayStartIndex == null}
+                                        className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                        title="Restart replay"
+                                    >
+                                        <RotateCcw className="h-3 w-3" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => stepReplay(-1)}
+                                        disabled={!replayCanStepBack}
+                                        className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                        title="Previous bar"
+                                    >
+                                        <SkipBack className="h-3 w-3" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsReplayPlaying((current) => !current)}
+                                        disabled={!replayCanStepForward}
+                                        className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                        title={isReplayPlaying ? "Pause replay" : "Play replay"}
+                                    >
+                                        {isReplayPlaying ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => stepReplay(1)}
+                                        disabled={!replayCanStepForward}
+                                        className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                        title="Next bar"
+                                    >
+                                        <SkipForward className="h-3 w-3" />
+                                    </button>
+                                    <select
+                                        value={replayIntervalMs}
+                                        onChange={(event) => setReplayIntervalMs(Number(event.target.value))}
+                                        className="h-5 rounded border border-border bg-background px-1 text-[10px] text-foreground"
+                                        aria-label="Replay speed"
+                                    >
+                                        {REPLAY_SPEED_OPTIONS.map((option) => (
+                                            <option key={option.intervalMs} value={option.intervalMs}>
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <span className="hidden text-[10px] text-muted-foreground sm:inline">
+                                        {effectiveReplayIndex != null ? `${effectiveReplayIndex + 1}/${displayData.length}` : "0/0"}
+                                    </span>
+                                </div>
+                            ) : null}
+                        </div>
                         <TimeGuidesControls
                             value={timeGuides}
                             onChange={setTimeGuides}
@@ -652,18 +980,19 @@ export function TradeChartView({
                 {showsCandlestick && (
                     <TradeCandlestickChart
                         ref={candlestickChartRef}
-                        data={displayData}
+                        data={displayBars}
                         timeframe={timeframe}
                         timeGuides={timeGuides}
                         clipTimeGuideOverlayToPane
                         trade={displayTrade}
                         dataUpdateMode={dataUpdateMode}
+                        replayFutureTimestamps={replayFutureTimestamps}
                         height={resolvedChartHeight}
                         zoomOutMultiplier={activeZoomOutMultiplier}
                         showEntryMarker={true}
                         showExitMarker={true}
                         onVisibleRangeChange={handleVisibleRangeChange}
-                        autoScrollOnData={false}
+                        autoScrollOnData={!isReplayMode && !isReplayPlacementMode}
                         isLoading={isLoading}
                         drawingTool={drawingTool}
                         continuousDrawing={continuousDrawingEnabled}
@@ -695,6 +1024,10 @@ export function TradeChartView({
                         longShortSymbol={trade.symbol ?? ""}
                         showRiskReward={showRiskReward}
                         showRiskRewardLabels={showRiskRewardLabels}
+                        replayPlacementMode={isReplayPlacementMode}
+                        replayPlacementTimestamp={replayPlacementTimestamp}
+                        onReplayPlacementPreviewChange={setReplayPlacementTimestamp}
+                        onReplayPlacementSelect={startReplayAtTimestamp}
                     />
                 )}
                 {showProfitTimeline && (
