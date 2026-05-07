@@ -2115,6 +2115,6 @@ export function startCTraderLiveService(options = {}) {
   return server;
 }
 
-if (process.argv.includes("--serve") || process.argv[1]?.endsWith("server.mjs")) {
+if (process.argv[1]?.endsWith("server.mjs")) {
   startCTraderLiveService();
 }

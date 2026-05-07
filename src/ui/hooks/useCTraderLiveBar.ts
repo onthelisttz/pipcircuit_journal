@@ -840,7 +840,7 @@ export function useCTraderLiveBar({
           if (cancelled) return;
           setStatus("error");
           setError(
-            `Could not reach the local cTrader live service at ${effectiveServiceUrl}. Start it with \`npm run ctrader:live:service\`.`
+            `Could not reach the local cTrader live service at ${effectiveServiceUrl}. Start it with \`npm run mt5:service\`.`
           );
         };
 

@@ -15,6 +15,7 @@ Remove it later:
 
 Notes:
 - MetaTrader 5 must be installed on the PC.
-- The helper serves on http://127.0.0.1:47831 by default.
+- The helper serves MT5 history on http://127.0.0.1:47831 by default.
+- The same helper also starts the cTrader live service on http://127.0.0.1:47832.
 - Logs are written to:
   %LOCALAPPDATA%\Pipcircuit\logs\mt5-history-service.log

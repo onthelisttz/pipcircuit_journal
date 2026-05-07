@@ -11,7 +11,7 @@ if exist "%PACKAGED_EXE%" (
   set "PIPCIRCUIT_MT5_SERVICE_DIR=%SCRIPT_DIR%"
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$healthUrl='http://127.0.0.1:47831/health';" ^
-    "try { Invoke-WebRequest -UseBasicParsing $healthUrl -TimeoutSec 2 | Out-Null; exit 0 } catch {};" ^
+    "try { $health = Invoke-RestMethod -UseBasicParsing $healthUrl -TimeoutSec 2; if ($health.ok -and $health.services.ctraderLive.ok) { exit 0 } } catch {};" ^
     "$env:PIPCIRCUIT_MT5_SERVICE_DIR='%PIPCIRCUIT_MT5_SERVICE_DIR:\=\\%';" ^
     "Start-Process -WindowStyle Hidden -FilePath '%PACKAGED_EXE:\=\\%' -ArgumentList '--serve' | Out-Null;" ^
     "exit 0"
@@ -23,7 +23,7 @@ if exist "%PACKAGED_EXE%" (
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$healthUrl='http://127.0.0.1:47831/health';" ^
-  "try { Invoke-WebRequest -UseBasicParsing $healthUrl -TimeoutSec 2 | Out-Null; exit 0 } catch {};" ^
+  "try { $health = Invoke-RestMethod -UseBasicParsing $healthUrl -TimeoutSec 2; if ($health.ok -and $health.services.ctraderLive.ok) { exit 0 } } catch {};" ^
   "$env:PIPCIRCUIT_MT5_SERVICE_DIR='%PIPCIRCUIT_MT5_SERVICE_DIR:\=\\%';" ^
   "$log='%LOG_FILE:\=\\%';" ^
   "$command='%RUN_COMMAND:"=\"%' + ' >> ""' + $log + '"" 2>&1';" ^

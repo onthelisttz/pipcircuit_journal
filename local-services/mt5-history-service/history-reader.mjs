@@ -3,6 +3,7 @@ import http from "node:http";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { URL, fileURLToPath } from "node:url";
+import { startCTraderLiveService } from "../ctrader-live-service/server.mjs";
 
 const DEFAULT_MT5_HISTORY_ROOT =
   process.env.MT5_HISTORY_ROOT?.trim() ||
@@ -34,6 +35,20 @@ const BUNDLED_BRIDGE_NAME =
   process.platform === "win32" ? "request_mt5_bars.exe" : "request_mt5_bars";
 const liveMt5State = new Map();
 const hccIndexCache = new Map();
+const combinedServiceState = {
+  mode: "mt5-only",
+  mt5: {
+    ok: false,
+    host: null,
+    port: null,
+  },
+  ctraderLive: {
+    ok: false,
+    host: null,
+    port: null,
+    error: null,
+  },
+};
 
 function normalizeTimeframe(fileName) {
   const base = path.basename(fileName, path.extname(fileName)).toUpperCase();
@@ -1177,6 +1192,11 @@ export function startMt5LocalService(options = {}) {
   const port = Number(
     options.port || process.env.MT5_LOCAL_SERVICE_PORT || process.env.PORT || 47831
   );
+  combinedServiceState.mt5 = {
+    ok: true,
+    host,
+    port,
+  };
 
   const server = http.createServer(async (request, response) => {
     const origin = request.headers.origin;
@@ -1209,6 +1229,7 @@ export function startMt5LocalService(options = {}) {
             ok: true,
             service: "mt5-history-local-service",
             defaultRootPath: resolveMt5HistoryRoot(),
+            services: combinedServiceState,
           },
           origin
         );
@@ -1336,12 +1357,77 @@ export function startMt5LocalService(options = {}) {
   server.listen(port, host, () => {
     console.log(`MT5 local service listening on http://${host}:${port}`);
   });
+  server.on("close", () => {
+    combinedServiceState.mt5.ok = false;
+  });
 
   return server;
+}
+
+export function startPipcircuitLocalServices(options = {}) {
+  const mt5Server = startMt5LocalService(options.mt5);
+  combinedServiceState.mode = "combined";
+
+  const ctraderHost =
+    options.ctrader?.host ||
+    process.env.CTRADER_LIVE_SERVICE_HOST ||
+    "127.0.0.1";
+  const ctraderPort = Number(
+    options.ctrader?.port ||
+      process.env.CTRADER_LIVE_SERVICE_PORT ||
+      47832
+  );
+
+  let ctraderServer = null;
+  try {
+    ctraderServer = startCTraderLiveService({
+      ...options.ctrader,
+      host: ctraderHost,
+      port: ctraderPort,
+    });
+    combinedServiceState.ctraderLive = {
+      ok: true,
+      host: ctraderHost,
+      port: ctraderPort,
+      error: null,
+    };
+    ctraderServer.on("close", () => {
+      combinedServiceState.ctraderLive.ok = false;
+    });
+    ctraderServer.on("error", (error) => {
+      combinedServiceState.ctraderLive.ok = false;
+      combinedServiceState.ctraderLive.error =
+        error instanceof Error ? error.message : String(error);
+    });
+  } catch (error) {
+    combinedServiceState.ctraderLive = {
+      ok: false,
+      host: ctraderHost,
+      port: ctraderPort,
+      error: error instanceof Error ? error.message : String(error),
+    };
+    console.error(
+      `[combined-local-service] Failed to start cTrader live service: ${combinedServiceState.ctraderLive.error}`
+    );
+  }
+
+  const closeAll = () => {
+    mt5Server.close();
+    ctraderServer?.close();
+  };
+
+  process.once("SIGINT", closeAll);
+  process.once("SIGTERM", closeAll);
+
+  return {
+    mt5Server,
+    ctraderServer,
+    closeAll,
+  };
 }
 
 const isEntrypoint = process.argv.includes("--serve");
 
 if (isEntrypoint) {
-  startMt5LocalService();
+  startPipcircuitLocalServices();
 }

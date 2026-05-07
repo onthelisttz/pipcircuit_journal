@@ -1,6 +1,9 @@
 # MT5 Local Service
 
-This helper runs on your computer and exposes the same MT5 history routes the frontend already expects.
+This helper runs on your computer and now starts both local backends together:
+
+- the MT5 history service on `http://127.0.0.1:47831`
+- the cTrader live service on `http://127.0.0.1:47832`
 
 ## Run
 
@@ -8,10 +11,11 @@ This helper runs on your computer and exposes the same MT5 history routes the fr
 npm run mt5:service
 ```
 
-Default URL:
+Default URLs:
 
 ```text
 http://127.0.0.1:47831
+http://127.0.0.1:47832
 ```
 
 ## Start automatically on Windows
@@ -77,6 +81,8 @@ The helper still writes logs to:
 - `GET /api/mt5/history/meta?rootPath=...`
 - `GET /api/mt5/history/bars?symbol=NAS100&timeframe=M1&from=...&to=...&limit=...&rootPath=...`
 - `POST /api/mt5/history/request-bars`
+
+It also starts the cTrader live routes used by the synced chart live tab.
 
 ## Frontend setup
 

@@ -2,6 +2,12 @@
 
 Local SSE bridge for the chart page live mode.
 
+In normal use you do not need to start this separately anymore. It is started automatically by:
+
+```bash
+npm run mt5:service
+```
+
 ## Run
 
 ```bash
