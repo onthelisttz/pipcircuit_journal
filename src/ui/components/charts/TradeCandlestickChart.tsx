@@ -19,6 +19,7 @@ import {
     useCallback,
     useState,
     forwardRef,
+    memo,
     useImperativeHandle,
     useMemo,
     type PointerEvent as ReactPointerEvent,
@@ -864,7 +865,7 @@ export interface TradeCandlestickChartRef {
  * Uses TradingView Lightweight Charts v5 with dark theme (Pure Black),
  * R:R visualization with timestamp snapping for finite boxes.
  */
-export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeCandlestickChartProps>(function TradeCandlestickChart({
+const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCandlestickChartProps>(function TradeCandlestickChart({
     data,
     replayFutureTimestamps = EMPTY_REPLAY_FUTURE_TIMESTAMPS,
     timeframe,
@@ -1035,6 +1036,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     const onCrosshairQuickAlertCreateRef = useRef<typeof onCrosshairQuickAlertCreate>(onCrosshairQuickAlertCreate);
     const onCrosshairQuickOrderCreateRef = useRef<typeof onCrosshairQuickOrderCreate>(onCrosshairQuickOrderCreate);
     const crosshairQuickActionRef = useRef<HTMLDivElement | null>(null);
+    const crosshairQuickActionFrameRef = useRef<number | null>(null);
+    const pendingCrosshairQuickActionRef = useRef<CrosshairQuickActionState | null>(null);
     const canShowCrosshairQuickActionsRef = useRef<boolean>(Boolean(
         onCrosshairQuickAlertCreate || onCrosshairQuickOrderCreate
     ));
@@ -1044,6 +1047,44 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         [data, longShortSymbol, trade?.symbol]
     );
     const priceFormatRef = useRef(priceFormat);
+
+    const scheduleCrosshairQuickAction = useCallback((nextAction: CrosshairQuickActionState | null) => {
+        pendingCrosshairQuickActionRef.current = nextAction;
+        if (crosshairQuickActionFrameRef.current != null) {
+            return;
+        }
+
+        crosshairQuickActionFrameRef.current = window.requestAnimationFrame(() => {
+            crosshairQuickActionFrameRef.current = null;
+            const pendingAction = pendingCrosshairQuickActionRef.current;
+
+            setCrosshairQuickAction((current) => {
+                if (current == null && pendingAction == null) {
+                    return current;
+                }
+
+                if (
+                    current != null &&
+                    pendingAction != null &&
+                    Math.abs(current.y - pendingAction.y) <= 0.5 &&
+                    Math.abs(current.price - pendingAction.price) <= priceFormatRef.current.minMove / 2
+                ) {
+                    return current;
+                }
+
+                return pendingAction;
+            });
+        });
+    }, []);
+
+    const clearCrosshairQuickAction = useCallback(() => {
+        pendingCrosshairQuickActionRef.current = null;
+        if (crosshairQuickActionFrameRef.current != null) {
+            cancelAnimationFrame(crosshairQuickActionFrameRef.current);
+            crosshairQuickActionFrameRef.current = null;
+        }
+        setCrosshairQuickAction(null);
+    }, []);
     const clearTradeHistoryPlugins = useCallback((series: ISeriesApi<"Candlestick"> | null = seriesRef.current) => {
         if (!series || tradeHistoryPluginsRef.current.length === 0) {
             tradeHistoryPluginsRef.current = [];
@@ -1068,6 +1109,13 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
     useEffect(() => {
         dataRef.current = data;
     }, [data]);
+
+    useEffect(() => () => {
+        if (crosshairQuickActionFrameRef.current != null) {
+            cancelAnimationFrame(crosshairQuickActionFrameRef.current);
+            crosshairQuickActionFrameRef.current = null;
+        }
+    }, []);
 
     useEffect(() => {
         continuousDrawingRef.current = continuousDrawing;
@@ -3373,7 +3421,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             }
 
             if (!canShowCrosshairQuickActionsRef.current || liveTradeDragSessionRef.current) {
-                setCrosshairQuickAction((current) => (current == null ? current : null));
+                scheduleCrosshairQuickAction(null);
                 return;
             }
 
@@ -3396,18 +3444,9 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
                 return;
             }
 
-            setCrosshairQuickAction((current) => {
-                if (
-                    current &&
-                    Math.abs(current.y - point.y) <= 0.5 &&
-                    Math.abs(current.price - price) <= priceFormatRef.current.minMove / 2
-                ) {
-                    return current;
-                }
-                return {
-                    y: point.y,
-                    price,
-                };
+            scheduleCrosshairQuickAction({
+                y: point.y,
+                price,
             });
         };
         lineTools.subscribeLineToolsAfterEdit?.(handleAfterEdit);
@@ -3677,6 +3716,10 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             if (overlayFrameRef.current != null) {
                 cancelAnimationFrame(overlayFrameRef.current);
                 overlayFrameRef.current = null;
+            }
+            if (crosshairQuickActionFrameRef.current != null) {
+                cancelAnimationFrame(crosshairQuickActionFrameRef.current);
+                crosshairQuickActionFrameRef.current = null;
             }
             if (priceScaleUnlockFrameRef.current != null) {
                 cancelAnimationFrame(priceScaleUnlockFrameRef.current);
@@ -4927,7 +4970,7 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => {
                 setIsHovered(false);
-                setCrosshairQuickAction(null);
+                clearCrosshairQuickAction();
                 setIsCrosshairQuickMenuOpen(false);
             }}
         >
@@ -5342,3 +5385,8 @@ export const TradeCandlestickChart = forwardRef<TradeCandlestickChartRef, TradeC
         </div>
     );
 });
+
+TradeCandlestickChartInner.displayName = "TradeCandlestickChart";
+
+export const TradeCandlestickChart = memo(TradeCandlestickChartInner);
+TradeCandlestickChart.displayName = "TradeCandlestickChart";

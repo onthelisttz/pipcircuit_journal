@@ -486,6 +486,7 @@ export default function ChartPage() {
         return (
           <SyncedChartWorkspace
             key={pane.id}
+            storageScopeKey={pane.id}
             initialSymbol={pane.symbol || undefined}
             initialBroker={pane.broker || undefined}
             initialTimeframe={pane.timeframe as "M1" | "M5" | "M15" | "H1" | undefined}

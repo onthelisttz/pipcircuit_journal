@@ -101,6 +101,17 @@ type StoredSyncedDrawingSnapshot = {
   windowSeconds: number | null;
   savedAt: number;
 };
+type PriceAlertsList = ReturnType<typeof usePriceAlerts>["activeAlerts"];
+
+const EMPTY_LIVE_POSITIONS: LivePositionSnapshot[] = [];
+const EMPTY_LIVE_ORDERS: LiveOrderSnapshot[] = [];
+const EMPTY_PRICE_ALERTS: PriceAlertsList = [];
+
+function makeLiveModeStorageKey(storageScopeKey?: string): string {
+  return storageScopeKey
+    ? `${CHART_LIVE_MODE_KEY}_${storageScopeKey}`
+    : CHART_LIVE_MODE_KEY;
+}
 
 const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
   { id: "Brush", label: "Brush" },
@@ -647,10 +658,10 @@ function readStoredShowLiveTradesOnChart(): boolean {
   }
 }
 
-function readStoredLiveMode(): boolean {
+function readStoredLiveMode(storageScopeKey?: string): boolean {
   if (typeof window === "undefined") return false;
   try {
-    return window.localStorage.getItem(CHART_LIVE_MODE_KEY) === "true";
+    return window.localStorage.getItem(makeLiveModeStorageKey(storageScopeKey)) === "true";
   } catch {
     return false;
   }
@@ -849,6 +860,7 @@ function areDrawingsCoveredByBars(
 }
 
 interface SyncedChartWorkspaceProps {
+  storageScopeKey?: string;
   initialSymbol?: string;
   initialBroker?: string;
   initialTimeframe?: ChartTimeframe;
@@ -873,6 +885,7 @@ interface SyncedChartWorkspaceProps {
 }
 
 export function SyncedChartWorkspace({
+  storageScopeKey,
   initialSymbol,
   initialBroker,
   initialTimeframe,
@@ -954,7 +967,9 @@ export function SyncedChartWorkspace({
   const [showLiveTradesOnChart, setShowLiveTradesOnChart] = useState(() =>
     readStoredShowLiveTradesOnChart()
   );
-  const [liveModeEnabled, setLiveModeEnabled] = useState(() => readStoredLiveMode());
+  const [liveModeEnabled, setLiveModeEnabled] = useState(() =>
+    readStoredLiveMode(storageScopeKey)
+  );
   const [showAlertsOnChart, setShowAlertsOnChart] = useState(() => readStoredShowAlertsOnChart());
   const [livePositions, setLivePositions] = useState<LivePositionSnapshot[]>([]);
   const [liveOrders, setLiveOrders] = useState<LiveOrderSnapshot[]>([]);
@@ -1182,8 +1197,11 @@ export function SyncedChartWorkspace({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(CHART_LIVE_MODE_KEY, String(liveModeEnabled));
-  }, [liveModeEnabled]);
+    window.localStorage.setItem(
+      makeLiveModeStorageKey(storageScopeKey),
+      String(liveModeEnabled)
+    );
+  }, [liveModeEnabled, storageScopeKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1278,6 +1296,26 @@ export function SyncedChartWorkspace({
     },
     []
   );
+
+  const handleChartDrawingToolComplete = useCallback(() => {
+    persistCurrentDrawings();
+    if (!continuousDrawingEnabled) {
+      setDrawingTool(null);
+    }
+  }, [continuousDrawingEnabled, persistCurrentDrawings]);
+
+  const handleChartDrawingToolCancel = useCallback(() => {
+    persistCurrentDrawings();
+    setDrawingTool(null);
+    setSelectedDrawingTool(null);
+  }, [persistCurrentDrawings]);
+
+  const handleChartCalloutEditRequest = useCallback(() => {
+    window.setTimeout(() => {
+      calloutTextInputRef.current?.focus();
+      calloutTextInputRef.current?.select();
+    }, 0);
+  }, []);
 
   // Report initial values to parent so tab labels are correct on mount
   useEffect(() => {
@@ -2055,6 +2093,24 @@ export function SyncedChartWorkspace({
     if (!selection) return [];
     return liveOrders.filter((order) => order.symbol === selection.symbol);
   }, [liveOrders, selection]);
+  const activeChartLivePositions = useMemo(
+    () =>
+      liveVisualsEnabled && showLiveTradesOnChart
+        ? chartLivePositions
+        : EMPTY_LIVE_POSITIONS,
+    [chartLivePositions, liveVisualsEnabled, showLiveTradesOnChart]
+  );
+  const activeChartLiveOrders = useMemo(
+    () =>
+      liveVisualsEnabled && showLiveTradesOnChart
+        ? chartLiveOrders
+        : EMPTY_LIVE_ORDERS,
+    [chartLiveOrders, liveVisualsEnabled, showLiveTradesOnChart]
+  );
+  const activeChartPriceAlerts = useMemo(
+    () => (showAlertsOnChart ? symbolPriceAlerts : EMPTY_PRICE_ALERTS),
+    [showAlertsOnChart, symbolPriceAlerts]
+  );
 
   useEffect(() => {
     setLongShortLots(getDefaultChartLots(selection?.symbol));
@@ -4830,40 +4886,22 @@ export function SyncedChartWorkspace({
           calloutLineColor={calloutLineColor}
           calloutBoxColor={calloutBoxColor}
           onDrawingSelectionChange={setSelectedDrawingTool}
-          onDrawingToolComplete={() => {
-            persistCurrentDrawings();
-            if (!continuousDrawingEnabled) {
-              setDrawingTool(null);
-            }
-          }}
-          onDrawingToolCancel={() => {
-            persistCurrentDrawings();
-            setDrawingTool(null);
-            setSelectedDrawingTool(null);
-          }}
-          onCalloutEditRequest={() => {
-            window.setTimeout(() => {
-              calloutTextInputRef.current?.focus();
-              calloutTextInputRef.current?.select();
-            }, 0);
-          }}
+          onDrawingToolComplete={handleChartDrawingToolComplete}
+          onDrawingToolCancel={handleChartDrawingToolCancel}
+          onCalloutEditRequest={handleChartCalloutEditRequest}
           replayPlacementMode={isReplayPlacementMode}
           replayPlacementTimestamp={replayPlacementTimestamp}
           onReplayPlacementPreviewChange={setReplayPlacementTimestamp}
           onReplayPlacementSelect={startReplayAtTimestamp}
           longShortLots={resolvedLongShortLots}
           longShortSymbol={selection?.symbol}
-          activeLivePositions={
-            liveVisualsEnabled && showLiveTradesOnChart ? chartLivePositions : []
-          }
+          activeLivePositions={activeChartLivePositions}
           onActiveLivePositionChange={handleLivePositionAdjust}
           onActiveLivePositionClose={handleLivePositionClose}
-          activeLiveOrders={
-            liveVisualsEnabled && showLiveTradesOnChart ? chartLiveOrders : []
-          }
+          activeLiveOrders={activeChartLiveOrders}
           onActiveLiveOrderChange={handleLiveOrderAdjust}
           onActiveLiveOrderCancel={handleLiveOrderCancel}
-          activePriceAlerts={showAlertsOnChart ? symbolPriceAlerts : []}
+          activePriceAlerts={activeChartPriceAlerts}
           showPriceAlerts={showAlertsOnChart}
           onActivePriceAlertChange={handleAlertChartMove}
           onActivePriceAlertDelete={handleDeleteAlert}
