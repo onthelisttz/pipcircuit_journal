@@ -11,6 +11,7 @@ const bundleAssetsDir = path.join(serviceDir, "bundle-assets");
 const releaseDir = path.join(serviceDir, "release");
 const bundleRoot = path.join(releaseDir, "mt5-history-service-windows-x64");
 const zipPath = path.join(releaseDir, "mt5-history-service-windows-x64.zip");
+const optionalEnvFiles = [".env", ".env.local"];
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
@@ -52,6 +53,7 @@ async function copyRecursive(sourcePath, destinationPath) {
 async function main() {
   await fs.access(path.join(distDir, "mt5-history-service.exe"));
   await fs.access(path.join(distDir, "bin", "request_mt5_bars.exe"));
+  await fs.access(path.join(distDir, "node_modules"));
   await fs.access(bundleAssetsDir);
 
   await fs.rm(releaseDir, { recursive: true, force: true });
@@ -59,7 +61,18 @@ async function main() {
 
   await copyRecursive(path.join(distDir, "mt5-history-service.exe"), path.join(bundleRoot, "mt5-history-service.exe"));
   await copyRecursive(path.join(distDir, "bin"), path.join(bundleRoot, "bin"));
+  await copyRecursive(path.join(distDir, "node_modules"), path.join(bundleRoot, "node_modules"));
   await copyRecursive(path.join(serviceDir, "start-mt5-service.cmd"), path.join(bundleRoot, "start-mt5-service.cmd"));
+
+  for (const envFileName of optionalEnvFiles) {
+    const envSourcePath = path.join(repoRoot, envFileName);
+    try {
+      await fs.access(envSourcePath);
+      await copyRecursive(envSourcePath, path.join(bundleRoot, envFileName));
+    } catch {
+      // Optional for local packaged installs.
+    }
+  }
 
   const assetEntries = await fs.readdir(bundleAssetsDir, { withFileTypes: true });
   for (const entry of assetEntries) {

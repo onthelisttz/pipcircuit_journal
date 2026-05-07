@@ -10,6 +10,19 @@ import { createClient } from "@supabase/supabase-js";
 const SERVICE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SERVICE_DIR, "..", "..");
 
+function uniquePaths(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    if (!value) continue;
+    const resolved = path.resolve(value);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    result.push(resolved);
+  }
+  return result;
+}
+
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return;
 
@@ -36,16 +49,38 @@ function loadEnvFile(filePath) {
   }
 }
 
-loadEnvFile(path.join(PROJECT_ROOT, ".env"));
-loadEnvFile(path.join(PROJECT_ROOT, ".env.local"));
+for (const configDir of uniquePaths([
+  process.env.PIPCIRCUIT_CONFIG_DIR,
+  process.env.PIPCIRCUIT_MT5_SERVICE_DIR,
+  path.dirname(process.execPath),
+  process.cwd(),
+  SERVICE_DIR,
+  PROJECT_ROOT,
+])) {
+  loadEnvFile(path.join(configDir, ".env"));
+  loadEnvFile(path.join(configDir, ".env.local"));
+}
 
-const clientId = process.env.NEXT_PUBLIC_CTRADER_CLIENT_ID ?? "";
-const clientSecret = process.env.CTRADER_CLIENT_SECRET ?? "";
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-const protoLiveHost = process.env.CTRADER_PROTO_HOST_LIVE ?? "live.ctraderapi.com";
-const protoDemoHost = process.env.CTRADER_PROTO_HOST_DEMO ?? "demo.ctraderapi.com";
-const protoPort = Number(process.env.CTRADER_PROTO_PORT ?? "5035");
+function getServiceConfig() {
+  return {
+    clientId: process.env.NEXT_PUBLIC_CTRADER_CLIENT_ID ?? "",
+    clientSecret: process.env.CTRADER_CLIENT_SECRET ?? "",
+    supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+    supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+    protoLiveHost: process.env.CTRADER_PROTO_HOST_LIVE ?? "live.ctraderapi.com",
+    protoDemoHost: process.env.CTRADER_PROTO_HOST_DEMO ?? "demo.ctraderapi.com",
+    protoPort: Number(process.env.CTRADER_PROTO_PORT ?? "5035"),
+  };
+}
+
+function createServiceRequire() {
+  const baseDir =
+    process.env.PIPCIRCUIT_CONFIG_DIR?.trim() ||
+    process.env.PIPCIRCUIT_MT5_SERVICE_DIR?.trim() ||
+    path.dirname(process.execPath) ||
+    process.cwd();
+  return createRequire(path.join(baseDir, "package.json"));
+}
 const SESSION_TTL_MS = 60_000;
 const KEEPALIVE_MS = 15_000;
 const HEARTBEAT_MS = 25_000;
@@ -111,6 +146,7 @@ function sanitizePriceAlert(alert) {
 }
 
 function buildSupabaseUserClient(accessToken) {
+  const { supabaseUrl, supabaseAnonKey } = getServiceConfig();
   if (!supabaseUrl || !supabaseAnonKey || !accessToken) {
     return null;
   }
@@ -554,6 +590,7 @@ async function fetchAccounts(accessToken) {
 }
 
 function getAccountHost(account) {
+  const { protoLiveHost, protoDemoHost } = getServiceConfig();
   const live =
     typeof account?.live === "boolean"
       ? account.live
@@ -1425,8 +1462,9 @@ class LiveSessionManager {
   }
 
   async startSession(session) {
-    const require = createRequire(import.meta.url);
+    const require = createServiceRequire();
     const { CTraderConnection } = require("@reiryoku/ctrader-layer");
+    const { protoPort, clientId, clientSecret } = getServiceConfig();
     const connection = new CTraderConnection({
       host: session.config.host,
       port: protoPort,
@@ -1855,6 +1893,7 @@ async function resolveLiveConfig(body) {
     throw new Error("Missing accessToken, symbol, or timeframe.");
   }
 
+  const { clientId, clientSecret } = getServiceConfig();
   if (!clientId || !clientSecret) {
     throw new Error("Missing cTrader client credentials.");
   }

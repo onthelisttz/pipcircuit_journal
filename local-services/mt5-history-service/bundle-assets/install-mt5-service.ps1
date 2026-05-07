@@ -7,11 +7,16 @@ $ErrorActionPreference = "Stop"
 $bundleRoot = $PSScriptRoot
 $serviceExePath = Join-Path $bundleRoot "mt5-history-service.exe"
 $bridgePath = Join-Path $bundleRoot "bin\request_mt5_bars.exe"
+$nodeModulesSourcePath = Join-Path $bundleRoot "node_modules"
 $launcherSourcePath = Join-Path $bundleRoot "start-mt5-service.cmd"
+$envSourcePaths = @(
+  (Join-Path $bundleRoot ".env"),
+  (Join-Path $bundleRoot ".env.local")
+)
 $installRoot = Join-Path $env:LOCALAPPDATA "Pipcircuit\mt5-history-service"
 $installBinRoot = Join-Path $installRoot "bin"
 
-foreach ($requiredPath in @($serviceExePath, $bridgePath, $launcherSourcePath)) {
+foreach ($requiredPath in @($serviceExePath, $bridgePath, $nodeModulesSourcePath, $launcherSourcePath)) {
   if (-not (Test-Path $requiredPath)) {
     throw "Required MT5 service artifact not found: $requiredPath"
   }
@@ -20,7 +25,13 @@ foreach ($requiredPath in @($serviceExePath, $bridgePath, $launcherSourcePath)) 
 New-Item -ItemType Directory -Path $installBinRoot -Force | Out-Null
 Copy-Item $serviceExePath (Join-Path $installRoot "mt5-history-service.exe") -Force
 Copy-Item $bridgePath (Join-Path $installBinRoot "request_mt5_bars.exe") -Force
+Copy-Item $nodeModulesSourcePath (Join-Path $installRoot "node_modules") -Recurse -Force
 Copy-Item $launcherSourcePath (Join-Path $installRoot "start-mt5-service.cmd") -Force
+foreach ($envSourcePath in $envSourcePaths) {
+  if (Test-Path $envSourcePath) {
+    Copy-Item $envSourcePath (Join-Path $installRoot ([System.IO.Path]::GetFileName($envSourcePath))) -Force
+  }
+}
 
 $userId = if ($env:USERDOMAIN) {
   "$($env:USERDOMAIN)\$($env:USERNAME)"

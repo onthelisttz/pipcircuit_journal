@@ -9,6 +9,7 @@ set "PACKAGED_EXE=%SCRIPT_DIR%mt5-history-service.exe"
 
 if exist "%PACKAGED_EXE%" (
   set "PIPCIRCUIT_MT5_SERVICE_DIR=%SCRIPT_DIR%"
+  set "PIPCIRCUIT_CONFIG_DIR=%SCRIPT_DIR%"
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$healthUrl='http://127.0.0.1:47831/health';" ^
     "try { $health = Invoke-RestMethod -UseBasicParsing $healthUrl -TimeoutSec 2; if ($health.ok -and $health.services.ctraderLive.ok) { exit 0 } } catch {};" ^
@@ -25,6 +26,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$healthUrl='http://127.0.0.1:47831/health';" ^
   "try { $health = Invoke-RestMethod -UseBasicParsing $healthUrl -TimeoutSec 2; if ($health.ok -and $health.services.ctraderLive.ok) { exit 0 } } catch {};" ^
   "$env:PIPCIRCUIT_MT5_SERVICE_DIR='%PIPCIRCUIT_MT5_SERVICE_DIR:\=\\%';" ^
+  "$env:PIPCIRCUIT_CONFIG_DIR='%SCRIPT_DIR:\=\\%';" ^
   "$log='%LOG_FILE:\=\\%';" ^
   "$command='%RUN_COMMAND:"=\"%' + ' >> ""' + $log + '"" 2>&1';" ^
   "Start-Process -WindowStyle Hidden -FilePath 'cmd.exe' -ArgumentList '/c', $command | Out-Null;" ^
