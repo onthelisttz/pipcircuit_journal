@@ -1037,11 +1037,19 @@ export function Mt5HistoryWorkspace({
 
   useEffect(() => {
     if (!isExpanded) return;
+    const element = chartAreaRef.current;
+    if (!element) return;
+
     const updateHeight = () => {
-      const available = window.innerHeight - 180;
-      setExpandedHeight(Math.max(360, available));
+      setExpandedHeight(Math.max(360, element.clientHeight || 0));
     };
+
     updateHeight();
+    const observer =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => updateHeight())
+        : null;
+    observer?.observe(element);
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setIsExpanded(false);
     };
@@ -1049,6 +1057,7 @@ export function Mt5HistoryWorkspace({
     window.addEventListener("keydown", handleKey);
     document.body.style.overflow = "hidden";
     return () => {
+      observer?.disconnect();
       window.removeEventListener("resize", updateHeight);
       window.removeEventListener("keydown", handleKey);
       document.body.style.overflow = "";
@@ -1123,6 +1132,10 @@ export function Mt5HistoryWorkspace({
       if (key === "s" || key === "l") {
         event.preventDefault();
         toggleTool("LongShortPosition");
+      }
+      if (key === "f") {
+        event.preventDefault();
+        chartRef.current?.fitContent();
       }
     };
 
@@ -2117,7 +2130,7 @@ export function Mt5HistoryWorkspace({
         >
           {isReplayMode ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           <span>
-            {isReplayMode ? "Exit Replay" : isReplayPlacementMode ? "Cancel Pick" : "Replay"}
+            {isReplayMode ? "Exit" : isReplayPlacementMode ? "Cancel" : "Replay"}
           </span>
         </button>
 
@@ -2223,7 +2236,7 @@ export function Mt5HistoryWorkspace({
                     onChange={(event) => setContinuousDrawingEnabled(event.target.checked)}
                     className="h-3.5 w-3.5 rounded border-border accent-primary"
                   />
-                  <span className="whitespace-nowrap font-medium">Cts draw</span>
+                  <span className="whitespace-nowrap font-medium">CD</span>
                 </label>
                 <div className={`h-7 items-center gap-1.5 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${showDrawControls ? "flex opacity-100" : "hidden pointer-events-none opacity-0"}`} aria-hidden={!showDrawControls}>
              
@@ -2273,7 +2286,7 @@ export function Mt5HistoryWorkspace({
                     onChange={(event) => setContinuousDrawingEnabled(event.target.checked)}
                     className="h-3.5 w-3.5 rounded border-border accent-primary"
                   />
-           <span>Cts draw</span>
+           <span>CD</span>
                 </label>
               </div>
             </div>
@@ -2343,8 +2356,8 @@ export function Mt5HistoryWorkspace({
             type="button"
             onClick={onTogglePageTabsVisibility}
             className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted"
-            title={arePageTabsVisible ? "Hide chart tabs" : "Show chart tabs"}
-            aria-label={arePageTabsVisible ? "Hide chart tabs" : "Show chart tabs"}
+            title={arePageTabsVisible ? "Hide top header" : "Show top header"}
+            aria-label={arePageTabsVisible ? "Hide top header" : "Show top header"}
           >
             {arePageTabsVisible ? (
               <EyeOff className="h-3.5 w-3.5" />
@@ -2386,7 +2399,7 @@ export function Mt5HistoryWorkspace({
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent"
               >
                 {arePageTabsVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                {arePageTabsVisible ? "Hide Tabs" : "Show Tabs"}
+                {arePageTabsVisible ? "Hide Header" : "Show Header"}
               </button>
             </div>
           )}

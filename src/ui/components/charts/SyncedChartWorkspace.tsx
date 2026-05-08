@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   Bell,
   Circle,
+  Download,
   Maximize2,
   Minimize2,
   Pause,
@@ -55,8 +56,11 @@ import {
   type PriceAlertEvent,
   type PriceAlertPriceSide,
 } from "@ui/hooks/usePriceAlerts";
-import { DexieSymbolSyncProgressRepository } from "@infrastructure/db/dexie/repositories";
+import { DexieChartBarRepository, DexieSymbolSyncProgressRepository } from "@infrastructure/db/dexie/repositories";
+import { HybridSyncChartBarsUseCase } from "@application/use-cases/sync";
 import { TokenStorage } from "@infrastructure/auth";
+import { CTraderAPI } from "@infrastructure/api/ctrader/CTraderAPI";
+import { isOnline } from "@infrastructure/sync/utils/connection";
 import { hexToRgba } from "@lib/color";
 import { buildLocalServiceEndpoint } from "@lib/ctrader-live";
 import { priceDiffToPips } from "@lib/pnl-estimate";
@@ -818,6 +822,16 @@ function getDrawingWindowDays(
   return maxDistance > 0 ? Math.ceil(maxDistance / DAY_MS) + 1 : 0;
 }
 
+function getWindowDaysForViewport(windowSeconds: number | null | undefined): number {
+  if (windowSeconds == null || !Number.isFinite(windowSeconds) || windowSeconds <= 0) {
+    return 0;
+  }
+
+  // `windowDays` loads context on both sides of the anchor timestamp, so half the
+  // currently visible span is enough to cover the viewport after we jump.
+  return Math.max(1, Math.ceil(windowSeconds / (2 * 24 * 60 * 60)));
+}
+
 function deriveDrawingCenterTimestamp(
   drawings: DrawingToolExport[]
 ): number | null {
@@ -911,7 +925,7 @@ export function SyncedChartWorkspace({
   const { user, session } = useAuth();
   const progressRepo = useMemo(() => new DexieSymbolSyncProgressRepository(), []);
 
-  const { symbolProgress } = useSyncProgress({
+  const { symbolProgress, refresh: refreshSyncProgress } = useSyncProgress({
     repository: progressRepo,
     autoLoad: true,
     subscribe: true,
@@ -980,6 +994,8 @@ export function SyncedChartWorkspace({
   const [alertNote, setAlertNote] = useState("");
   const [alertActionPending, setAlertActionPending] = useState(false);
   const [alertActionError, setAlertActionError] = useState<string | null>(null);
+  const [chartSyncActionPending, setChartSyncActionPending] = useState(false);
+  const [chartSyncActionError, setChartSyncActionError] = useState<string | null>(null);
   const [tradeActionError, setTradeActionError] = useState<string | null>(null);
   const [tradeActionPending, setTradeActionPending] = useState(false);
   const [isRichTradeOpen, setIsRichTradeOpen] = useState(false);
@@ -1480,11 +1496,19 @@ export function SyncedChartWorkspace({
 
   useEffect(() => {
     if (!isExpanded) return;
+    const element = chartAreaRef.current;
+    if (!element) return;
+
     const updateHeight = () => {
-      const available = window.innerHeight - 180;
-      setExpandedHeight(Math.max(360, available));
+      setExpandedHeight(Math.max(360, element.clientHeight || 0));
     };
+
     updateHeight();
+    const observer =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => updateHeight())
+        : null;
+    observer?.observe(element);
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setIsExpanded(false);
     };
@@ -1492,6 +1516,7 @@ export function SyncedChartWorkspace({
     window.addEventListener("keydown", handleKey);
     document.body.style.overflow = "hidden";
     return () => {
+      observer?.disconnect();
       window.removeEventListener("resize", updateHeight);
       window.removeEventListener("keydown", handleKey);
       document.body.style.overflow = "";
@@ -1563,6 +1588,10 @@ export function SyncedChartWorkspace({
       if (key === "s" || key === "l") {
         event.preventDefault();
         toggleTool("LongShortPosition");
+      }
+      if (key === "f") {
+        event.preventDefault();
+        chartRef.current?.fitContent();
       }
     };
 
@@ -1885,6 +1914,10 @@ export function SyncedChartWorkspace({
     if (effectiveReplayIndex == null) return fullDisplayData;
     return fullDisplayData.slice(0, effectiveReplayIndex + 1);
   }, [effectiveReplayIndex, fullDisplayData]);
+  const latestSyncedDisplayTimestamp =
+    (data[data.length - 1]?.timestamp ?? null) != null
+      ? data[data.length - 1]!.timestamp + SYNCED_CHART_DISPLAY_OFFSET_MS
+      : displayData[displayData.length - 1]?.timestamp ?? null;
   const replayFutureTimestamps = useMemo(() => {
     if (effectiveReplayIndex == null) return [];
     return fullDisplayData
@@ -3311,11 +3344,16 @@ export function SyncedChartWorkspace({
       if (!availableDateRange) return;
 
       exitReplay();
+      const visibleWindowSeconds = chartRef.current?.getVisibleWindowSeconds() ?? null;
       const clampedTimestamp = Math.max(
         availableDateRange.from,
         Math.min(availableDateRange.to, targetTimestamp)
       );
       pendingGoToTimestampRef.current = clampedTimestamp;
+      setTimeframeRestoreAnchor({
+        centerTimestamp: clampedTimestamp,
+        windowDays: getWindowDaysForViewport(visibleWindowSeconds),
+      });
       setFocusTimestamp(clampedTimestamp);
       setGoToDate(toDateInputValue(clampedTimestamp));
       setIsDatePickerOpen(false);
@@ -3553,6 +3591,94 @@ export function SyncedChartWorkspace({
   const chartLoadErrorMessage = error?.message ?? null;
   const liveModeIssueMessage = liveError ?? null;
   const displayedAlertIssueMessage = alertActionError ?? priceAlertsError ?? null;
+  const isSelectedSymbolSyncing =
+    chartSyncActionPending || selectedProgress?.status === "syncing";
+
+  const handleDownloadBars = useCallback(async () => {
+    if (!selection) {
+      setChartSyncActionError("Select a symbol before downloading bars.");
+      return;
+    }
+    if (!user?.id) {
+      setChartSyncActionError("Please log in to sync chart bars.");
+      return;
+    }
+    if (!isOnline()) {
+      setChartSyncActionError("Cannot sync chart bars while offline.");
+      return;
+    }
+
+    const token = TokenStorage.getGlobal();
+    if (!token?.accessToken) {
+      setChartSyncActionError("No access token available. Please reconnect your cTrader account.");
+      return;
+    }
+
+    setChartSyncActionPending(true);
+    setChartSyncActionError(null);
+
+    try {
+      const symbolProgressRecord =
+        await progressRepo.getByBrokerAndSymbol(selection.broker, selection.symbol);
+      const brokerAccount = accounts.find((acc) => acc.broker === selection.broker);
+      const accountNumber = brokerAccount?.accountNumber;
+      const dexieChartRepo = new DexieChartBarRepository();
+      const api = new CTraderAPI();
+      const syncUseCase = new HybridSyncChartBarsUseCase(
+        api,
+        dexieChartRepo,
+        progressRepo
+      );
+
+      const now = new Date();
+      const isIncremental =
+        symbolProgressRecord?.status === "completed" &&
+        Boolean(symbolProgressRecord.lastBarDate);
+      const fromDate = isIncremental
+        ? new Date(symbolProgressRecord!.lastBarDate!)
+        : symbolProgressRecord?.firstBarDate
+          ? new Date(symbolProgressRecord.firstBarDate)
+          : new Date(Date.now() - 14 * DAY_MS);
+      const toDate = isIncremental
+        ? now
+        : symbolProgressRecord?.lastBarDate
+          ? new Date(symbolProgressRecord.lastBarDate)
+          : now;
+      const monthsDiff =
+        (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+      const timeoutMs = Math.max(60_000, Math.min(900_000, monthsDiff * 60_000));
+
+      const result = await Promise.race([
+        syncUseCase.execute({
+          userId: user.id,
+          broker: selection.broker,
+          symbol: selection.symbol,
+          fromDate,
+          toDate,
+          accessToken: token.accessToken,
+          accountNumber,
+        }),
+        new Promise<Awaited<ReturnType<HybridSyncChartBarsUseCase["execute"]>>>((_, reject) =>
+          window.setTimeout(
+            () => reject(new Error(`Sync timeout after ${Math.round(timeoutMs / 1000)} seconds`)),
+            timeoutMs
+          )
+        ),
+      ]);
+
+      if (!result.success) {
+        throw new Error(result.error ?? `Failed to sync ${selection.symbol}`);
+      }
+
+      await refreshSyncProgress();
+      await refetch();
+    } catch (syncError) {
+      const message = syncError instanceof Error ? syncError.message : String(syncError);
+      setChartSyncActionError(`Failed to download bars: ${message}`);
+    } finally {
+      setChartSyncActionPending(false);
+    }
+  }, [accounts, progressRepo, refetch, refreshSyncProgress, selection, user?.id]);
 
   const handleQuickTrade = useCallback(async (side: "BUY" | "SELL") => {
     if (!canTradeLive) return;
@@ -4007,7 +4133,7 @@ export function SyncedChartWorkspace({
         >
           {isReplayMode ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           <span>
-            {isReplayMode ? "Exit Replay" : isReplayPlacementMode ? "Cancel Pick" : "Replay"}
+            {isReplayMode ? "Exit" : isReplayPlacementMode ? "Cancel" : "Replay"}
           </span>
         </button>
 
@@ -4317,7 +4443,7 @@ export function SyncedChartWorkspace({
                     onChange={(event) => setContinuousDrawingEnabled(event.target.checked)}
                     className="h-3.5 w-3.5 rounded border-border accent-primary"
                   />
-                  <span className="whitespace-nowrap font-medium">Cts draw</span>
+                  <span className="whitespace-nowrap font-medium">CD</span>
                 </label>
                 <div
                   className={`h-7 items-center gap-1.5 rounded-md border border-border px-1.5 py-0.5 transition-opacity ${
@@ -4327,9 +4453,7 @@ export function SyncedChartWorkspace({
                   }`}
                   aria-hidden={!showDrawControls}
                 >
-                  <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Draw color
-                  </span>
+        
                   <input
                     type="color"
                     aria-label="Rectangle fill color"
@@ -4469,7 +4593,7 @@ export function SyncedChartWorkspace({
                     onChange={(event) => setContinuousDrawingEnabled(event.target.checked)}
                     className="h-3.5 w-3.5 rounded border-border accent-primary"
                   />
-                  <span>Cts draw</span>
+                  <span>CD</span>
                 </label>
               </div>
             </div>
@@ -4629,6 +4753,20 @@ export function SyncedChartWorkspace({
           </button>
           <button
             type="button"
+            onClick={() => void handleDownloadBars()}
+            disabled={!selection || isSelectedSymbolSyncing}
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted disabled:opacity-60"
+            title={selectedProgress?.status === "completed" ? "Download new bars" : "Backfill bars"}
+            aria-label={selectedProgress?.status === "completed" ? "Download new bars" : "Backfill bars"}
+          >
+            {isSelectedSymbolSyncing ? (
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
+          </button>
+          <button
+            type="button"
             onClick={() => refetch()}
             disabled={!selection || isLoading}
             className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted disabled:opacity-60"
@@ -4641,8 +4779,8 @@ export function SyncedChartWorkspace({
             type="button"
             onClick={onTogglePageTabsVisibility}
             className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted"
-            title={arePageTabsVisible ? "Hide chart tabs" : "Show chart tabs"}
-            aria-label={arePageTabsVisible ? "Hide chart tabs" : "Show chart tabs"}
+            title={arePageTabsVisible ? "Hide top header" : "Show top header"}
+            aria-label={arePageTabsVisible ? "Hide top header" : "Show top header"}
           >
             {arePageTabsVisible ? (
               <EyeOff className="h-3.5 w-3.5" />
@@ -4702,6 +4840,19 @@ export function SyncedChartWorkspace({
               </button>
               <button
                 type="button"
+                onClick={() => { void handleDownloadBars(); setCompactActionsOpen(false); }}
+                disabled={!selection || isSelectedSymbolSyncing}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+              >
+                {isSelectedSymbolSyncing ? (
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Download className="h-3 w-3" />
+                )}
+                {selectedProgress?.status === "completed" ? "Download Bars" : "Backfill Bars"}
+              </button>
+              <button
+                type="button"
                 onClick={() => { refetch(); setCompactActionsOpen(false); }}
                 disabled={!selection || isLoading}
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
@@ -4715,7 +4866,7 @@ export function SyncedChartWorkspace({
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent"
               >
                 {arePageTabsVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                {arePageTabsVisible ? "Hide Tabs" : "Show Tabs"}
+                {arePageTabsVisible ? "Hide Header" : "Show Header"}
               </button>
             </div>
           )}
@@ -4838,6 +4989,15 @@ export function SyncedChartWorkspace({
         </ChartNotice>
       )}
 
+      {chartSyncActionError && (
+        <ChartNotice
+          tone="error"
+          onClose={() => setChartSyncActionError(null)}
+        >
+          Bar download issue: {chartSyncActionError}
+        </ChartNotice>
+      )}
+
       {displayedAlertIssueMessage &&
         (alertActionError || dismissedPriceAlertsErrorKey !== displayedAlertIssueMessage) && (
           <ChartNotice
@@ -4911,6 +5071,7 @@ export function SyncedChartWorkspace({
           liveAskPrice={liveVisualsEnabled ? liveQuote?.ask ?? null : null}
           showCandleCountdown={liveVisualsEnabled && liveCurrentBar != null}
           candleCountdownAnchorTimestamp={liveVisualsEnabled ? liveCurrentBar?.timestamp ?? null : null}
+          endKeyScrollTargetTimestamp={latestSyncedDisplayTimestamp}
           showRiskReward={false}
           onVisibleRangeChange={handleVisibleRangeChange}
           autoScrollOnData={false}

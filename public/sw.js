@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "pipcircuit";
-const CACHE_VERSION = "v207";
+const CACHE_VERSION = "v209";
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${CACHE_VERSION}`;
 const PAGE_CACHE = `${CACHE_PREFIX}-pages-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `${CACHE_PREFIX}-runtime-${CACHE_VERSION}`;

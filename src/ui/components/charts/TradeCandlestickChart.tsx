@@ -755,6 +755,8 @@ export interface TradeCandlestickChartProps {
     showCandleCountdown?: boolean;
     /** Start timestamp for the currently forming candle */
     candleCountdownAnchorTimestamp?: number | null;
+    /** Optional timestamp to jump to when the End key is pressed */
+    endKeyScrollTargetTimestamp?: number | null;
 }
 
 function sameReplayPlacementOverlay(
@@ -918,6 +920,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     liveAskPrice = null,
     showCandleCountdown = false,
     candleCountdownAnchorTimestamp = null,
+    endKeyScrollTargetTimestamp = null,
 }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -4316,6 +4319,29 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                 return;
             }
 
+            if (e.key === "End" && endKeyScrollTargetTimestamp != null) {
+                const visibleRange = timeScale.getVisibleRange();
+                const targetSec = endKeyScrollTargetTimestamp / 1000;
+                const visibleSpanSeconds = visibleRange
+                    ? Math.max(1, (visibleRange.to as number) - (visibleRange.from as number))
+                    : null;
+
+                if (visibleSpanSeconds != null && Number.isFinite(visibleSpanSeconds)) {
+                    timeScale.setVisibleRange({
+                        from: (targetSec - visibleSpanSeconds) as Time,
+                        to: targetSec as Time,
+                    });
+                } else {
+                    const halfWindow = span / 2;
+                    timeScale.setVisibleRange({
+                        from: (targetSec - halfWindow) as Time,
+                        to: (targetSec + halfWindow) as Time,
+                    });
+                }
+                e.preventDefault();
+                return;
+            }
+
             if (e.key === "0") {
                 timeScale.fitContent();
                 e.preventDefault();
@@ -4326,7 +4352,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         return () => {
             window.removeEventListener("keydown", handleKeyDown);
         };
-    }, [isChartReady, isHovered]);
+    }, [endKeyScrollTargetTimestamp, isChartReady, isHovered]);
 
     useImperativeHandle(ref, () => ({
         fitContent: () => {

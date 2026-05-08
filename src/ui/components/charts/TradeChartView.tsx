@@ -737,7 +737,7 @@ export function TradeChartView({
                             >
                                 {isReplayMode ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
                                 <span>
-                                    {isReplayMode ? "Exit Replay" : isReplayPlacementMode ? "Cancel Pick" : "Replay"}
+                                    {isReplayMode ? "Exit" : isReplayPlacementMode ? "Cancel" : "Replay"}
                                 </span>
                             </button>
 
@@ -855,7 +855,7 @@ export function TradeChartView({
                                             onChange={(event) => setContinuousDrawingEnabled(event.target.checked)}
                                             className="h-3.5 w-3.5 rounded border-border accent-primary"
                                         />
-                                        <span className="whitespace-nowrap font-medium">Cts draw</span>
+                                        <span className="whitespace-nowrap font-medium">CD</span>
                                     </label>
                                     {showLotsControls ? (
                                         <div className="flex h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5">
