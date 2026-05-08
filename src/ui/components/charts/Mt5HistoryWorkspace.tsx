@@ -798,6 +798,7 @@ export function Mt5HistoryWorkspace({
   const [chartAreaHeight, setChartAreaHeight] = useState(520);
   const [compactDrawOpen, setCompactDrawOpen] = useState(false);
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
+  const [compactActionsPinned, setCompactActionsPinned] = useState(false);
   const compactDrawRef = useRef<HTMLDivElement>(null);
   const compactActionsRef = useRef<HTMLDivElement>(null);
   const replayTimerRef = useRef<number | null>(null);
@@ -809,6 +810,11 @@ export function Mt5HistoryWorkspace({
   } | null>(null);
   const lastHandledObservationRequestRef = useRef<string | null>(null);
   const skipNextCalloutApplyRef = useRef(false);
+
+  const closeCompactActions = useCallback(() => {
+    setCompactActionsOpen(false);
+    setCompactActionsPinned(false);
+  }, []);
   const calloutTextInputRef = useRef<HTMLTextAreaElement>(null);
 
   const [bars, setBars] = useState<ChartBar[]>([]);
@@ -1168,6 +1174,30 @@ export function Mt5HistoryWorkspace({
   }, [isDatePickerOpen]);
 
   useEffect(() => {
+    if (!compactActionsOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!compactActionsRef.current?.contains(target)) {
+        closeCompactActions();
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeCompactActions();
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [closeCompactActions, compactActionsOpen]);
+
+  useEffect(() => {
     let cancelled = false;
 
     const hydrateMeta = async () => {
@@ -1319,9 +1349,9 @@ export function Mt5HistoryWorkspace({
     setIsReplayPlaying(false);
     setIsReplayPlacementMode(true);
     setReplayPlacementTimestamp(bars[anchorIndex]?.timestamp ?? null);
-    setCompactActionsOpen(false);
+    closeCompactActions();
     setCompactDrawOpen(false);
-  }, [bars, exitReplay, getReplayAnchorIndex, isReplayMode, isReplayPlacementMode]);
+  }, [bars, closeCompactActions, exitReplay, getReplayAnchorIndex, isReplayMode, isReplayPlacementMode]);
 
   const stepReplay = useCallback(
     (delta: number) => {
@@ -2262,7 +2292,10 @@ export function Mt5HistoryWorkspace({
         <div className="relative" ref={compactDrawRef}>
           <button
             type="button"
-            onClick={() => { setCompactDrawOpen((o) => !o); setCompactActionsOpen(false); }}
+            onClick={() => {
+              setCompactDrawOpen((o) => !o);
+              closeCompactActions();
+            }}
             disabled={!selectedTimeframe}
             className={`flex h-7 w-7 items-center justify-center rounded border transition-colors ${
               compactDrawOpen || drawingTool ? "border-primary/60 bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted"
@@ -2338,73 +2371,114 @@ export function Mt5HistoryWorkspace({
       })()}
       </div>
 
-      {!compact ? (
-        <div className="ml-auto flex shrink-0 items-center gap-2 max-[480px]:ml-0 max-[480px]:w-full max-[480px]:flex-wrap max-[480px]:pt-1">
-          <button type="button" onClick={() => setIsExpanded((prev) => !prev)} className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted" title={isExpanded ? "Exit full screen" : "Full screen"} aria-label={isExpanded ? "Exit full screen" : "Full screen"}>
-            {isExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-          </button>
-          <button type="button" onClick={() => chartRef.current?.fitContent()} disabled={!selectedTimeframe} className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted" title="Fit chart content" aria-label="Fit chart content">
-            <Maximize2 className="h-3.5 w-3.5" />
-          </button>
-          <button type="button" onClick={() => { chartRef.current?.removeAllDrawingTools(); setDrawingTool(null); setSelectedDrawingTool(null); }} disabled={!selectedTimeframe} className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted" title="Clear drawings" aria-label="Clear drawings">
-            <Eraser className="h-3.5 w-3.5" />
-          </button>
-          <button type="button" onClick={refreshCurrentView} disabled={!selectedTimeframe || isBarsLoading || isEdgeLoading} className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted disabled:opacity-60" title="Refresh chart" aria-label="Refresh chart">
-            <RefreshCw className={`h-3.5 w-3.5 ${isBarsLoading || isEdgeLoading ? "animate-spin" : ""}`} />
-          </button>
+      <div className="ml-auto flex shrink-0 items-center gap-2 max-[480px]:ml-0">
+        <button
+          type="button"
+          onClick={() => {
+            refreshCurrentView();
+            closeCompactActions();
+          }}
+          disabled={!selectedTimeframe || isBarsLoading || isEdgeLoading}
+          className="flex h-7 w-7 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+          title="Refresh chart"
+          aria-label="Refresh chart"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${isBarsLoading || isEdgeLoading ? "animate-spin" : ""}`} />
+        </button>
+        <div
+          ref={compactActionsRef}
+          className="relative"
+          onMouseEnter={() => setCompactActionsOpen(true)}
+          onMouseLeave={() => {
+            if (!compactActionsPinned) {
+              setCompactActionsOpen(false);
+            }
+          }}
+          onFocusCapture={() => setCompactActionsOpen(true)}
+          onBlurCapture={(event) => {
+            if (
+              !compactActionsPinned &&
+              !event.currentTarget.contains(event.relatedTarget as Node | null)
+            ) {
+              setCompactActionsOpen(false);
+            }
+          }}
+        >
           <button
             type="button"
-            onClick={onTogglePageTabsVisibility}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted"
-            title={arePageTabsVisible ? "Hide top header" : "Show top header"}
-            aria-label={arePageTabsVisible ? "Hide top header" : "Show top header"}
-          >
-            {arePageTabsVisible ? (
-              <EyeOff className="h-3.5 w-3.5" />
-            ) : (
-              <Eye className="h-3.5 w-3.5" />
-            )}
-          </button>
-        </div>
-      ) : (
-        <div className="relative ml-auto shrink-0" ref={compactActionsRef}>
-          <button
-            type="button"
-            onClick={() => { setCompactActionsOpen((o) => !o); setCompactDrawOpen(false); }}
+            onClick={() => {
+              if (compactActionsPinned) {
+                closeCompactActions();
+                return;
+              }
+              setCompactActionsOpen(true);
+              setCompactActionsPinned(true);
+              setCompactDrawOpen(false);
+            }}
             className={`flex h-7 w-7 items-center justify-center rounded border transition-colors ${
               compactActionsOpen ? "border-primary/60 bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted"
             }`}
             title="More actions"
+            aria-label="More actions"
+            aria-haspopup="menu"
+            aria-expanded={compactActionsOpen}
           >
             <MoreVertical className="h-3.5 w-3.5" />
           </button>
           {compactActionsOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 min-w-[120px] rounded-md border border-border bg-popover py-1 shadow-xl">
-              <button type="button" onClick={() => { setIsExpanded((prev) => !prev); setCompactActionsOpen(false); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent">
-                {isExpanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
-                {isExpanded ? "Exit Full Screen" : "Full Screen"}
-              </button>
-              <button type="button" onClick={() => { chartRef.current?.fitContent(); setCompactActionsOpen(false); }} disabled={!selectedTimeframe} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50">
-                <Maximize2 className="h-3 w-3" /> Fit
-              </button>
-              <button type="button" onClick={() => { chartRef.current?.removeAllDrawingTools(); setDrawingTool(null); setSelectedDrawingTool(null); setCompactActionsOpen(false); }} disabled={!selectedTimeframe} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50">
-                <Eraser className="h-3 w-3" /> Clear
-              </button>
-              <button type="button" onClick={() => { refreshCurrentView(); setCompactActionsOpen(false); }} disabled={!selectedTimeframe || isBarsLoading || isEdgeLoading} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50">
-                <RefreshCw className={`h-3 w-3 ${isBarsLoading || isEdgeLoading ? "animate-spin" : ""}`} /> Refresh
-              </button>
-              <button
-                type="button"
-                onClick={() => { onTogglePageTabsVisibility?.(); setCompactActionsOpen(false); }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent"
-              >
-                {arePageTabsVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                {arePageTabsVisible ? "Hide Header" : "Show Header"}
-              </button>
+            <div className="absolute right-0 top-full z-50 mt-1 min-w-[170px] rounded-md border border-border bg-popover py-1 shadow-xl">
+            <button
+              type="button"
+              onClick={() => {
+                setIsExpanded((prev) => !prev);
+                closeCompactActions();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent"
+            >
+              {isExpanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+              {isExpanded ? "Exit Full Screen" : "Full Screen"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                chartRef.current?.fitContent();
+                closeCompactActions();
+              }}
+              disabled={!selectedTimeframe}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+            >
+              <Maximize2 className="h-3 w-3" />
+              Fit Chart
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                chartRef.current?.removeAllDrawingTools();
+                setDrawingTool(null);
+                setSelectedDrawingTool(null);
+                closeCompactActions();
+              }}
+              disabled={!selectedTimeframe}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+            >
+              <Eraser className="h-3 w-3" />
+              Clear Drawings
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onTogglePageTabsVisibility?.();
+                closeCompactActions();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent"
+            >
+              {arePageTabsVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+              {arePageTabsVisible ? "Hide Header" : "Show Header"}
+            </button>
             </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 

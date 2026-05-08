@@ -1049,6 +1049,7 @@ export function SyncedChartWorkspace({
   const [chartAreaHeight, setChartAreaHeight] = useState(520);
   const [compactDrawOpen, setCompactDrawOpen] = useState(false);
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
+  const [compactActionsPinned, setCompactActionsPinned] = useState(false);
   const [tradesMenuOpen, setTradesMenuOpen] = useState(false);
   const [timeframeRestoreAnchor, setTimeframeRestoreAnchor] = useState<{
     centerTimestamp: number | null;
@@ -1069,6 +1070,11 @@ export function SyncedChartWorkspace({
     preferLatestTimestamp?: boolean;
   } | null>(null);
   const lastHandledObservationRequestRef = useRef<string | null>(null);
+
+  const closeCompactActions = useCallback(() => {
+    setCompactActionsOpen(false);
+    setCompactActionsPinned(false);
+  }, []);
   const skipNextCalloutApplyRef = useRef(false);
   const calloutTextInputRef = useRef<HTMLTextAreaElement>(null);
   const richTradeStopLossEditModeRef = useRef<"price" | "pips">("price");
@@ -1493,6 +1499,25 @@ export function SyncedChartWorkspace({
       window.removeEventListener("keydown", handleKey);
     };
   }, [isDatePickerOpen]);
+
+  useEffect(() => {
+    if (!compactActionsOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!compactActionsRef.current?.contains(target)) {
+        closeCompactActions();
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeCompactActions();
+    };
+    document.addEventListener("mousedown", handleClick);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [closeCompactActions, compactActionsOpen]);
 
   useEffect(() => {
     if (!isExpanded) return;
@@ -2914,9 +2939,10 @@ export function SyncedChartWorkspace({
     setSymbolMenuOpen(false);
     setTimeframeMenuOpen(false);
     setTradesMenuOpen(false);
-    setCompactActionsOpen(false);
+    closeCompactActions();
     setCompactDrawOpen(false);
   }, [
+    closeCompactActions,
     exitReplay,
     fullDisplayData,
     getReplayAnchorIndex,
@@ -4208,7 +4234,7 @@ export function SyncedChartWorkspace({
             setSymbolMenuOpen(false);
             setTimeframeMenuOpen(false);
             setTradesMenuOpen(false);
-            setCompactActionsOpen(false);
+            closeCompactActions();
           }}
           disabled={!liveModeEnabled || !liveSessionId}
           className={`flex h-7 items-center gap-1.5 rounded border px-2 text-[11px] font-medium transition-colors ${
@@ -4555,7 +4581,10 @@ export function SyncedChartWorkspace({
         <div className="relative" ref={compactDrawRef}>
           <button
             type="button"
-            onClick={() => { setCompactDrawOpen((o) => !o); setCompactActionsOpen(false); }}
+            onClick={() => {
+              setCompactDrawOpen((o) => !o);
+              closeCompactActions();
+            }}
             disabled={!selection}
             className={`flex h-7 w-7 items-center justify-center rounded border transition-colors ${
               compactDrawOpen || drawingTool
@@ -4711,167 +4740,133 @@ export function SyncedChartWorkspace({
       })()}
       </div>
 
-      {!compact ? (
-        <div className="ml-auto flex shrink-0 items-center gap-2 max-[480px]:ml-0 max-[480px]:w-full max-[480px]:flex-wrap max-[480px]:pt-1">
-          <button
-            type="button"
-            onClick={() => setIsExpanded((prev) => !prev)}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted"
-            title={isExpanded ? "Exit full screen" : "Full screen"}
-            aria-label={isExpanded ? "Exit full screen" : "Full screen"}
-          >
-            {isExpanded ? (
-              <Minimize2 className="h-3.5 w-3.5" />
-            ) : (
-              <Maximize2 className="h-3.5 w-3.5" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => chartRef.current?.fitContent()}
-            disabled={!selection}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted"
-            title="Fit chart content"
-            aria-label="Fit chart content"
-          >
-            <Maximize2 className="h-3.5 w-3.5" />
-          </button>
+      <div className="ml-auto flex shrink-0 items-center gap-2 max-[480px]:ml-0">
+        <button
+          type="button"
+          onClick={() => {
+            refetch();
+            closeCompactActions();
+          }}
+          disabled={!selection || isLoading}
+          className="flex h-7 w-7 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+          title="Refresh chart"
+          aria-label="Refresh chart"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
+        </button>
+        <div
+          ref={compactActionsRef}
+          className="relative"
+          onMouseEnter={() => setCompactActionsOpen(true)}
+          onMouseLeave={() => {
+            if (!compactActionsPinned) {
+              setCompactActionsOpen(false);
+            }
+          }}
+          onFocusCapture={() => setCompactActionsOpen(true)}
+          onBlurCapture={(event) => {
+            if (
+              !compactActionsPinned &&
+              !event.currentTarget.contains(event.relatedTarget as Node | null)
+            ) {
+              setCompactActionsOpen(false);
+            }
+          }}
+        >
           <button
             type="button"
             onClick={() => {
-              chartRef.current?.removeAllDrawingTools();
-              persistCurrentDrawings(undefined, { allowEmptyOverwrite: true });
-              setDrawingTool(null);
-              setSelectedDrawingTool(null);
+              if (compactActionsPinned) {
+                closeCompactActions();
+                return;
+              }
+              setCompactActionsOpen(true);
+              setCompactActionsPinned(true);
+              setCompactDrawOpen(false);
             }}
-            disabled={!selection}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted"
-            title="Clear drawings"
-            aria-label="Clear drawings"
-          >
-            <Eraser className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleDownloadBars()}
-            disabled={!selection || isSelectedSymbolSyncing}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted disabled:opacity-60"
-            title={selectedProgress?.status === "completed" ? "Download new bars" : "Backfill bars"}
-            aria-label={selectedProgress?.status === "completed" ? "Download new bars" : "Backfill bars"}
-          >
-            {isSelectedSymbolSyncing ? (
-              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Download className="h-3.5 w-3.5" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => refetch()}
-            disabled={!selection || isLoading}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted disabled:opacity-60"
-            title="Refresh chart"
-            aria-label="Refresh chart"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
-          </button>
-          <button
-            type="button"
-            onClick={onTogglePageTabsVisibility}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted"
-            title={arePageTabsVisible ? "Hide top header" : "Show top header"}
-            aria-label={arePageTabsVisible ? "Hide top header" : "Show top header"}
-          >
-            {arePageTabsVisible ? (
-              <EyeOff className="h-3.5 w-3.5" />
-            ) : (
-              <Eye className="h-3.5 w-3.5" />
-            )}
-          </button>
-        </div>
-      ) : (
-        /* Compact mode: actions in a popover */
-        <div className="relative ml-auto shrink-0" ref={compactActionsRef}>
-          <button
-            type="button"
-            onClick={() => { setCompactActionsOpen((o) => !o); setCompactDrawOpen(false); }}
             className={`flex h-7 w-7 items-center justify-center rounded border transition-colors ${
               compactActionsOpen
                 ? "border-primary/60 bg-primary/10 text-primary"
                 : "border-border text-muted-foreground hover:bg-muted"
             }`}
             title="More actions"
+            aria-label="More actions"
+            aria-haspopup="menu"
+            aria-expanded={compactActionsOpen}
           >
             <MoreVertical className="h-3.5 w-3.5" />
           </button>
           {compactActionsOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 min-w-[120px] rounded-md border border-border bg-popover py-1 shadow-xl">
-              <button
-                type="button"
-                onClick={() => { setIsExpanded((prev) => !prev); setCompactActionsOpen(false); }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent"
-              >
-                {isExpanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
-                {isExpanded ? "Exit Full Screen" : "Full Screen"}
-              </button>
-              <button
-                type="button"
-                onClick={() => { chartRef.current?.fitContent(); setCompactActionsOpen(false); }}
-                disabled={!selection}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
-              >
-                <Maximize2 className="h-3 w-3" />
-                Fit
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  chartRef.current?.removeAllDrawingTools();
-                  persistCurrentDrawings(undefined, { allowEmptyOverwrite: true });
-                  setDrawingTool(null);
-                  setSelectedDrawingTool(null);
-                  setCompactActionsOpen(false);
-                }}
-                disabled={!selection}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
-              >
-                <Eraser className="h-3 w-3" />
-                Clear
-              </button>
-              <button
-                type="button"
-                onClick={() => { void handleDownloadBars(); setCompactActionsOpen(false); }}
-                disabled={!selection || isSelectedSymbolSyncing}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
-              >
-                {isSelectedSymbolSyncing ? (
-                  <RefreshCw className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Download className="h-3 w-3" />
-                )}
-                {selectedProgress?.status === "completed" ? "Download Bars" : "Backfill Bars"}
-              </button>
-              <button
-                type="button"
-                onClick={() => { refetch(); setCompactActionsOpen(false); }}
-                disabled={!selection || isLoading}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
-              >
-                <RefreshCw className={`h-3 w-3 ${isLoading ? "animate-spin" : ""}`} />
-                Refresh
-              </button>
-              <button
-                type="button"
-                onClick={() => { onTogglePageTabsVisibility?.(); setCompactActionsOpen(false); }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent"
-              >
-                {arePageTabsVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                {arePageTabsVisible ? "Hide Header" : "Show Header"}
-              </button>
+            <div className="absolute right-0 top-full z-50 mt-1 min-w-[170px] rounded-md border border-border bg-popover py-1 shadow-xl">
+            <button
+              type="button"
+              onClick={() => {
+                setIsExpanded((prev) => !prev);
+                closeCompactActions();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent"
+            >
+              {isExpanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+              {isExpanded ? "Exit Full Screen" : "Full Screen"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                chartRef.current?.fitContent();
+                closeCompactActions();
+              }}
+              disabled={!selection}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+            >
+              <Maximize2 className="h-3 w-3" />
+              Fit Chart
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                chartRef.current?.removeAllDrawingTools();
+                persistCurrentDrawings(undefined, { allowEmptyOverwrite: true });
+                setDrawingTool(null);
+                setSelectedDrawingTool(null);
+                closeCompactActions();
+              }}
+              disabled={!selection}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+            >
+              <Eraser className="h-3 w-3" />
+              Clear Drawings
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void handleDownloadBars();
+                closeCompactActions();
+              }}
+              disabled={!selection || isSelectedSymbolSyncing}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+            >
+              {isSelectedSymbolSyncing ? (
+                <RefreshCw className="h-3 w-3 animate-spin" />
+              ) : (
+                <Download className="h-3 w-3" />
+              )}
+              {selectedProgress?.status === "completed" ? "Download New Bars" : "Backfill Bars"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onTogglePageTabsVisibility?.();
+                closeCompactActions();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent"
+            >
+              {arePageTabsVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+              {arePageTabsVisible ? "Hide Header" : "Show Header"}
+            </button>
             </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 
