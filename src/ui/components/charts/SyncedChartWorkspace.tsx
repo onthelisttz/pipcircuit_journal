@@ -1156,6 +1156,7 @@ export function SyncedChartWorkspace({
   const pendingNextFetchRef = useRef(false);
   const lastVisibleRangeRef = useRef<{ from: number; to: number } | null>(null);
   const chartRef = useRef<TradeCandlestickChartRef | null>(null);
+  const [isChartInstanceReady, setIsChartInstanceReady] = useState(false);
   const chartAreaRef = useRef<HTMLDivElement>(null);
   const datePickerRef = useRef<HTMLDivElement | null>(null);
   const pendingGoToTimestampRef = useRef<number | null>(null);
@@ -1214,10 +1215,15 @@ export function SyncedChartWorkspace({
   const restoredDrawingStorageKeyRef = useRef<string | null>(null);
   const lastSavedDrawingSnapshotsRef = useRef<Map<string, string>>(new Map());
   const [storedDrawingSnapshot, setStoredDrawingSnapshot] = useState<StoredSyncedDrawingSnapshot | null | undefined>(undefined);
+  const drawingRestoreReadyRef = useRef(false);
   const currentDrawingStorageKey = useMemo(
     () => buildSyncedDrawingStorageKey(selection?.broker, selection?.symbol, timeframe),
     [selection?.broker, selection?.symbol, timeframe]
   );
+  const handleChartRef = useCallback((instance: TradeCandlestickChartRef | null) => {
+    chartRef.current = instance;
+    setIsChartInstanceReady(instance != null);
+  }, []);
   const persistCurrentDrawings = useCallback(
     async (
       storageKeyOverride?: string | null,
@@ -1226,6 +1232,7 @@ export function SyncedChartWorkspace({
       if (typeof window === "undefined") return;
       const storageKey = storageKeyOverride ?? currentDrawingStorageKey;
       if (!storageKey) return;
+      if (storageKey === currentDrawingStorageKey && !drawingRestoreReadyRef.current) return;
 
       const chart = chartRef.current;
       if (!chart) return;
@@ -1300,11 +1307,13 @@ export function SyncedChartWorkspace({
 
   useEffect(() => {
     if (!currentDrawingStorageKey) {
+      drawingRestoreReadyRef.current = false;
       setStoredDrawingSnapshot(null);
       return;
     }
 
     let cancelled = false;
+    drawingRestoreReadyRef.current = false;
     setStoredDrawingSnapshot(undefined);
 
     void (async () => {
@@ -3356,33 +3365,36 @@ export function SyncedChartWorkspace({
   // Restore drawings and viewport after timeframe data loads
   useEffect(() => {
     const pending = pendingRestoreRef.current;
-    if (!pending || fullDisplayData.length === 0 || isLoading) return;
+    if (!pending || !isChartInstanceReady || !chartRef.current || fullDisplayData.length === 0 || isLoading) return;
     if (!areDrawingsCoveredByBars(pending.drawings, fullDisplayData)) return;
-    pendingRestoreRef.current = null;
     // Small delay so chart processes the new data first
     const timer = window.setTimeout(() => {
-      chartRef.current?.removeAllDrawingTools();
+      const chart = chartRef.current;
+      if (!chart) return;
+      pendingRestoreRef.current = null;
+      chart.removeAllDrawingTools();
       if (pending.drawings.length > 0) {
-        chartRef.current?.importDrawings(pending.drawings);
+        chart.importDrawings(pending.drawings);
       }
       if (pending.preferLatestTimestamp) {
         const latestTimestamp =
           fullDisplayData[fullDisplayData.length - 1]?.timestamp ?? null;
         if (latestTimestamp != null) {
-          chartRef.current?.scrollToTimestamp(
+          chart.scrollToTimestamp(
             latestTimestamp,
             pending.windowSeconds ?? undefined
           );
         }
       } else if (pending.centerTimestamp != null) {
-        chartRef.current?.scrollToTimestamp(
+        chart.scrollToTimestamp(
           pending.centerTimestamp,
           pending.windowSeconds ?? undefined
         );
       }
+      drawingRestoreReadyRef.current = true;
     }, 80);
     return () => window.clearTimeout(timer);
-  }, [fullDisplayData, isLoading]);
+  }, [fullDisplayData, isChartInstanceReady, isLoading]);
 
   useEffect(() => {
     const request = observationLoadRequest;
@@ -3430,16 +3442,19 @@ export function SyncedChartWorkspace({
     if (selectionMatches && timeframeMatches && fullDisplayData.length > 0 && !isLoading) {
       pendingRestoreRef.current = null;
       window.setTimeout(() => {
-        chartRef.current?.removeAllDrawingTools();
+        const chart = chartRef.current;
+        if (!chart) return;
+        chart.removeAllDrawingTools();
         if (pending.drawings.length > 0) {
-          chartRef.current?.importDrawings(pending.drawings);
+          chart.importDrawings(pending.drawings);
         }
         if (pending.centerTimestamp != null) {
-          chartRef.current?.scrollToTimestamp(
+          chart.scrollToTimestamp(
             pending.centerTimestamp,
             pending.windowSeconds ?? undefined
           );
         }
+        drawingRestoreReadyRef.current = true;
       }, 0);
     }
 
@@ -5248,7 +5263,7 @@ export function SyncedChartWorkspace({
 
       <div ref={chartAreaRef} className="mt-3 min-h-[420px] flex-1">
         <TradeCandlestickChart
-          ref={chartRef}
+          ref={handleChartRef}
           data={displayData}
           replayFutureTimestamps={replayFutureTimestamps}
           replayRightOffsetBars={isReplayMode ? REPLAY_RIGHT_OFFSET_BARS : 0}
