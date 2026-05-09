@@ -1123,6 +1123,10 @@ export function Mt5HistoryWorkspace({
         event.preventDefault();
         toggleTool("Brush");
       }
+      if (key === "g") {
+        event.preventDefault();
+        toggleTool("Gan");
+      }
       if (key === "h") {
         event.preventDefault();
         toggleTool("HorizontalRay");

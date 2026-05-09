@@ -28,6 +28,7 @@ import {
 const TRADE_CHART_TIME_GUIDES_KEY = "tradeChartTimeGuides";
 const CHART_CONTINUOUS_DRAWING_KEY = "chartContinuousDrawingEnabled_v1";
 const CTRADER_CHART_DISPLAY_OFFSET_MS = 3 * 60 * 60 * 1000;
+const REPLAY_RIGHT_OFFSET_BARS = 12;
 
 function formatProfit(value: number): string {
     const sign = value >= 0 ? "+" : "-";
@@ -213,7 +214,10 @@ export function TradeChartView({
     const [replayCursorTimestamp, setReplayCursorTimestamp] = useState<number | null>(null);
     const [replayStartTimestamp, setReplayStartTimestamp] = useState<number | null>(null);
     const [replayIntervalMs, setReplayIntervalMs] = useState<number>(DEFAULT_REPLAY_INTERVAL_MS);
+    const [replayDataUpdateMode, setReplayDataUpdateMode] = useState<"replace" | "append">("replace");
     const [replayPlacementTimestamp, setReplayPlacementTimestamp] = useState<number | null>(null);
+    const pendingReplayViewportRef = useRef<{ from: number; to: number } | null>(null);
+    const replayViewportRef = useRef<{ from: number; to: number } | null>(null);
     const effectiveReplayIndex = useMemo(() => {
         if (!isReplayMode || replayIndex == null || displayData.length === 0) {
             return null;
@@ -225,9 +229,8 @@ export function TradeChartView({
         return displayData.slice(0, effectiveReplayIndex + 1);
     }, [displayData, effectiveReplayIndex]);
     const replayFutureTimestamps = useMemo(() => {
-        if (effectiveReplayIndex == null) return [];
-        return displayData.slice(effectiveReplayIndex + 1).map((bar) => bar.timestamp);
-    }, [displayData, effectiveReplayIndex]);
+        return [];
+    }, []);
     const replayCanStepBack = effectiveReplayIndex != null && effectiveReplayIndex > 0;
     const replayCanStepForward =
         effectiveReplayIndex != null && effectiveReplayIndex < displayData.length - 1;
@@ -363,7 +366,10 @@ export function TradeChartView({
         setReplayStartIndex(null);
         setReplayCursorTimestamp(null);
         setReplayStartTimestamp(null);
+        setReplayDataUpdateMode("replace");
         setReplayPlacementTimestamp(null);
+        pendingReplayViewportRef.current = null;
+        replayViewportRef.current = null;
     }, []);
 
     const exitReplay = useCallback(() => {
@@ -372,10 +378,14 @@ export function TradeChartView({
 
     const startReplayAtTimestamp = useCallback((timestamp: number) => {
         if (displayData.length === 0) return;
+        const currentViewport = candlestickChartRef.current?.getVisibleLogicalRange() ?? null;
+        pendingReplayViewportRef.current = currentViewport;
+        replayViewportRef.current = currentViewport;
         const anchorIndex = findReplayStartIndex(displayData, timestamp);
         const anchorTimestamp = displayData[anchorIndex]?.timestamp ?? timestamp;
         setIsReplayPlaying(false);
         setIsReplayPlacementMode(false);
+        setReplayDataUpdateMode("replace");
         setReplayPlacementTimestamp(anchorTimestamp);
         setIsReplayMode(true);
         setReplayStartIndex(anchorIndex);
@@ -417,7 +427,12 @@ export function TradeChartView({
 
     const stepReplay = useCallback((delta: number) => {
         if (displayData.length === 0) return;
+        const currentViewport =
+            candlestickChartRef.current?.getVisibleLogicalRange() ?? replayViewportRef.current;
+        replayViewportRef.current = currentViewport;
+        pendingReplayViewportRef.current = delta > 0 ? null : currentViewport;
         setIsReplayPlaying(false);
+        setReplayDataUpdateMode(delta > 0 ? "append" : "replace");
         const baseIndex = replayIndex ?? getReplayAnchorIndex();
         const nextIndex = clampReplayIndex(baseIndex + delta, displayData.length);
         setReplayIndex(nextIndex);
@@ -426,6 +441,11 @@ export function TradeChartView({
 
     const handleReplayReset = useCallback(() => {
         if (displayData.length === 0) return;
+        const currentViewport =
+            candlestickChartRef.current?.getVisibleLogicalRange() ?? replayViewportRef.current;
+        pendingReplayViewportRef.current = currentViewport;
+        replayViewportRef.current = currentViewport;
+        setReplayDataUpdateMode("replace");
         const anchorTimestamp =
             replayStartTimestamp ??
             (replayStartIndex != null ? displayData[replayStartIndex]?.timestamp ?? null : null);
@@ -559,6 +579,10 @@ export function TradeChartView({
                 event.preventDefault();
                 toggleTool("Brush");
             }
+            if (key === "g") {
+                event.preventDefault();
+                toggleTool("Gan");
+            }
             if (key === "h") {
                 event.preventDefault();
                 toggleTool("HorizontalRay");
@@ -660,6 +684,7 @@ export function TradeChartView({
         }
 
         replayTimerRef.current = window.setTimeout(() => {
+            setReplayDataUpdateMode("append");
             const nextIndex = clampReplayIndex(effectiveReplayIndex + 1, displayData.length);
             setReplayIndex(nextIndex);
             setReplayCursorTimestamp(displayData[nextIndex]?.timestamp ?? null);
@@ -679,9 +704,26 @@ export function TradeChartView({
         replayIntervalMs,
     ]);
 
+    useEffect(() => {
+        if (!isReplayMode || displayBars.length === 0) return;
+        const pendingViewport = pendingReplayViewportRef.current;
+        if (!pendingViewport) return;
+
+        pendingReplayViewportRef.current = null;
+        const timer = window.setTimeout(() => {
+            candlestickChartRef.current?.setVisibleLogicalRange(pendingViewport);
+        }, 0);
+
+        return () => window.clearTimeout(timer);
+    }, [displayBars.length, isReplayMode]);
+
     // Handle visible range change for lazy loading
     const handleVisibleRangeChange = useCallback(
         (from: number, to: number) => {
+            if (isReplayMode) {
+                replayViewportRef.current = { from, to };
+                return;
+            }
             // Check if user scrolled near edges for lazy loading
             const dataLength = data.length;
             const threshold = 0.2;
@@ -696,7 +738,7 @@ export function TradeChartView({
                 
             }
         },
-        [data.length]
+        [data.length, isReplayMode]
     );
 
     const chartContent = (hideTimeframeInToolbar = false) => (
@@ -985,8 +1027,9 @@ export function TradeChartView({
                         timeGuides={timeGuides}
                         clipTimeGuideOverlayToPane
                         trade={displayTrade}
-                        dataUpdateMode={dataUpdateMode}
+                        dataUpdateMode={isReplayMode ? replayDataUpdateMode : dataUpdateMode}
                         replayFutureTimestamps={replayFutureTimestamps}
+                        replayRightOffsetBars={isReplayMode ? REPLAY_RIGHT_OFFSET_BARS : 0}
                         height={resolvedChartHeight}
                         zoomOutMultiplier={activeZoomOutMultiplier}
                         showEntryMarker={true}

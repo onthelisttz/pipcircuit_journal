@@ -139,6 +139,7 @@ const EDGE_FETCH_THRESHOLD = 10;
 const FETCH_THROTTLE_MS = 160;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const REPLAY_RIGHT_OFFSET_BARS = 12;
 
 type LiveOrderType = "MARKET" | "LIMIT" | "STOP";
 type LiveTradeRequestResponse = {
@@ -1019,6 +1020,7 @@ export function SyncedChartWorkspace({
   const [replayCursorTimestamp, setReplayCursorTimestamp] = useState<number | null>(null);
   const [replayStartTimestamp, setReplayStartTimestamp] = useState<number | null>(null);
   const [replayIntervalMs, setReplayIntervalMs] = useState<number>(DEFAULT_REPLAY_INTERVAL_MS);
+  const [replayDataUpdateMode, setReplayDataUpdateMode] = useState<"replace" | "append">("replace");
   const [replayPlacementTimestamp, setReplayPlacementTimestamp] = useState<number | null>(null);
   const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
@@ -1063,6 +1065,7 @@ export function SyncedChartWorkspace({
   const replayTimerRef = useRef<number | null>(null);
   const drawingPersistTimerRef = useRef<number | null>(null);
   const pendingReplayViewportRef = useRef<{ from: number; to: number } | null>(null);
+  const replayViewportRef = useRef<{ from: number; to: number } | null>(null);
   const pendingRestoreRef = useRef<{
     drawings: DrawingToolExport[];
     centerTimestamp: number | null;
@@ -1238,8 +1241,10 @@ export function SyncedChartWorkspace({
     setReplayStartIndex(null);
     setReplayCursorTimestamp(null);
     setReplayStartTimestamp(null);
+    setReplayDataUpdateMode("replace");
     setReplayPlacementTimestamp(null);
     pendingReplayViewportRef.current = null;
+    replayViewportRef.current = null;
   }, [selection?.broker, selection?.symbol, timeframe]);
 
   useEffect(() => {
@@ -1598,6 +1603,10 @@ export function SyncedChartWorkspace({
         event.preventDefault();
         toggleTool("Brush");
       }
+      if (key === "g") {
+        event.preventDefault();
+        toggleTool("Gan");
+      }
       if (key === "h") {
         event.preventDefault();
         toggleTool("HorizontalRay");
@@ -1944,11 +1953,8 @@ export function SyncedChartWorkspace({
       ? data[data.length - 1]!.timestamp + SYNCED_CHART_DISPLAY_OFFSET_MS
       : displayData[displayData.length - 1]?.timestamp ?? null;
   const replayFutureTimestamps = useMemo(() => {
-    if (effectiveReplayIndex == null) return [];
-    return fullDisplayData
-      .slice(effectiveReplayIndex + 1)
-      .map((bar) => bar.timestamp);
-  }, [effectiveReplayIndex, fullDisplayData]);
+    return [];
+  }, []);
   const displayDataRef = useRef(displayData);
   const replayCanStepBack = effectiveReplayIndex != null && effectiveReplayIndex > 0;
   const replayCanStepForward =
@@ -2862,6 +2868,12 @@ export function SyncedChartWorkspace({
   }, [isRichTradeOpen, richTradeOrderType, richTradeSide, seedRichTradePrice]);
 
   useEffect(() => {
+    if (liveVisualsEnabled && liveSessionId) return;
+    if (!isRichTradeOpen) return;
+    setIsRichTradeOpen(false);
+  }, [isRichTradeOpen, liveSessionId, liveVisualsEnabled]);
+
+  useEffect(() => {
     if (!isRichTradeOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
@@ -2886,18 +2898,23 @@ export function SyncedChartWorkspace({
     setReplayStartIndex(null);
     setReplayCursorTimestamp(null);
     setReplayStartTimestamp(null);
+    setReplayDataUpdateMode("replace");
     setReplayPlacementTimestamp(null);
     pendingReplayViewportRef.current = null;
+    replayViewportRef.current = null;
   }, []);
 
   const startReplayAtTimestamp = useCallback(
     (timestamp: number) => {
       if (fullDisplayData.length === 0) return;
-      pendingReplayViewportRef.current = chartRef.current?.getVisibleLogicalRange() ?? null;
+      const currentViewport = chartRef.current?.getVisibleLogicalRange() ?? null;
+      pendingReplayViewportRef.current = currentViewport;
+      replayViewportRef.current = currentViewport;
       const anchorIndex = findReplayStartIndex(fullDisplayData, timestamp);
       const anchorTimestamp = fullDisplayData[anchorIndex]?.timestamp ?? timestamp;
       setIsReplayPlaying(false);
       setIsReplayPlacementMode(false);
+      setReplayDataUpdateMode("replace");
       setReplayPlacementTimestamp(anchorTimestamp);
       setIsReplayMode(true);
       setReplayStartIndex(anchorIndex);
@@ -2953,7 +2970,12 @@ export function SyncedChartWorkspace({
   const stepReplay = useCallback(
     (delta: number) => {
       if (fullDisplayData.length === 0) return;
+      const currentViewport =
+        chartRef.current?.getVisibleLogicalRange() ?? replayViewportRef.current;
+      replayViewportRef.current = currentViewport;
+      pendingReplayViewportRef.current = delta > 0 ? null : currentViewport;
       setIsReplayPlaying(false);
+      setReplayDataUpdateMode(delta > 0 ? "append" : "replace");
       const baseIndex = replayIndex ?? getReplayAnchorIndex();
       const nextIndex = clampReplayIndex(baseIndex + delta, fullDisplayData.length);
       setReplayIndex(nextIndex);
@@ -2964,6 +2986,11 @@ export function SyncedChartWorkspace({
 
   const handleReplayReset = useCallback(() => {
     if (fullDisplayData.length === 0) return;
+    const currentViewport =
+      chartRef.current?.getVisibleLogicalRange() ?? replayViewportRef.current;
+    pendingReplayViewportRef.current = currentViewport;
+    replayViewportRef.current = currentViewport;
+    setReplayDataUpdateMode("replace");
     const anchorTimestamp =
       replayStartTimestamp ??
       (replayStartIndex != null ? fullDisplayData[replayStartIndex]?.timestamp ?? null : null);
@@ -3075,6 +3102,7 @@ export function SyncedChartWorkspace({
     }
 
     replayTimerRef.current = window.setTimeout(() => {
+      setReplayDataUpdateMode("append");
       const nextIndex = clampReplayIndex(effectiveReplayIndex + 1, fullDisplayData.length);
       setReplayIndex(nextIndex);
       setReplayCursorTimestamp(fullDisplayData[nextIndex]?.timestamp ?? null);
@@ -3267,7 +3295,9 @@ export function SyncedChartWorkspace({
       if (visibleBarsLength === 0) return;
 
       if (isReplayMode) {
-        lastVisibleRangeRef.current = { from, to };
+        const nextRange = { from, to };
+        lastVisibleRangeRef.current = nextRange;
+        replayViewportRef.current = nextRange;
         return;
       }
 
@@ -4221,6 +4251,7 @@ export function SyncedChartWorkspace({
    
       </div>
 
+      {liveVisualsEnabled && liveSessionId ? (
       <div className="relative" ref={richTradePopupRef}>
         <button
           ref={richTradeButtonRef}
@@ -4236,12 +4267,11 @@ export function SyncedChartWorkspace({
             setTradesMenuOpen(false);
             closeCompactActions();
           }}
-          disabled={!liveModeEnabled || !liveSessionId}
           className={`flex h-7 items-center gap-1.5 rounded border px-2 text-[11px] font-medium transition-colors ${
             isRichTradeOpen
               ? "border-primary/60 bg-primary/10 text-primary"
               : "border-border text-muted-foreground hover:bg-muted"
-          } disabled:cursor-not-allowed disabled:opacity-50`}
+          }`}
           title="Rich trade placement"
         >
           <span>Trade</span>
@@ -4417,6 +4447,7 @@ export function SyncedChartWorkspace({
           </div>
         ) : null}
       </div>
+      ) : null}
 
       {!compact ? (
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -5023,11 +5054,14 @@ export function SyncedChartWorkspace({
           ref={chartRef}
           data={displayData}
           replayFutureTimestamps={replayFutureTimestamps}
+          replayRightOffsetBars={isReplayMode ? REPLAY_RIGHT_OFFSET_BARS : 0}
           timeframe={timeframe}
           timeGuides={timeGuides}
           tradeHistory={displayTradeHistory}
           clipTimeGuideOverlayToPane
-          dataUpdateMode={liveVisualsEnabled ? liveDataUpdateMode : dataUpdateMode}
+          dataUpdateMode={
+            isReplayMode ? replayDataUpdateMode : liveVisualsEnabled ? liveDataUpdateMode : dataUpdateMode
+          }
           height={isExpanded ? expandedHeight : chartAreaHeight}
           isLoading={isLoading}
           drawingTool={drawingTool}

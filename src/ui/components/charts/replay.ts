@@ -1,6 +1,9 @@
 import type { ChartBar } from "@domain/entities";
 
 export const REPLAY_SPEED_OPTIONS = [
+  { label: "60s", intervalMs: 60_000 },
+  { label: "30s", intervalMs: 30_000 },
+  { label: "15s", intervalMs: 15_000 },
   { label: "0.1x", intervalMs: 1800 },
   { label: "0.25x", intervalMs: 900 },
   { label: "0.5x", intervalMs: 600 },
@@ -10,7 +13,7 @@ export const REPLAY_SPEED_OPTIONS = [
   { label: "4x", intervalMs: 90 },
 ] as const;
 
-export const DEFAULT_REPLAY_INTERVAL_MS = REPLAY_SPEED_OPTIONS[1].intervalMs;
+export const DEFAULT_REPLAY_INTERVAL_MS = 900;
 
 export function clampReplayIndex(index: number, barsLength: number): number {
   if (barsLength <= 0) return 0;

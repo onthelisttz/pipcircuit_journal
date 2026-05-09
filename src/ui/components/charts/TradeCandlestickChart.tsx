@@ -643,6 +643,8 @@ export interface TradeCandlestickChartProps {
     data: ChartBar[];
     /** Future timestamps to keep as blank space during replay */
     replayFutureTimestamps?: number[];
+    /** Extra empty space on the right side, expressed in bars */
+    replayRightOffsetBars?: number;
     /** Timeframe of the current bar set */
     timeframe?: ChartTimeframe;
     /** Optional time-based guide settings */
@@ -870,6 +872,7 @@ export interface TradeCandlestickChartRef {
 const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCandlestickChartProps>(function TradeCandlestickChart({
     data,
     replayFutureTimestamps = EMPTY_REPLAY_FUTURE_TIMESTAMPS,
+    replayRightOffsetBars = 0,
     timeframe,
     timeGuides,
     trade,
@@ -3776,6 +3779,15 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     }, [priceFormat]);
 
     useEffect(() => {
+        const timeScale = chartRef.current?.timeScale();
+        if (!timeScale) return;
+        timeScale.applyOptions({
+            rightOffset: replayRightOffsetBars,
+            rightBarStaysOnScroll: replayRightOffsetBars > 0,
+        });
+    }, [replayRightOffsetBars]);
+
+    useEffect(() => {
         if (!seriesRef.current) return;
         seriesRef.current.applyOptions({
             lastValueVisible: !useCustomLivePriceStack,
@@ -4457,6 +4469,12 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                         ? getPrependedBarCount(previousBars, data)
                         : 0
                 : 0;
+        const shouldPreserveReplayViewportExactly =
+            !autoScrollOnData &&
+            hasReplayFutureSpace &&
+            currentRange != null &&
+            previousBars.length > 0 &&
+            prependedBarCount === 0;
 
         if (appendOnlyUpdate) {
             const appendedBars = data.slice(previousBars.length);
@@ -4505,6 +4523,12 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                         suppressVisibleRangeUntilRef.current,
                         Date.now() + 30
                     );
+                } else if (shouldPreserveReplayViewportExactly) {
+                    // During replay we replace future whitespace with real candles.
+                    // Keeping the exact logical range prevents the viewport from snapping back
+                    // when playback advances or live ticks mutate the latest replayed bar.
+                    suppressVisibleRangeUntilRef.current = Date.now() + 60;
+                    timeScale.setVisibleLogicalRange(currentRange);
                 } else if (prependedBarCount > 0) {
                     suppressVisibleRangeUntilRef.current = Date.now() + 60;
                     timeScale.setVisibleLogicalRange({
