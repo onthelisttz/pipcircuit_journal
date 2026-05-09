@@ -29,6 +29,19 @@ export interface SettingRecord {
   value: unknown;
 }
 
+export interface ChartDrawingSnapshotRecord {
+  key: string;
+  drawings: Array<{
+    id: string;
+    toolType: string;
+    points: Array<{ timestamp: number; price: number }>;
+    options?: Record<string, unknown>;
+  }>;
+  centerTimestamp: number | null;
+  windowSeconds: number | null;
+  savedAt: number;
+}
+
 export class AppDexie extends Dexie {
   trades!: Table<Trade, number>;
   trade_notes!: Table<TradeNote, number>;
@@ -42,6 +55,7 @@ export class AppDexie extends Dexie {
   sync_meta!: Table<SyncMetaRecord, string>;
   symbol_sync_progress!: Table<SymbolSyncProgress, number>;
   settings!: Table<SettingRecord, string>;
+  chart_drawing_snapshots!: Table<ChartDrawingSnapshotRecord, string>;
   daily_summaries!: Table<DailySummary, number>;
 
   constructor() {

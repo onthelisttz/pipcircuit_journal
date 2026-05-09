@@ -7,6 +7,7 @@ import {
   DEXIE_SCHEMA_V5,
   DEXIE_SCHEMA_V6,
   DEXIE_SCHEMA_V7,
+  DEXIE_SCHEMA_V8,
 } from "./schema";
 
 export function registerMigrations(db: AppDexie): void {
@@ -196,4 +197,7 @@ export function registerMigrations(db: AppDexie): void {
         }
       }
     });
+
+  // v8: add local-only chart drawing snapshot storage.
+  db.version(8).stores(DEXIE_SCHEMA_V8);
 }

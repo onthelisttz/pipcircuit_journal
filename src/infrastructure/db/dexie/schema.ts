@@ -138,3 +138,27 @@ export const DEXIE_SCHEMA_V7 = {
   settings: "key, value",
   daily_summaries: "++id, accountId, date, [accountId+date]",
 };
+
+// V8 adds local-only chart drawing snapshots for synced/history chart workspaces.
+export const DEXIE_SCHEMA_V8 = {
+  trades: "++id, accountId, symbol, direction, openTime, closeTime, [symbol+openTime]",
+  trade_notes:
+    "++id, remoteId, clientId, tradeId, createdAt, updatedAt, deletedAt, [tradeId+deletedAt]",
+  tags: "++id, remoteId, clientId, category, name, color, updatedAt, deletedAt",
+  trade_tags:
+    "++id, remoteId, clientId, tradeId, tagId, createdAt, updatedAt, deletedAt, [tradeId+tagId]",
+  observations:
+    "++id, remoteId, clientId, source, categoryId, title, createdAt, updatedAt, deletedAt, [source+categoryId]",
+  observation_categories:
+    "++id, remoteId, clientId, name, color, updatedAt, deletedAt",
+  chart_bars:
+    "++id, [broker+symbol+timeframe+timestamp], [symbol+timeframe+timestamp], broker, symbol, timeframe, timestamp",
+  accounts: "++id, accountNumber, platform",
+  sync_queue:
+    "++id, status, timestamp, table, entityId, nextRetryAt, deadLetterAt, lastError, [table+status], [table+entityId+status]",
+  sync_meta: "key, userId, accountId, lastSyncTime, lastTradeId",
+  symbol_sync_progress: "++id, [broker+symbol], broker, symbol, status",
+  settings: "key, value",
+  chart_drawing_snapshots: "key, savedAt",
+  daily_summaries: "++id, accountId, date, [accountId+date]",
+};

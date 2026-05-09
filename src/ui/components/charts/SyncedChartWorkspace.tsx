@@ -56,7 +56,12 @@ import {
   type PriceAlertEvent,
   type PriceAlertPriceSide,
 } from "@ui/hooks/usePriceAlerts";
-import { DexieChartBarRepository, DexieSymbolSyncProgressRepository } from "@infrastructure/db/dexie/repositories";
+import {
+  DexieChartBarRepository,
+  DexieChartDrawingSnapshotRepository,
+  DexieSymbolSyncProgressRepository,
+} from "@infrastructure/db/dexie/repositories";
+import type { ChartDrawingSnapshotRecord } from "@infrastructure/db/dexie/database";
 import { HybridSyncChartBarsUseCase } from "@application/use-cases/sync";
 import { TokenStorage } from "@infrastructure/auth";
 import { CTraderAPI } from "@infrastructure/api/ctrader/CTraderAPI";
@@ -99,11 +104,8 @@ const CHART_NOTICE_DISMISS_MS = 10_000;
 const SYNCED_CHART_DISPLAY_OFFSET_MS = 3 * 60 * 60 * 1000;
 const ALERT_SOUND_PATH = "/sounds/price-alert-reached.wav";
 type ChartSelection = { broker: string; symbol: string };
-type StoredSyncedDrawingSnapshot = {
+type StoredSyncedDrawingSnapshot = Omit<ChartDrawingSnapshotRecord, "key"> & {
   drawings: DrawingToolExport[];
-  centerTimestamp: number | null;
-  windowSeconds: number | null;
-  savedAt: number;
 };
 type PriceAlertsList = ReturnType<typeof usePriceAlerts>["activeAlerts"];
 
@@ -703,18 +705,51 @@ function buildLegacySyncedDrawingStorageKey(
   return `${SYNCED_CHART_DRAWINGS_STORAGE_PREFIX}:${broker.toUpperCase()}:${symbol.toUpperCase()}:${timeframe}`;
 }
 
-function readStoredSyncedDrawingSnapshot(
+function buildSyncedDrawingStorageKeys(
   broker?: string | null,
   symbol?: string | null,
   timeframe?: ChartTimeframe | null
-): StoredSyncedDrawingSnapshot | null {
-  if (typeof window === "undefined") return null;
-  const storageKeys = Array.from(
+): string[] {
+  return Array.from(
     new Set([
       buildSyncedDrawingStorageKey(broker, symbol, timeframe),
       buildLegacySyncedDrawingStorageKey(broker, symbol, timeframe),
     ].filter((value): value is string => Boolean(value)))
   );
+}
+
+function normalizeStoredSyncedDrawingSnapshot(
+  parsed: Partial<StoredSyncedDrawingSnapshot> | null | undefined
+): StoredSyncedDrawingSnapshot | null {
+  if (!parsed) return null;
+
+  return {
+    drawings: Array.isArray(parsed.drawings) ? parsed.drawings as DrawingToolExport[] : [],
+    centerTimestamp:
+      typeof parsed.centerTimestamp === "number" &&
+      Number.isFinite(parsed.centerTimestamp)
+        ? parsed.centerTimestamp
+        : null,
+    windowSeconds:
+      typeof parsed.windowSeconds === "number" &&
+      Number.isFinite(parsed.windowSeconds) &&
+      parsed.windowSeconds > 0
+        ? parsed.windowSeconds
+        : null,
+    savedAt:
+      typeof parsed.savedAt === "number" && Number.isFinite(parsed.savedAt)
+        ? parsed.savedAt
+        : 0,
+  };
+}
+
+function readLegacyStoredSyncedDrawingSnapshotFromLocalStorage(
+  broker?: string | null,
+  symbol?: string | null,
+  timeframe?: ChartTimeframe | null
+): StoredSyncedDrawingSnapshot | null {
+  if (typeof window === "undefined") return null;
+  const storageKeys = buildSyncedDrawingStorageKeys(broker, symbol, timeframe);
   if (storageKeys.length === 0) return null;
 
   for (const storageKey of storageKeys) {
@@ -723,29 +758,49 @@ function readStoredSyncedDrawingSnapshot(
       if (!raw) continue;
 
       const parsed = JSON.parse(raw) as Partial<StoredSyncedDrawingSnapshot>;
-      return {
-        drawings: Array.isArray(parsed.drawings) ? parsed.drawings : [],
-        centerTimestamp:
-          typeof parsed.centerTimestamp === "number" &&
-          Number.isFinite(parsed.centerTimestamp)
-            ? parsed.centerTimestamp
-            : null,
-        windowSeconds:
-          typeof parsed.windowSeconds === "number" &&
-          Number.isFinite(parsed.windowSeconds) &&
-          parsed.windowSeconds > 0
-            ? parsed.windowSeconds
-            : null,
-        savedAt:
-          typeof parsed.savedAt === "number" && Number.isFinite(parsed.savedAt)
-            ? parsed.savedAt
-            : 0,
-      };
+      return normalizeStoredSyncedDrawingSnapshot(parsed);
     } catch {
       // ignore invalid snapshot and continue to fallback key
     }
   }
   return null;
+}
+
+function clearLegacyStoredSyncedDrawingSnapshotsFromLocalStorage(
+  broker?: string | null,
+  symbol?: string | null,
+  timeframe?: ChartTimeframe | null
+): void {
+  if (typeof window === "undefined") return;
+
+  for (const storageKey of buildSyncedDrawingStorageKeys(broker, symbol, timeframe)) {
+    try {
+      window.localStorage.removeItem(storageKey);
+    } catch {
+      // ignore localStorage cleanup errors
+    }
+  }
+}
+
+async function readStoredSyncedDrawingSnapshotFromIndexedDb(
+  repository: DexieChartDrawingSnapshotRepository,
+  broker?: string | null,
+  symbol?: string | null,
+  timeframe?: ChartTimeframe | null
+): Promise<{ key: string | null; snapshot: StoredSyncedDrawingSnapshot | null }> {
+  for (const storageKey of buildSyncedDrawingStorageKeys(broker, symbol, timeframe)) {
+    try {
+      const record = await repository.get(storageKey);
+      const snapshot = normalizeStoredSyncedDrawingSnapshot(record);
+      if (snapshot) {
+        return { key: storageKey, snapshot };
+      }
+    } catch {
+      // ignore IndexedDB read errors and continue to fallback key
+    }
+  }
+
+  return { key: null, snapshot: null };
 }
 
 function serializeSyncedDrawingSnapshotForComparison(
@@ -1064,6 +1119,7 @@ export function SyncedChartWorkspace({
   const compactActionsRef = useRef<HTMLDivElement>(null);
   const replayTimerRef = useRef<number | null>(null);
   const drawingPersistTimerRef = useRef<number | null>(null);
+  const drawingSnapshotRepositoryRef = useRef(new DexieChartDrawingSnapshotRepository());
   const pendingReplayViewportRef = useRef<{ from: number; to: number } | null>(null);
   const replayViewportRef = useRef<{ from: number; to: number } | null>(null);
   const pendingRestoreRef = useRef<{
@@ -1090,21 +1146,13 @@ export function SyncedChartWorkspace({
   const previousIsActiveRef = useRef(isActive);
   const restoredDrawingStorageKeyRef = useRef<string | null>(null);
   const lastSavedDrawingSnapshotsRef = useRef<Map<string, string>>(new Map());
+  const [storedDrawingSnapshot, setStoredDrawingSnapshot] = useState<StoredSyncedDrawingSnapshot | null | undefined>(undefined);
   const currentDrawingStorageKey = useMemo(
     () => buildSyncedDrawingStorageKey(selection?.broker, selection?.symbol, timeframe),
     [selection?.broker, selection?.symbol, timeframe]
   );
-  const storedDrawingSnapshot = useMemo(
-    () =>
-      readStoredSyncedDrawingSnapshot(
-        selection?.broker,
-        selection?.symbol,
-        timeframe
-      ),
-    [selection?.broker, selection?.symbol, timeframe]
-  );
   const persistCurrentDrawings = useCallback(
-    (
+    async (
       storageKeyOverride?: string | null,
       options?: { allowEmptyOverwrite?: boolean }
     ) => {
@@ -1115,43 +1163,54 @@ export function SyncedChartWorkspace({
       const chart = chartRef.current;
       if (!chart) return;
 
-      const drawings = chart.exportAllDrawings();
-      const centerTimestamp =
-        chart.getViewportCenterTimestamp() ?? deriveDrawingCenterTimestamp(drawings);
-      const windowSeconds = chart.getVisibleWindowSeconds();
-      const hasInitializedViewport =
-        centerTimestamp != null ||
-        (windowSeconds != null && Number.isFinite(windowSeconds) && windowSeconds > 0);
-      if (!hasInitializedViewport && drawings.length === 0) {
-        return;
-      }
-
-      if (drawings.length === 0 && !options?.allowEmptyOverwrite) {
-        const existingSnapshot = readStoredSyncedDrawingSnapshot(
-          selection?.broker,
-          selection?.symbol,
-          timeframe
-        );
-        if ((existingSnapshot?.drawings?.length ?? 0) > 0) {
+      try {
+        const drawings = chart.exportAllDrawings();
+        const centerTimestamp =
+          chart.getViewportCenterTimestamp() ?? deriveDrawingCenterTimestamp(drawings);
+        const windowSeconds = chart.getVisibleWindowSeconds();
+        const hasInitializedViewport =
+          centerTimestamp != null ||
+          (windowSeconds != null && Number.isFinite(windowSeconds) && windowSeconds > 0);
+        if (!hasInitializedViewport && drawings.length === 0) {
           return;
         }
-      }
 
-      const snapshot: StoredSyncedDrawingSnapshot = {
-        drawings,
-        centerTimestamp,
-        windowSeconds,
-        savedAt: Date.now(),
-      };
-      const comparisonSnapshot = serializeSyncedDrawingSnapshotForComparison(snapshot);
-      if (lastSavedDrawingSnapshotsRef.current.get(storageKey) === comparisonSnapshot) {
-        return;
-      }
+        if (drawings.length === 0 && !options?.allowEmptyOverwrite) {
+          const existingSnapshot =
+            storageKey === currentDrawingStorageKey
+              ? storedDrawingSnapshot ?? null
+              : normalizeStoredSyncedDrawingSnapshot(
+                  await drawingSnapshotRepositoryRef.current.get(storageKey)
+                );
+          if ((existingSnapshot?.drawings?.length ?? 0) > 0) {
+            return;
+          }
+        }
 
-      window.localStorage.setItem(storageKey, JSON.stringify(snapshot));
-      lastSavedDrawingSnapshotsRef.current.set(storageKey, comparisonSnapshot);
+        const snapshot: StoredSyncedDrawingSnapshot = {
+          drawings,
+          centerTimestamp,
+          windowSeconds,
+          savedAt: Date.now(),
+        };
+        const comparisonSnapshot = serializeSyncedDrawingSnapshotForComparison(snapshot);
+        if (lastSavedDrawingSnapshotsRef.current.get(storageKey) === comparisonSnapshot) {
+          return;
+        }
+
+        await drawingSnapshotRepositoryRef.current.set({
+          key: storageKey,
+          ...snapshot,
+        });
+        lastSavedDrawingSnapshotsRef.current.set(storageKey, comparisonSnapshot);
+        if (storageKey === currentDrawingStorageKey) {
+          setStoredDrawingSnapshot(snapshot);
+        }
+      } catch (error) {
+        console.warn("[SyncedChartWorkspace] Failed to persist drawing snapshot:", error);
+      }
     },
-    [currentDrawingStorageKey, selection?.broker, selection?.symbol, timeframe]
+    [currentDrawingStorageKey, storedDrawingSnapshot]
   );
 
   const schedulePersistCurrentDrawings = useCallback(
@@ -1166,11 +1225,79 @@ export function SyncedChartWorkspace({
       }
       drawingPersistTimerRef.current = window.setTimeout(() => {
         drawingPersistTimerRef.current = null;
-        persistCurrentDrawings(storageKeyOverride, options);
+        void persistCurrentDrawings(storageKeyOverride, options);
       }, delayMs);
     },
     [persistCurrentDrawings]
   );
+
+  useEffect(() => {
+    if (!currentDrawingStorageKey) {
+      setStoredDrawingSnapshot(null);
+      return;
+    }
+
+    let cancelled = false;
+    setStoredDrawingSnapshot(undefined);
+
+    void (async () => {
+      const repository = drawingSnapshotRepositoryRef.current;
+      const { key: matchedIndexedDbKey, snapshot: indexedDbSnapshot } =
+        await readStoredSyncedDrawingSnapshotFromIndexedDb(
+          repository,
+          selection?.broker,
+          selection?.symbol,
+          timeframe
+        );
+
+      let snapshot = indexedDbSnapshot;
+      let shouldNormalizeIndexedDbKey =
+        snapshot != null && matchedIndexedDbKey != null && matchedIndexedDbKey !== currentDrawingStorageKey;
+      let migratedFromLocalStorage = false;
+
+      if (!snapshot) {
+        snapshot = readLegacyStoredSyncedDrawingSnapshotFromLocalStorage(
+          selection?.broker,
+          selection?.symbol,
+          timeframe
+        );
+        migratedFromLocalStorage = snapshot != null;
+      }
+
+      if (snapshot && (shouldNormalizeIndexedDbKey || migratedFromLocalStorage)) {
+        try {
+          await repository.set({
+            key: currentDrawingStorageKey,
+            ...snapshot,
+          });
+          if (
+            shouldNormalizeIndexedDbKey &&
+            matchedIndexedDbKey &&
+            matchedIndexedDbKey !== currentDrawingStorageKey
+          ) {
+            await repository.remove(matchedIndexedDbKey);
+          }
+        } catch (error) {
+          console.warn("[SyncedChartWorkspace] Failed to migrate drawing snapshot:", error);
+        }
+      }
+
+      if (migratedFromLocalStorage) {
+        clearLegacyStoredSyncedDrawingSnapshotsFromLocalStorage(
+          selection?.broker,
+          selection?.symbol,
+          timeframe
+        );
+      }
+
+      if (cancelled) return;
+      setStoredDrawingSnapshot(snapshot);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentDrawingStorageKey, selection?.broker, selection?.symbol, timeframe]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !selection) return;
@@ -1846,6 +1973,9 @@ export function SyncedChartWorkspace({
   useEffect(() => {
     if (!currentDrawingStorageKey) {
       restoredDrawingStorageKeyRef.current = null;
+      return;
+    }
+    if (storedDrawingSnapshot === undefined) {
       return;
     }
     if (storedDrawingSnapshot) {
