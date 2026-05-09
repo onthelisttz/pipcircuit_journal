@@ -718,13 +718,80 @@ function buildSyncedDrawingStorageKeys(
   );
 }
 
+function isStoredDrawingToolType(value: unknown): value is DrawingToolType {
+  return (
+    value === "Brush" ||
+    value === "Path" ||
+    value === "Gan" ||
+    value === "TrendLine" ||
+    value === "HorizontalRay" ||
+    value === "Rectangle" ||
+    value === "Callout" ||
+    value === "LongShortPosition"
+  );
+}
+
 function normalizeStoredSyncedDrawingSnapshot(
-  parsed: Partial<StoredSyncedDrawingSnapshot> | null | undefined
+  parsed:
+    | {
+        drawings?: Array<{
+          id?: unknown;
+          toolType?: unknown;
+          points?: Array<{ timestamp?: unknown; price?: unknown }>;
+          options?: unknown;
+        }>;
+        centerTimestamp?: unknown;
+        windowSeconds?: unknown;
+        savedAt?: unknown;
+      }
+    | null
+    | undefined
 ): StoredSyncedDrawingSnapshot | null {
   if (!parsed) return null;
 
+  const drawings = Array.isArray(parsed.drawings)
+    ? parsed.drawings
+        .map((drawing) => {
+          if (!drawing || typeof drawing.id !== "string" || !isStoredDrawingToolType(drawing.toolType)) {
+            return null;
+          }
+
+          const points = Array.isArray(drawing.points)
+            ? drawing.points
+                .filter(
+                  (point): point is { timestamp: number; price: number } =>
+                    point != null &&
+                    typeof point.timestamp === "number" &&
+                    Number.isFinite(point.timestamp) &&
+                    typeof point.price === "number" &&
+                    Number.isFinite(point.price)
+                )
+                .map((point) => ({
+                  timestamp: point.timestamp,
+                  price: point.price,
+                }))
+            : [];
+
+          if (points.length === 0) {
+            return null;
+          }
+
+          const normalizedDrawing: DrawingToolExport = {
+            id: drawing.id,
+            toolType: drawing.toolType,
+            points,
+            ...(drawing.options && typeof drawing.options === "object"
+              ? { options: drawing.options as Record<string, unknown> }
+              : {}),
+          };
+
+          return normalizedDrawing;
+        })
+        .filter((drawing): drawing is DrawingToolExport => drawing !== null)
+    : [];
+
   return {
-    drawings: Array.isArray(parsed.drawings) ? parsed.drawings as DrawingToolExport[] : [],
+    drawings,
     centerTimestamp:
       typeof parsed.centerTimestamp === "number" &&
       Number.isFinite(parsed.centerTimestamp)
