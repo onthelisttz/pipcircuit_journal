@@ -119,6 +119,7 @@ function areDrawingsCoveredByBars(
 const LOAD_LIMIT = 20_000;
 const EDGE_FETCH_THRESHOLD = 10;
 const FETCH_THROTTLE_MS = 160;
+const REPLAY_RIGHT_OFFSET_BARS = 12;
 const HISTORY_TIME_GUIDES_KEY = "chartTimeGuides_history";
 const CHART_CONTINUOUS_DRAWING_KEY = "chartContinuousDrawingEnabled_v1";
 const MAX_RENDERED_BARS: Record<ChartTimeframe, number> = {
@@ -792,6 +793,7 @@ export function Mt5HistoryWorkspace({
   const [replayCursorTimestamp, setReplayCursorTimestamp] = useState<number | null>(null);
   const [replayStartTimestamp, setReplayStartTimestamp] = useState<number | null>(null);
   const [replayIntervalMs, setReplayIntervalMs] = useState<number>(DEFAULT_REPLAY_INTERVAL_MS);
+  const [replayDataUpdateMode, setReplayDataUpdateMode] = useState<"replace" | "append">("replace");
   const [replayPlacementTimestamp, setReplayPlacementTimestamp] = useState<number | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedHeight, setExpandedHeight] = useState(640);
@@ -803,6 +805,7 @@ export function Mt5HistoryWorkspace({
   const compactActionsRef = useRef<HTMLDivElement>(null);
   const replayTimerRef = useRef<number | null>(null);
   const pendingReplayViewportRef = useRef<{ from: number; to: number } | null>(null);
+  const replayViewportRef = useRef<{ from: number; to: number } | null>(null);
   const pendingRestoreRef = useRef<{
     drawings: DrawingToolExport[];
     centerTimestamp: number | null;
@@ -831,10 +834,6 @@ export function Mt5HistoryWorkspace({
   const displayBars = useMemo(() => {
     if (effectiveReplayIndex == null) return bars;
     return bars.slice(0, effectiveReplayIndex + 1);
-  }, [bars, effectiveReplayIndex]);
-  const replayFutureTimestamps = useMemo(() => {
-    if (effectiveReplayIndex == null) return [];
-    return bars.slice(effectiveReplayIndex + 1).map((bar) => bar.timestamp);
   }, [bars, effectiveReplayIndex]);
   const replayCanStepBack = effectiveReplayIndex != null && effectiveReplayIndex > 0;
   const replayCanStepForward =
@@ -1271,8 +1270,10 @@ export function Mt5HistoryWorkspace({
     setReplayStartIndex(null);
     setReplayCursorTimestamp(null);
     setReplayStartTimestamp(null);
+    setReplayDataUpdateMode("replace");
     setReplayPlacementTimestamp(null);
     pendingReplayViewportRef.current = null;
+    replayViewportRef.current = null;
   }, [symbol, timeframe]);
 
   useEffect(() => {
@@ -1291,8 +1292,10 @@ export function Mt5HistoryWorkspace({
     setReplayStartIndex(null);
     setReplayCursorTimestamp(null);
     setReplayStartTimestamp(null);
+    setReplayDataUpdateMode("replace");
     setReplayPlacementTimestamp(null);
     pendingReplayViewportRef.current = null;
+    replayViewportRef.current = null;
   }, []);
 
   const startReplayAtTimestamp = useCallback(
@@ -1310,11 +1313,14 @@ export function Mt5HistoryWorkspace({
       lastVisibleRangeRef.current = null;
       suppressEdgeLoadingUntilRef.current = Date.now() + 500;
       setIsEdgeLoading(false);
-      pendingReplayViewportRef.current = chartRef.current?.getVisibleLogicalRange() ?? null;
+      const currentViewport = chartRef.current?.getVisibleLogicalRange() ?? null;
+      pendingReplayViewportRef.current = currentViewport;
+      replayViewportRef.current = currentViewport;
       const anchorIndex = findReplayStartIndex(bars, timestamp);
       const anchorTimestamp = bars[anchorIndex]?.timestamp ?? timestamp;
       setIsReplayPlaying(false);
       setIsReplayPlacementMode(false);
+      setReplayDataUpdateMode("replace");
       setReplayPlacementTimestamp(anchorTimestamp);
       setIsReplayMode(true);
       setReplayStartIndex(anchorIndex);
@@ -1360,7 +1366,12 @@ export function Mt5HistoryWorkspace({
   const stepReplay = useCallback(
     (delta: number) => {
       if (bars.length === 0) return;
+      const currentViewport =
+        chartRef.current?.getVisibleLogicalRange() ?? replayViewportRef.current;
+      replayViewportRef.current = currentViewport;
+      pendingReplayViewportRef.current = delta > 0 ? null : currentViewport;
       setIsReplayPlaying(false);
+      setReplayDataUpdateMode(delta > 0 ? "append" : "replace");
       const baseIndex = replayIndex ?? getReplayAnchorIndex();
       const nextIndex = clampReplayIndex(baseIndex + delta, bars.length);
       setReplayIndex(nextIndex);
@@ -1371,6 +1382,11 @@ export function Mt5HistoryWorkspace({
 
   const handleReplayReset = useCallback(() => {
     if (bars.length === 0) return;
+    const currentViewport =
+      chartRef.current?.getVisibleLogicalRange() ?? replayViewportRef.current;
+    pendingReplayViewportRef.current = currentViewport;
+    replayViewportRef.current = currentViewport;
+    setReplayDataUpdateMode("replace");
     const anchorTimestamp =
       replayStartTimestamp ??
       (replayStartIndex != null ? bars[replayStartIndex]?.timestamp ?? null : null);
@@ -1564,6 +1580,7 @@ export function Mt5HistoryWorkspace({
     }
 
     replayTimerRef.current = window.setTimeout(() => {
+      setReplayDataUpdateMode("append");
       const nextIndex = clampReplayIndex(effectiveReplayIndex + 1, bars.length);
       setReplayIndex(nextIndex);
       setReplayCursorTimestamp(bars[nextIndex]?.timestamp ?? null);
@@ -1907,6 +1924,11 @@ export function Mt5HistoryWorkspace({
       const previousCenter = previousRange ? (previousRange.from + previousRange.to) / 2 : currentCenter;
       const panDirection = Math.sign(currentCenter - previousCenter);
       lastVisibleRangeRef.current = { from, to };
+
+      if (isReplayMode) {
+        replayViewportRef.current = { from, to };
+        return;
+      }
 
       const leftIndex = Math.floor(from);
       const rightIndex = Math.ceil(to);
@@ -2507,11 +2529,11 @@ export function Mt5HistoryWorkspace({
           key={chartInstanceKey}
           ref={chartRef}
           data={displayBars}
-          replayFutureTimestamps={replayFutureTimestamps}
+          replayRightOffsetBars={isReplayMode ? REPLAY_RIGHT_OFFSET_BARS : 0}
           timeframe={timeframe}
           timeGuides={timeGuides}
           clipTimeGuideOverlayToPane
-          dataUpdateMode={chartUpdateMode}
+          dataUpdateMode={isReplayMode ? replayDataUpdateMode : chartUpdateMode}
           trade={viewerTrade}
           height={isExpanded ? expandedHeight : chartAreaHeight}
           isLoading={isBarsLoading}
