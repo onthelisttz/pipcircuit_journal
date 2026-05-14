@@ -414,6 +414,16 @@ export function TradeChartView({
         return findNearestReplayIndex(displayData, anchorTimestamp);
     }, [displayData, tradeDisplayCloseTimestamp, tradeDisplayOpenTimestamp]);
 
+    const getReplayRestoreTimestamp = useCallback(() => {
+        return (
+            replayCursorTimestamp ??
+            replayPlacementTimestamp ??
+            replayStartTimestamp ??
+            candlestickChartRef.current?.getViewportCenterTimestamp() ??
+            null
+        );
+    }, [replayCursorTimestamp, replayPlacementTimestamp, replayStartTimestamp]);
+
     const handleReplayToggle = useCallback(() => {
         if (isReplayMode) {
             exitReplay();
@@ -490,10 +500,25 @@ export function TradeChartView({
     }, [isReplayMode, stepReplay]);
 
     const handleTimeframeChange = useCallback((newTimeframe: ChartTimeframe) => {
-        clearReplayState();
-        pendingTradeCenterRef.current = true;
+        if (isReplayMode || isReplayPlacementMode) {
+            const currentViewport =
+                candlestickChartRef.current?.getVisibleLogicalRange() ?? replayViewportRef.current;
+            pendingReplayViewportRef.current = currentViewport;
+            replayViewportRef.current = currentViewport;
+            setIsReplayPlaying(false);
+            setReplayDataUpdateMode("replace");
+            const restoreTimestamp = getReplayRestoreTimestamp();
+            if (restoreTimestamp != null) {
+                setReplayCursorTimestamp((current) => current ?? restoreTimestamp);
+                setReplayStartTimestamp((current) => current ?? restoreTimestamp);
+                setReplayPlacementTimestamp((current) => current ?? restoreTimestamp);
+            }
+            pendingTradeCenterRef.current = false;
+        } else {
+            pendingTradeCenterRef.current = true;
+        }
         setTimeframe(newTimeframe);
-    }, [clearReplayState]);
+    }, [getReplayRestoreTimestamp, isReplayMode, isReplayPlacementMode]);
 
     useEffect(() => {
         setLongShortLots(initialLots);
@@ -653,7 +678,8 @@ export function TradeChartView({
     useEffect(() => {
         if (!isReplayMode) return;
         if (displayData.length === 0) {
-            clearReplayState();
+            if (isLoading) return;
+            setIsReplayPlaying(false);
             return;
         }
 
@@ -677,9 +703,9 @@ export function TradeChartView({
         setReplayStartTimestamp(displayData[nextStartIndex]?.timestamp ?? resolvedStartTimestamp);
         setReplayCursorTimestamp(displayData[nextCursorIndex]?.timestamp ?? resolvedCursorTimestamp);
     }, [
-        clearReplayState,
         displayData,
         getReplayAnchorIndex,
+        isLoading,
         isReplayMode,
         replayCursorTimestamp,
         replayStartTimestamp,

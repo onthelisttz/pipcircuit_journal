@@ -806,6 +806,8 @@ export function Mt5HistoryWorkspace({
   const compactDrawRef = useRef<HTMLDivElement>(null);
   const compactActionsRef = useRef<HTMLDivElement>(null);
   const replayTimerRef = useRef<number | null>(null);
+  const isReplayModeRef = useRef(false);
+  const isReplayPlacementModeRef = useRef(false);
   const pendingReplayViewportRef = useRef<{ from: number; to: number } | null>(null);
   const replayViewportRef = useRef<{ from: number; to: number } | null>(null);
   const pendingRestoreRef = useRef<{
@@ -828,11 +830,20 @@ export function Mt5HistoryWorkspace({
   const [isBarsLoading, setIsBarsLoading] = useState(false);
   const [isEdgeLoading, setIsEdgeLoading] = useState(false);
   const effectiveReplayIndex = useMemo(() => {
-    if (!isReplayMode || replayIndex == null || bars.length === 0) {
+    if (!isReplayMode || bars.length === 0) {
       return null;
     }
+
+    if (replayCursorTimestamp != null) {
+      return findReplayStartIndex(bars, replayCursorTimestamp);
+    }
+
+    if (replayIndex == null) {
+      return null;
+    }
+
     return clampReplayIndex(replayIndex, bars.length);
-  }, [bars.length, isReplayMode, replayIndex]);
+  }, [bars, isReplayMode, replayCursorTimestamp, replayIndex]);
   const displayBars = useMemo(() => {
     if (effectiveReplayIndex == null) return bars;
     return bars.slice(0, effectiveReplayIndex + 1);
@@ -1273,6 +1284,14 @@ export function Mt5HistoryWorkspace({
   }, [goToDate]);
 
   useEffect(() => {
+    isReplayModeRef.current = isReplayMode;
+  }, [isReplayMode]);
+
+  useEffect(() => {
+    isReplayPlacementModeRef.current = isReplayPlacementMode;
+  }, [isReplayPlacementMode]);
+
+  useEffect(() => {
     setIsReplayPlaying(false);
     setIsReplayMode(false);
     setIsReplayPlacementMode(false);
@@ -1284,7 +1303,7 @@ export function Mt5HistoryWorkspace({
     setReplayPlacementTimestamp(null);
     pendingReplayViewportRef.current = null;
     replayViewportRef.current = null;
-  }, [symbol, timeframe]);
+  }, [symbol]);
 
   useEffect(() => {
     return () => {
@@ -1351,6 +1370,17 @@ export function Mt5HistoryWorkspace({
     return findNearestReplayIndex(bars, anchorTimestamp);
   }, [bars, focusTimestamp]);
 
+  const getReplayRestoreTimestamp = useCallback(() => {
+    return (
+      replayCursorTimestamp ??
+      replayPlacementTimestamp ??
+      replayStartTimestamp ??
+      chartRef.current?.getViewportCenterTimestamp() ??
+      focusTimestamp ??
+      null
+    );
+  }, [focusTimestamp, replayCursorTimestamp, replayPlacementTimestamp, replayStartTimestamp]);
+
   const handleReplayToggle = useCallback(() => {
     if (isReplayMode) {
       exitReplay();
@@ -1382,12 +1412,12 @@ export function Mt5HistoryWorkspace({
       pendingReplayViewportRef.current = delta > 0 ? null : currentViewport;
       setIsReplayPlaying(false);
       setReplayDataUpdateMode(delta > 0 ? "append" : "replace");
-      const baseIndex = replayIndex ?? getReplayAnchorIndex();
+      const baseIndex = effectiveReplayIndex ?? replayIndex ?? getReplayAnchorIndex();
       const nextIndex = clampReplayIndex(baseIndex + delta, bars.length);
       setReplayIndex(nextIndex);
       setReplayCursorTimestamp(bars[nextIndex]?.timestamp ?? null);
     },
-    [bars, getReplayAnchorIndex, replayIndex]
+    [bars, effectiveReplayIndex, getReplayAnchorIndex, replayIndex]
   );
 
   const handleReplayReset = useCallback(() => {
@@ -1552,11 +1582,8 @@ export function Mt5HistoryWorkspace({
   useEffect(() => {
     if (!isReplayMode) return;
     if (bars.length === 0) {
+      if (isBarsLoading) return;
       setIsReplayPlaying(false);
-      setReplayIndex(null);
-      setReplayStartIndex(null);
-      setReplayCursorTimestamp(null);
-      setReplayStartTimestamp(null);
       return;
     }
 
@@ -1579,7 +1606,14 @@ export function Mt5HistoryWorkspace({
     setReplayIndex(nextCursorIndex);
     setReplayStartTimestamp(bars[nextStartIndex]?.timestamp ?? resolvedStartTimestamp);
     setReplayCursorTimestamp(bars[nextCursorIndex]?.timestamp ?? resolvedCursorTimestamp);
-  }, [bars, getReplayAnchorIndex, isReplayMode, replayCursorTimestamp, replayStartTimestamp]);
+  }, [
+    bars,
+    getReplayAnchorIndex,
+    isBarsLoading,
+    isReplayMode,
+    replayCursorTimestamp,
+    replayStartTimestamp,
+  ]);
 
   useEffect(() => {
     if (!isReplayMode || !isReplayPlaying || effectiveReplayIndex == null) return;
@@ -1764,9 +1798,13 @@ export function Mt5HistoryWorkspace({
   );
 
   const goToTimestamp = useCallback(
-    async (targetTimestamp: number) => {
+    async (targetTimestamp: number, options?: { preserveReplay?: boolean }) => {
       if (!selectedTimeframe || !symbol) return;
-      exitReplay();
+      if (!options?.preserveReplay) {
+        exitReplay();
+      } else {
+        setIsReplayPlaying(false);
+      }
       const pendingRestore = pendingRestoreRef.current;
       const range = extendRangeToIncludeDrawings(
         buildCenteredRange(selectedTimeframe, targetTimestamp),
@@ -1795,7 +1833,13 @@ export function Mt5HistoryWorkspace({
       return;
     }
     const pendingCenterTimestamp = pendingRestoreRef.current?.centerTimestamp;
-    void goToTimestamp(pendingCenterTimestamp ?? focusTimestamp ?? selectedTimeframe.to);
+    const preserveReplay =
+      pendingCenterTimestamp != null &&
+      (isReplayModeRef.current || isReplayPlacementModeRef.current);
+    void goToTimestamp(
+      pendingCenterTimestamp ?? focusTimestamp ?? selectedTimeframe.to,
+      preserveReplay ? { preserveReplay: true } : undefined
+    );
   }, [focusTimestamp, goToTimestamp, selectedTimeframe, symbol]);
 
   useEffect(() => {
@@ -2127,12 +2171,22 @@ export function Mt5HistoryWorkspace({
         value={timeframe}
         onChange={(event) => {
           const tf = event.target.value as ChartTimeframe;
+          const replayRestoreTimestamp =
+            isReplayMode || isReplayPlacementMode
+              ? getReplayRestoreTimestamp()
+              : null;
           // Save drawings and viewport before timeframe change
           pendingRestoreRef.current = {
             drawings: chartRef.current?.exportAllDrawings() ?? [],
-            centerTimestamp: chartRef.current?.getViewportCenterTimestamp() ?? null,
+            centerTimestamp:
+              replayRestoreTimestamp ??
+              chartRef.current?.getViewportCenterTimestamp() ??
+              null,
             windowSeconds: chartRef.current?.getVisibleWindowSeconds() ?? null,
           };
+          if (isReplayMode || isReplayPlacementMode) {
+            setIsReplayPlaying(false);
+          }
           setTimeframe(tf);
           onTimeframeChange?.(tf);
         }}

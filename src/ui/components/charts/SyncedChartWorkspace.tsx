@@ -133,6 +133,7 @@ const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
 
 const TIMEFRAMES: ChartTimeframe[] = ["M1", "M5", "M15", "H1"];
 const EDGE_FETCH_THRESHOLD = 10;
+const EDGE_FETCH_RELEASE_THRESHOLD = 24;
 const FETCH_THROTTLE_MS = 160;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1151,6 +1152,8 @@ export function SyncedChartWorkspace({
   const pendingPrevFetchRef = useRef(false);
   const pendingNextFetchRef = useRef(false);
   const lastVisibleRangeRef = useRef<{ from: number; to: number } | null>(null);
+  const edgeFetchArmedRef = useRef({ left: true, right: true });
+  const suppressEdgeFetchUntilRef = useRef(0);
   const chartRef = useRef<TradeCandlestickChartRef | null>(null);
   const [isChartInstanceReady, setIsChartInstanceReady] = useState(false);
   const chartAreaRef = useRef<HTMLDivElement>(null);
@@ -1444,7 +1447,7 @@ export function SyncedChartWorkspace({
     setReplayPlacementTimestamp(null);
     pendingReplayViewportRef.current = null;
     replayViewportRef.current = null;
-  }, [selection?.broker, selection?.symbol, timeframe]);
+  }, [selection?.broker, selection?.symbol]);
 
   useEffect(() => {
     return () => {
@@ -3137,6 +3140,17 @@ export function SyncedChartWorkspace({
     return findNearestReplayIndex(fullDisplayData, anchorTimestamp);
   }, [focusTimestamp, fullDisplayData]);
 
+  const getReplayRestoreTimestamp = useCallback(() => {
+    return (
+      replayCursorTimestamp ??
+      replayPlacementTimestamp ??
+      replayStartTimestamp ??
+      chartRef.current?.getViewportCenterTimestamp() ??
+      focusTimestamp ??
+      null
+    );
+  }, [focusTimestamp, replayCursorTimestamp, replayPlacementTimestamp, replayStartTimestamp]);
+
   const handleReplayToggle = useCallback(() => {
     if (isReplayMode) {
       exitReplay();
@@ -3266,11 +3280,8 @@ export function SyncedChartWorkspace({
   useEffect(() => {
     if (!isReplayMode) return;
     if (fullDisplayData.length === 0) {
+      if (isLoading) return;
       setIsReplayPlaying(false);
-      setReplayIndex(null);
-      setReplayStartIndex(null);
-      setReplayCursorTimestamp(null);
-      setReplayStartTimestamp(null);
       return;
     }
 
@@ -3293,7 +3304,14 @@ export function SyncedChartWorkspace({
     setReplayIndex(nextCursorIndex);
     setReplayStartTimestamp(fullDisplayData[nextStartIndex]?.timestamp ?? resolvedStartTimestamp);
     setReplayCursorTimestamp(fullDisplayData[nextCursorIndex]?.timestamp ?? resolvedCursorTimestamp);
-  }, [fullDisplayData, getReplayAnchorIndex, isReplayMode, replayCursorTimestamp, replayStartTimestamp]);
+  }, [
+    fullDisplayData,
+    getReplayAnchorIndex,
+    isLoading,
+    isReplayMode,
+    replayCursorTimestamp,
+    replayStartTimestamp,
+  ]);
 
   useEffect(() => {
     if (!isReplayMode || !isReplayPlaying || effectiveReplayIndex == null) return;
@@ -3376,12 +3394,14 @@ export function SyncedChartWorkspace({
         const latestTimestamp =
           fullDisplayData[fullDisplayData.length - 1]?.timestamp ?? null;
         if (latestTimestamp != null) {
+          suppressEdgeFetchUntilRef.current = Date.now() + 600;
           chart.scrollToTimestamp(
             latestTimestamp,
             pending.windowSeconds ?? undefined
           );
         }
       } else if (pending.centerTimestamp != null) {
+        suppressEdgeFetchUntilRef.current = Date.now() + 600;
         chart.scrollToTimestamp(
           pending.centerTimestamp,
           pending.windowSeconds ?? undefined
@@ -3501,6 +3521,14 @@ export function SyncedChartWorkspace({
       if (data.length === 0) return;
       const visibleBarsLength = displayData.length;
       if (visibleBarsLength === 0) return;
+      if (Date.now() < suppressEdgeFetchUntilRef.current) {
+        lastVisibleRangeRef.current = { from, to };
+        return;
+      }
+      if (isLoading || pendingRestoreRef.current || pendingGoToTimestampRef.current != null) {
+        lastVisibleRangeRef.current = { from, to };
+        return;
+      }
 
       if (isReplayMode) {
         const nextRange = { from, to };
@@ -3519,10 +3547,20 @@ export function SyncedChartWorkspace({
       const rightIndex = Math.ceil(to);
       const nearLeft = leftIndex <= EDGE_FETCH_THRESHOLD;
       const nearRight = rightIndex >= visibleBarsLength - EDGE_FETCH_THRESHOLD;
+      const awayFromLeft = leftIndex > EDGE_FETCH_RELEASE_THRESHOLD;
+      const awayFromRight = rightIndex < visibleBarsLength - EDGE_FETCH_RELEASE_THRESHOLD;
 
-      let shouldFetchPrev = nearLeft;
+      if (awayFromLeft) {
+        edgeFetchArmedRef.current.left = true;
+      }
+      if (awayFromRight) {
+        edgeFetchArmedRef.current.right = true;
+      }
+
+      let shouldFetchPrev = nearLeft && edgeFetchArmedRef.current.left;
       let shouldFetchNext =
         nearRight &&
+        edgeFetchArmedRef.current.right &&
         (!isReplayMode ||
           effectiveReplayIndex == null ||
           effectiveReplayIndex >= fullDisplayData.length - 1);
@@ -3540,6 +3578,7 @@ export function SyncedChartWorkspace({
       }
 
       if (shouldFetchPrev) {
+        edgeFetchArmedRef.current.left = false;
         const now = Date.now();
         if (fetchingPrevRef.current) {
           pendingPrevFetchRef.current = true;
@@ -3549,6 +3588,7 @@ export function SyncedChartWorkspace({
       }
 
       if (shouldFetchNext) {
+        edgeFetchArmedRef.current.right = false;
         const now = Date.now();
         if (fetchingNextRef.current) {
           pendingNextFetchRef.current = true;
@@ -3562,6 +3602,7 @@ export function SyncedChartWorkspace({
       displayData.length,
       effectiveReplayIndex,
       fullDisplayData.length,
+      isLoading,
       isReplayMode,
       runQueuedNextFetch,
       runQueuedPreviousFetch,
@@ -3817,6 +3858,8 @@ export function SyncedChartWorkspace({
     lastPrevFetchRef.current = 0;
     lastNextFetchRef.current = 0;
     lastVisibleRangeRef.current = null;
+    edgeFetchArmedRef.current = { left: true, right: true };
+    suppressEdgeFetchUntilRef.current = Date.now() + 600;
   }, [selection?.broker, selection?.symbol, timeframe]);
 
   useEffect(() => {
@@ -3826,8 +3869,10 @@ export function SyncedChartWorkspace({
 
     pendingGoToTimestampRef.current = null;
     window.setTimeout(() => {
+      suppressEdgeFetchUntilRef.current = Date.now() + 600;
       chartRef.current?.scrollToTimestamp(pendingTimestamp);
       lastVisibleRangeRef.current = null;
+      edgeFetchArmedRef.current = { left: true, right: true };
     }, 80);
   }, [displayData, isLoading]);
 
@@ -4231,8 +4276,14 @@ export function SyncedChartWorkspace({
                 onClick={() => {
                   persistCurrentDrawings();
                   const drawings = chartRef.current?.exportAllDrawings() ?? [];
+                  const replayRestoreTimestamp =
+                    isReplayMode || isReplayPlacementMode
+                      ? getReplayRestoreTimestamp()
+                      : null;
                   const centerTimestamp =
-                    chartRef.current?.getViewportCenterTimestamp() ?? null;
+                    replayRestoreTimestamp ??
+                    chartRef.current?.getViewportCenterTimestamp() ??
+                    null;
                   const latestDisplayTimestamp =
                     availableDateRange?.to ??
                     centerTimestamp;
@@ -4245,6 +4296,9 @@ export function SyncedChartWorkspace({
                     windowSeconds: chartRef.current?.getVisibleWindowSeconds() ?? null,
                     preferLatestTimestamp: liveVisualsEnabled,
                   };
+                  if (isReplayMode || isReplayPlacementMode) {
+                    setIsReplayPlaying(false);
+                  }
                   setTimeframeRestoreAnchor({
                     centerTimestamp: liveVisualsEnabled
                       ? latestDisplayTimestamp

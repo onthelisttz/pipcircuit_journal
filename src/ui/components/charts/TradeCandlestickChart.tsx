@@ -1357,6 +1357,14 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         candleCountdownLabel != null &&
         candleCountdownPriceLabel != null;
 
+    const shouldBridgeTouchInteraction = useCallback((options?: { hitToolId?: string | null }) => {
+        return (
+            drawingToolRef.current != null ||
+            replayPlacementModeRef.current ||
+            options?.hitToolId != null
+        );
+    }, []);
+
     const canShowCrosshairQuickActions = Boolean(
         onCrosshairQuickAlertCreate || onCrosshairQuickOrderCreate
     );
@@ -3397,6 +3405,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
 
         const chartElement = chart.chartElement();
         let bridgedPointerId: number | null = null;
+        let bridgedTouchInteractionActive = false;
         let lastTouchUpTime = 0;
         let lastTouchUpPoint: { x: number; y: number } | null = null;
         const TOUCH_DBL_TAP_MS = 320;
@@ -3428,7 +3437,13 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
 
         const handleTouchBridgePointerDown = (event: PointerEvent) => {
             if (event.pointerType === "mouse" || !event.isPrimary) return;
+            const point = getChartPointFromClient(event.clientX, event.clientY);
+            const hitToolId = point
+                ? getLineToolsInternal()?._interactionManager?._hitTest?.(point)?.tool?.id() ?? null
+                : null;
+            if (!shouldBridgeTouchInteraction({ hitToolId })) return;
             bridgedPointerId = event.pointerId;
+            bridgedTouchInteractionActive = true;
             applyChartInteractionLock(true);
             event.preventDefault();
             dispatchSyntheticMouseEvent(chartElement, "mousedown", event);
@@ -3436,14 +3451,17 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
 
         const handleTouchBridgePointerMove = (event: PointerEvent) => {
             if (event.pointerType === "mouse" || event.pointerId !== bridgedPointerId) return;
+            if (!bridgedTouchInteractionActive) return;
             event.preventDefault();
             dispatchSyntheticMouseEvent(chartElement, "mousemove", event);
         };
 
         const handleTouchBridgePointerUp = (event: PointerEvent) => {
             if (event.pointerType === "mouse" || event.pointerId !== bridgedPointerId) return;
-            event.preventDefault();
-            dispatchSyntheticMouseEvent(window, "mouseup", event);
+            if (bridgedTouchInteractionActive) {
+                event.preventDefault();
+                dispatchSyntheticMouseEvent(window, "mouseup", event);
+            }
 
             const now = performance.now();
             const nextPoint = { x: event.clientX, y: event.clientY };
@@ -3462,6 +3480,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             }
 
             bridgedPointerId = null;
+            bridgedTouchInteractionActive = false;
             applyChartInteractionLock(false);
         };
 
@@ -3850,6 +3869,11 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             }
 
             if (isTouchLikePointer) {
+                if (!shouldBridgeTouchInteraction({ hitToolId })) {
+                    selectionSnapshotRef.current = null;
+                    duplicateDragPlanRef.current = null;
+                    return;
+                }
                 event.preventDefault();
                 selectionSnapshotRef.current = null;
                 duplicateDragPlanRef.current = null;
@@ -4151,6 +4175,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         queueSelectionUpdate,
         readDrawingToolById,
         removeAllLineToolsSafely,
+        shouldBridgeTouchInteraction,
         syncSelectionByIds,
         updateLongShortText,
         clearTradeHistoryPlugins,
