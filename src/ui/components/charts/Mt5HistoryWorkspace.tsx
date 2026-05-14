@@ -24,6 +24,7 @@ import {
   RotateCcw,
   SkipBack,
   SkipForward,
+  Trash2,
   X,
   Pencil,
   MoreVertical,
@@ -776,6 +777,7 @@ export function Mt5HistoryWorkspace({
   const [rectangleFillColor, setRectangleFillColor] = useState("#8b5cf6");
   const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
   const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
+  const [drawingsHidden, setDrawingsHidden] = useState(false);
   const [calloutText, setCalloutText] = useState("Text");
   const [calloutFontSize, setCalloutFontSize] = useState(18);
   const [calloutTextColor, setCalloutTextColor] = useState("#00ff66");
@@ -877,6 +879,14 @@ export function Mt5HistoryWorkspace({
     () => hexToRgba(rectangleFillColor, rectangleFillOpacity),
     [rectangleFillColor, rectangleFillOpacity]
   );
+  const deleteSelectedDrawings = useCallback(() => {
+    chartRef.current?.deleteSelectedDrawings();
+    setSelectedDrawingTool(null);
+  }, []);
+  const toggleDrawingsHidden = useCallback(() => {
+    setDrawingsHidden((current) => !current);
+    setSelectedDrawingTool(null);
+  }, []);
 
   useEffect(() => {
     if (selectedDrawingTool !== "Callout") return;
@@ -2310,6 +2320,17 @@ export function Mt5HistoryWorkspace({
                   <input type="color" value={calloutBoxColor} onChange={(event) => setCalloutBoxColor(event.target.value)} className="h-4 w-4 cursor-pointer rounded border border-border bg-transparent p-0" aria-label="Box color" />
                   <input type="number" min={10} max={48} step={1} value={calloutFontSize} onChange={(event) => setCalloutFontSize(Math.max(10, Math.min(48, Number(event.target.value) || 18)))} className="h-5 w-12 rounded border border-border bg-background px-1 text-[10px] text-foreground" aria-label="Font size" />
                 </div>
+                {selectedDrawingTool ? (
+                  <button
+                    type="button"
+                    onClick={deleteSelectedDrawings}
+                    className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                    title="Delete selected drawing"
+                    aria-label="Delete selected drawing"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
               </>
             );
           })()}
@@ -2392,6 +2413,17 @@ export function Mt5HistoryWorkspace({
                 <input type="number" min={10} max={48} step={1} value={calloutFontSize} onChange={(event) => setCalloutFontSize(Math.max(10, Math.min(48, Number(event.target.value) || 18)))} className="h-5 w-12 rounded border border-border bg-background px-1 text-[10px] text-foreground" aria-label="Font size" />
               </div>
             )}
+            {selectedDrawingTool ? (
+              <button
+                type="button"
+                onClick={deleteSelectedDrawings}
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                title="Delete selected drawing"
+                aria-label="Delete selected drawing"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
           </>
         );
       })()}
@@ -2479,9 +2511,22 @@ export function Mt5HistoryWorkspace({
             <button
               type="button"
               onClick={() => {
+                toggleDrawingsHidden();
+                closeCompactActions();
+              }}
+              disabled={!selectedTimeframe}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+            >
+              {drawingsHidden ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+              {drawingsHidden ? "Show Drawings" : "Hide Drawings"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
                 chartRef.current?.removeAllDrawingTools();
                 setDrawingTool(null);
                 setSelectedDrawingTool(null);
+                setDrawingsHidden(false);
                 closeCompactActions();
               }}
               disabled={!selectedTimeframe}
@@ -2539,6 +2584,7 @@ export function Mt5HistoryWorkspace({
           isLoading={isBarsLoading}
           drawingTool={drawingTool}
           continuousDrawing={continuousDrawingEnabled}
+          drawingsHidden={drawingsHidden}
           drawingLineColor={rectangleFillColor}
           rectangleFillColor={drawingFillRgba}
           rectangleBorderColor={rectangleFillColor}

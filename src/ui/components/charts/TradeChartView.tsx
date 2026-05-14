@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Trade, ChartTimeframe } from "@domain/entities";
-import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw, SkipBack, SkipForward, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, EyeOff, Pause, Play, RotateCcw, SkipBack, SkipForward, Trash2, X } from "lucide-react";
 import { TradeCandlestickChart } from "./TradeCandlestickChart";
 import { ProfitTimelineChart } from "./ProfitTimelineChart";
 import { TimeframeSelector } from "./TimeframeSelector";
@@ -132,6 +132,7 @@ export function TradeChartView({
     const [rectangleFillColor, setRectangleFillColor] = useState("#8b5cf6");
     const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
     const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
+    const [drawingsHidden, setDrawingsHidden] = useState(false);
     const [calloutText, setCalloutText] = useState("Text");
     const [calloutFontSize, setCalloutFontSize] = useState(18);
     const [calloutTextColor, setCalloutTextColor] = useState("#00ff66");
@@ -323,6 +324,14 @@ export function TradeChartView({
         () => hexToRgba(rectangleFillColor, rectangleFillOpacity),
         [rectangleFillColor, rectangleFillOpacity]
     );
+    const deleteSelectedDrawings = useCallback(() => {
+        candlestickChartRef.current?.deleteSelectedDrawings();
+        setSelectedDrawingTool(null);
+    }, []);
+    const toggleDrawingsHidden = useCallback(() => {
+        setDrawingsHidden((current) => !current);
+        setSelectedDrawingTool(null);
+    }, []);
 
     useEffect(() => {
         if (selectedDrawingTool !== "Callout") return;
@@ -524,6 +533,7 @@ export function TradeChartView({
             candlestickChartRef.current?.removeAllDrawingTools();
             setDrawingTool(null);
             setSelectedDrawingTool(null);
+            setDrawingsHidden(false);
         }
 
         pendingTradeCenterRef.current = true;
@@ -963,6 +973,26 @@ export function TradeChartView({
                                             />
                                         </div>
                                     ) : null}
+                                    <button
+                                        type="button"
+                                        onClick={toggleDrawingsHidden}
+                                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                                        title={drawingsHidden ? "Show drawings" : "Hide drawings"}
+                                        aria-label={drawingsHidden ? "Show drawings" : "Hide drawings"}
+                                    >
+                                        {drawingsHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                                    </button>
+                                    {selectedDrawingTool ? (
+                                        <button
+                                            type="button"
+                                            onClick={deleteSelectedDrawings}
+                                            className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                                            title="Delete selected drawing"
+                                            aria-label="Delete selected drawing"
+                                        >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                    ) : null}
                                 </>
                             );
                         })()}
@@ -1039,6 +1069,7 @@ export function TradeChartView({
                         isLoading={isLoading}
                         drawingTool={drawingTool}
                         continuousDrawing={continuousDrawingEnabled}
+                        drawingsHidden={drawingsHidden}
                         drawingLineColor={rectangleFillColor}
                         rectangleFillColor={drawingFillRgba}
                         rectangleBorderColor={rectangleFillColor}

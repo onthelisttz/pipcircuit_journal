@@ -32,6 +32,7 @@ import {
   RotateCcw,
   SkipBack,
   SkipForward,
+  Trash2,
   X,
 } from "lucide-react";
 import type { ChartBar, ChartTimeframe, Trade } from "@domain/entities";
@@ -131,12 +132,6 @@ const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
 ];
 
 const TIMEFRAMES: ChartTimeframe[] = ["M1", "M5", "M15", "H1"];
-const TIMEFRAME_MIN_RESTORE_WINDOW_SECONDS: Partial<Record<ChartTimeframe, number>> = {
-  M1: 3 * 60 * 60,
-  M5: 12 * 60 * 60,
-  M15: 2 * 24 * 60 * 60,
-  H1: 10 * 24 * 60 * 60,
-};
 const EDGE_FETCH_THRESHOLD = 10;
 const FETCH_THROTTLE_MS = 160;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -1093,6 +1088,7 @@ export function SyncedChartWorkspace({
   const [rectangleFillColor, setRectangleFillColor] = useState("#00ff66");
   const [rectangleFillOpacity, setRectangleFillOpacity] = useState(0.2);
   const [selectedDrawingTool, setSelectedDrawingTool] = useState<DrawingToolType | null>(null);
+  const [drawingsHidden, setDrawingsHidden] = useState(false);
   const [calloutText, setCalloutText] = useState("Text");
   const [calloutFontSize, setCalloutFontSize] = useState(18);
   const [calloutTextColor, setCalloutTextColor] = useState("#00ff66");
@@ -1327,7 +1323,7 @@ export function SyncedChartWorkspace({
         );
 
       let snapshot = indexedDbSnapshot;
-      let shouldNormalizeIndexedDbKey =
+      const shouldNormalizeIndexedDbKey =
         snapshot != null && matchedIndexedDbKey != null && matchedIndexedDbKey !== currentDrawingStorageKey;
       let migratedFromLocalStorage = false;
 
@@ -3856,6 +3852,14 @@ export function SyncedChartWorkspace({
     () => hexToRgba(rectangleFillColor, rectangleFillOpacity),
     [rectangleFillColor, rectangleFillOpacity]
   );
+  const deleteSelectedDrawings = useCallback(() => {
+    chartRef.current?.deleteSelectedDrawings();
+    setSelectedDrawingTool(null);
+  }, []);
+  const toggleDrawingsHidden = useCallback(() => {
+    setDrawingsHidden((current) => !current);
+    setSelectedDrawingTool(null);
+  }, []);
   const chartLoadErrorMessage = error?.message ?? null;
   const liveModeIssueMessage = liveError ?? null;
   const displayedAlertIssueMessage = alertActionError ?? priceAlertsError ?? null;
@@ -4815,6 +4819,17 @@ export function SyncedChartWorkspace({
                     className="h-5 w-14 rounded border border-border bg-background px-1.5 text-[10px] text-foreground"
                   />
                 </div>
+                {selectedDrawingTool ? (
+                  <button
+                    type="button"
+                    onClick={deleteSelectedDrawings}
+                    className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                    title="Delete selected drawing"
+                    aria-label="Delete selected drawing"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
               </>
             );
           })()}
@@ -4978,6 +4993,17 @@ export function SyncedChartWorkspace({
                 />
               </div>
             )}
+            {selectedDrawingTool ? (
+              <button
+                type="button"
+                onClick={deleteSelectedDrawings}
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                title="Delete selected drawing"
+                aria-label="Delete selected drawing"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
           </>
         );
       })()}
@@ -5067,10 +5093,23 @@ export function SyncedChartWorkspace({
             <button
               type="button"
               onClick={() => {
+                toggleDrawingsHidden();
+                closeCompactActions();
+              }}
+              disabled={!selection}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+            >
+              {drawingsHidden ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+              {drawingsHidden ? "Show Drawings" : "Hide Drawings"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
                 chartRef.current?.removeAllDrawingTools();
                 persistCurrentDrawings(undefined, { allowEmptyOverwrite: true });
                 setDrawingTool(null);
                 setSelectedDrawingTool(null);
+                setDrawingsHidden(false);
                 closeCompactActions();
               }}
               disabled={!selection}
@@ -5278,6 +5317,7 @@ export function SyncedChartWorkspace({
           isLoading={isLoading}
           drawingTool={drawingTool}
           continuousDrawing={continuousDrawingEnabled}
+          drawingsHidden={drawingsHidden}
           drawingLineColor={rectangleFillColor}
           rectangleFillColor={drawingFillRgba}
           rectangleBorderColor={rectangleFillColor}

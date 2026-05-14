@@ -89,6 +89,7 @@ type LineToolsInternalApi = LineToolsApi & {
 };
 
 const EMPTY_REPLAY_FUTURE_TIMESTAMPS: number[] = [];
+const LONG_SHORT_DRAWING_META_KEY = "__personalJournal";
 
 function isDrawingToolType(toolType: string): toolType is DrawingToolType {
     return (
@@ -101,6 +102,34 @@ function isDrawingToolType(toolType: string): toolType is DrawingToolType {
         toolType === "LongShortPosition" ||
         toolType === "Callout"
     );
+}
+
+function areLongShortLabelsVisible(options?: Record<string, unknown>): boolean {
+    const meta = options?.[LONG_SHORT_DRAWING_META_KEY];
+    return (
+        meta != null &&
+        typeof meta === "object" &&
+        (meta as { labelsVisible?: unknown }).labelsVisible === true
+    );
+}
+
+function withLongShortLabelsVisible(
+    options: Record<string, unknown> | undefined,
+    labelsVisible: boolean
+): Record<string, unknown> {
+    const meta =
+        options?.[LONG_SHORT_DRAWING_META_KEY] != null &&
+        typeof options[LONG_SHORT_DRAWING_META_KEY] === "object"
+            ? (options[LONG_SHORT_DRAWING_META_KEY] as Record<string, unknown>)
+            : {};
+
+    return {
+        ...(options ?? {}),
+        [LONG_SHORT_DRAWING_META_KEY]: {
+            ...meta,
+            labelsVisible,
+        },
+    };
 }
 
 function buildCalloutTextOptions(config: {
@@ -695,6 +724,8 @@ export interface TradeCandlestickChartProps {
     longShortLots?: number;
     /** Symbol for Long/Short tool P&L and pips */
     longShortSymbol?: string;
+    /** Temporarily hide user drawings without clearing them */
+    drawingsHidden?: boolean;
     /** Notify when a drawing tool is selected */
     onDrawingSelectionChange?: (selectedTool: DrawingToolType | null) => void;
     /** Notify when interactive drawing finishes so parent can exit tool mode */
@@ -843,10 +874,39 @@ function sameLiveTradeOverlayItems(left: LiveTradeOverlayItem[], right: LiveTrad
     return true;
 }
 
+type LongShortLabelOverlayItem = {
+    id: string;
+    x: number;
+    y: number;
+    labelsVisible: boolean;
+};
+
+function sameLongShortLabelOverlayItems(
+    left: LongShortLabelOverlayItem[],
+    right: LongShortLabelOverlayItem[]
+): boolean {
+    if (left.length !== right.length) return false;
+
+    for (let index = 0; index < left.length; index += 1) {
+        const a = left[index];
+        const b = right[index];
+        if (a.id !== b.id || a.labelsVisible !== b.labelsVisible) {
+            return false;
+        }
+
+        if (Math.abs(a.x - b.x) > 0.5 || Math.abs(a.y - b.y) > 0.5) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 export interface TradeCandlestickChartRef {
     fitContent: () => void;
     scrollToTrade: (zoomOutMultiplier?: number) => void;
     removeAllDrawingTools: () => void;
+    deleteSelectedDrawings: () => void;
     cancelActiveDrawing: () => void;
     exportAllDrawings: () => DrawingToolExport[];
     importDrawings: (drawings: DrawingToolExport[]) => void;
@@ -900,6 +960,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     calloutBoxColor = "rgba(0,0,0,0.88)",
     longShortLots = 1,
     longShortSymbol,
+    drawingsHidden = false,
     onDrawingSelectionChange,
     onDrawingToolComplete,
     onDrawingToolCancel,
@@ -975,6 +1036,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         right: null,
     });
     const [liveTradeOverlayItems, setLiveTradeOverlayItems] = useState<LiveTradeOverlayItem[]>([]);
+    const [longShortLabelOverlayItems, setLongShortLabelOverlayItems] = useState<LongShortLabelOverlayItem[]>([]);
     const [liveTradeOverlayPadRight, setLiveTradeOverlayPadRight] = useState(0);
     const [liveTradePreviewPrices, setLiveTradePreviewPrices] = useState<Record<string, number>>({});
     const [liveTradeDragSession, setLiveTradeDragSession] = useState<LiveTradeHtmlDragSession | null>(null);
@@ -1012,10 +1074,13 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     const calloutBoxColorRef = useRef<string>(calloutBoxColor);
     const longShortLotsRef = useRef<number>(longShortLots);
     const longShortSymbolRef = useRef<string | undefined>(longShortSymbol);
+    const drawingsHiddenRef = useRef<boolean>(drawingsHidden);
+    const hiddenDrawingsRef = useRef<DrawingToolExport[]>([]);
     const heightRef = useRef<number>(height);
     const overlayFrameRef = useRef<number | null>(null);
     const scheduleTimeGuideOverlayRefreshRef = useRef<() => void>(() => {});
     const scheduleReplayPlacementOverlayRefreshRef = useRef<() => void>(() => {});
+    const refreshLongShortLabelOverlayRef = useRef<() => void>(() => {});
     const selectedDrawingIdsRef = useRef<string[]>([]);
     const selectionSnapshotRef = useRef<Map<string, DrawingToolExport> | null>(null);
     const duplicateDragPlanRef = useRef<{
@@ -1852,6 +1917,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             refreshTimeGuideOverlay();
             refreshCandleCountdownOverlay();
             refreshLiveTradeOverlay();
+            refreshLongShortLabelOverlayRef.current();
         });
     }, [refreshCandleCountdownOverlay, refreshLiveTradeOverlay, refreshTimeGuideOverlay]);
 
@@ -1902,6 +1968,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             refreshReplayPlacementOverlay();
             refreshCandleCountdownOverlay();
             refreshLiveTradeOverlay();
+            refreshLongShortLabelOverlayRef.current();
         });
     }, [refreshCandleCountdownOverlay, refreshLiveTradeOverlay, refreshReplayPlacementOverlay, refreshTimeGuideOverlay]);
 
@@ -2055,6 +2122,18 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         return `${sign}${rounded}p`;
     };
 
+    const readLongShortLabelVisibility = useCallback((toolId: string) => {
+        const raw = lineToolsRef.current?.getLineToolByID?.(toolId);
+        if (!raw) return false;
+
+        try {
+            const parsed = JSON.parse(raw) as Array<{ options?: Record<string, unknown> }>;
+            return areLongShortLabelsVisible(parsed[0]?.options);
+        } catch {
+            return false;
+        }
+    }, []);
+
     const updateLongShortText = useCallback((tool: {
         id: string;
         points: Array<{ price: number }>;
@@ -2084,13 +2163,15 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         const riskText = `Risk ${formatMoney(riskDollar)} · ${formatPips(riskPips)}`;
         const rewardText = `Reward ${formatMoney(rewardDollar)} · ${formatPips(rewardPips)}`;
 
+        const labelsVisible = readLongShortLabelVisibility(tool.id);
+
         const baseTextStyle = {
             alignment: "left",
             forceTextAlign: true,
             padding: 2,
             font: {
                 color: "rgba(255,255,255,0.92)",
-                size: 13,
+                size: 11,
                 bold: false,
                 family: "Inter, sans-serif",
             },
@@ -2125,12 +2206,13 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             id: tool.id,
             toolType: "LongShortPosition",
             options: {
-                showAutoText: true,
+                ...withLongShortLabelsVisible(undefined, labelsVisible),
+                showAutoText: labelsVisible,
                 entryStopLossText: { ...baseTextStyle, value: riskText },
                 entryPtText: { ...rewardBox, value: rewardText },
             },
         } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
-    }, []);
+    }, [readLongShortLabelVisibility]);
 
     useEffect(() => {
         onDrawingSelectionChangeRef.current = onDrawingSelectionChange;
@@ -2161,6 +2243,10 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     useEffect(() => {
         onDrawingToolCompleteRef.current = onDrawingToolComplete;
     }, [onDrawingToolComplete]);
+
+    useEffect(() => {
+        drawingsHiddenRef.current = drawingsHidden;
+    }, [drawingsHidden]);
 
     useEffect(() => {
         onDrawingToolCancelRef.current = onDrawingToolCancel;
@@ -2293,7 +2379,8 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
 
             if (toolType === "LongShortPosition") {
                 return {
-                    showAutoText: true,
+                    ...withLongShortLabelsVisible(undefined, false),
+                    showAutoText: false,
                     showPriceAxisLabels: false,
                     showTimeAxisLabels: false,
                     initialWidthSeconds: defaultLongShortWidthSeconds(timeframe),
@@ -2463,6 +2550,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         return fallbackExports;
     }, [getLineToolsInternal, parseDrawingToolExports]);
 
+
     const removeAllLineToolsSafely = useCallback(() => {
         const lineTools = lineToolsRef.current;
         if (!lineTools) return;
@@ -2543,6 +2631,88 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         })),
     }), [normalizeDrawingTimestampForCurrentData]);
 
+    const refreshLongShortLabelOverlay = useCallback(() => {
+        if (drawingsHiddenRef.current) {
+            setLongShortLabelOverlayItems((current) => (current.length === 0 ? current : []));
+            return;
+        }
+
+        const chart = chartRef.current;
+        const series = seriesRef.current;
+        if (!chart || !series) {
+            setLongShortLabelOverlayItems((current) => (current.length === 0 ? current : []));
+            return;
+        }
+
+        const paneSize = chart.paneSize();
+        const nextItems = exportCurrentDrawings()
+            .filter((tool) => tool.toolType === "LongShortPosition")
+            .flatMap((tool) => {
+                const normalizedTool = normalizeDrawingForCurrentData(tool);
+                let left = Number.POSITIVE_INFINITY;
+                let right = Number.NEGATIVE_INFINITY;
+                let top = Number.POSITIVE_INFINITY;
+                let bottom = Number.NEGATIVE_INFINITY;
+                let hasCoordinates = false;
+
+                for (const point of normalizedTool.points) {
+                    const x = chart.timeScale().timeToCoordinate(drawingTimestampToChartTime(point.timestamp));
+                    const y = series.priceToCoordinate(point.price);
+                    if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) {
+                        continue;
+                    }
+
+                    hasCoordinates = true;
+                    left = Math.min(left, x);
+                    right = Math.max(right, x);
+                    top = Math.min(top, y);
+                    bottom = Math.max(bottom, y);
+                }
+
+                if (!hasCoordinates) {
+                    return [];
+                }
+
+                const isOutsidePane =
+                    right < 0 ||
+                    left > paneSize.width ||
+                    bottom < 0 ||
+                    top > paneSize.height;
+                if (isOutsidePane) {
+                    return [];
+                }
+
+                return [{
+                    id: normalizedTool.id,
+                    x: Math.min(Math.max(12, right - 10), Math.max(12, paneSize.width - 12)),
+                    y: Math.min(Math.max(12, top + 10), Math.max(12, paneSize.height - 12)),
+                    labelsVisible: areLongShortLabelsVisible(normalizedTool.options),
+                }];
+            });
+
+        setLongShortLabelOverlayItems((current) =>
+            sameLongShortLabelOverlayItems(current, nextItems) ? current : nextItems
+        );
+    }, [exportCurrentDrawings, normalizeDrawingForCurrentData]);
+
+    useEffect(() => {
+        refreshLongShortLabelOverlayRef.current = refreshLongShortLabelOverlay;
+    }, [refreshLongShortLabelOverlay]);
+
+    const refreshVisibleLongShortDrawings = useCallback(() => {
+        if (drawingsHiddenRef.current) return;
+
+        const longShortTools = exportCurrentDrawings().filter(
+            (tool) => tool.toolType === "LongShortPosition"
+        );
+        for (const tool of longShortTools) {
+            updateLongShortText({
+                id: tool.id,
+                points: tool.points,
+            });
+        }
+    }, [exportCurrentDrawings, updateLongShortText]);
+
     const commitSelectionState = useCallback((selectedTools: DrawingToolExport[]) => {
         selectedDrawingIdsRef.current = selectedTools.map((tool) => tool.id);
         if (selectedTools.length === 0) {
@@ -2579,6 +2749,26 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         const matches = parseDrawingToolExports(lineToolsRef.current.getLineToolByID?.(id));
         return matches[0] ?? null;
     }, [parseDrawingToolExports]);
+
+    const setSelectedLongShortLabelsVisible = useCallback((toolId: string, labelsVisible: boolean) => {
+        const tool = readDrawingToolById(toolId);
+        if (!tool || tool.toolType !== "LongShortPosition") return;
+
+        lineToolsRef.current?.applyLineToolOptions({
+            id: toolId,
+            toolType: "LongShortPosition",
+            options: {
+                ...withLongShortLabelsVisible(tool.options, labelsVisible),
+                showAutoText: labelsVisible,
+            },
+        } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
+
+        updateLongShortText({
+            id: tool.id,
+            points: tool.points,
+        });
+        scheduleTimeGuideOverlayRefreshRef.current();
+    }, [readDrawingToolById, updateLongShortText]);
 
     const getSelectedCalloutConfig = useCallback((): {
         text: string;
@@ -2679,6 +2869,17 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
 
         const normalizedDrawings = drawings.map(normalizeDrawingForCurrentData);
 
+        if (drawingsHiddenRef.current) {
+            hiddenDrawingsRef.current = normalizedDrawings;
+            const visibleIds = exportCurrentDrawings().map((drawing) => drawing.id);
+            if (visibleIds.length > 0) {
+                removeLineToolsByIdSafely(visibleIds);
+            }
+            updateDrawingSelection();
+            scheduleTimeGuideOverlayRefreshRef.current();
+            return;
+        }
+
         const toolsMap = getLineToolsInternal()?._tools;
         const incomingIds = new Set(normalizedDrawings.map((drawing) => drawing.id));
         const staleIds: string[] = [];
@@ -2710,7 +2911,16 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         }
 
         updateDrawingSelection();
-    }, [getLineToolsInternal, normalizeDrawingForCurrentData, removeLineToolsByIdSafely, updateDrawingSelection]);
+        refreshVisibleLongShortDrawings();
+        scheduleTimeGuideOverlayRefreshRef.current();
+    }, [
+        exportCurrentDrawings,
+        getLineToolsInternal,
+        normalizeDrawingForCurrentData,
+        refreshVisibleLongShortDrawings,
+        removeLineToolsByIdSafely,
+        updateDrawingSelection,
+    ]);
 
     const syncSelectionByIds = useCallback((ids: string[], primaryId?: string | null) => {
         const lineTools = getLineToolsInternal();
@@ -2745,6 +2955,47 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     const clearAllDrawingSelections = useCallback(() => {
         syncSelectionByIds([]);
     }, [syncSelectionByIds]);
+
+    const applyDrawingsHiddenState = useCallback((hidden: boolean) => {
+        drawingsHiddenRef.current = hidden;
+
+        if (hidden) {
+            hiddenDrawingsRef.current = exportCurrentDrawings();
+            const visibleIds = hiddenDrawingsRef.current.map((drawing) => drawing.id);
+            if (visibleIds.length > 0) {
+                removeLineToolsByIdSafely(visibleIds);
+            }
+            clearAllDrawingSelections();
+            scheduleTimeGuideOverlayRefreshRef.current();
+            return;
+        }
+
+        if (hiddenDrawingsRef.current.length > 0) {
+            syncImportedDrawings(hiddenDrawingsRef.current);
+        } else {
+            scheduleTimeGuideOverlayRefreshRef.current();
+        }
+    }, [
+        clearAllDrawingSelections,
+        exportCurrentDrawings,
+        removeLineToolsByIdSafely,
+        syncImportedDrawings,
+    ]);
+
+    useEffect(() => {
+        if (!isChartReady) return;
+        applyDrawingsHiddenState(drawingsHidden);
+    }, [applyDrawingsHiddenState, drawingsHidden, isChartReady]);
+
+    const deleteSelectedDrawings = useCallback(() => {
+        if (!lineToolsRef.current) return;
+
+        lineToolsRef.current.removeSelectedLineTools();
+        window.setTimeout(() => {
+            clearAllDrawingSelections();
+            scheduleTimeGuideOverlayRefreshRef.current();
+        }, 0);
+    }, [clearAllDrawingSelections]);
 
     const duplicateDrawings = useCallback((toolsToDuplicate: DrawingToolExport[], offset?: { timestamp: number; price: number }) => {
         if (toolsToDuplicate.length === 0) return [];
@@ -3468,11 +3719,13 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                             buildDrawingToolOptions(toolType)
                         );
                     }
+                    scheduleTimeGuideOverlayRefreshRef.current();
                 }, 0);
                 return;
             }
 
             queueSelectionUpdate();
+            scheduleTimeGuideOverlayRefreshRef.current();
         };
         const handleDoubleClick = (params: {
             selectedLineTool?: {
@@ -4308,35 +4561,9 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
 
     useEffect(() => {
         if (!isChartReady || !lineToolsRef.current) return;
-        const selectedRaw = lineToolsRef.current.getSelectedLineTools?.();
-        if (selectedRaw) {
-            try {
-                const selectedTools = JSON.parse(selectedRaw) as Array<{ id: string; toolType: string; points?: Array<{ price: number }> }>;
-                const selectedLongShort = selectedTools.find((tool) => tool.toolType === "LongShortPosition");
-                if (selectedLongShort?.id && selectedLongShort.points) {
-                    updateLongShortText({ id: selectedLongShort.id, points: selectedLongShort.points });
-                    return;
-                }
-            } catch {
-                // ignore
-            }
-        }
-
-        const lastSelected = lastSelectedDrawingRef.current;
-        if (lastSelected?.toolType === "LongShortPosition") {
-            const raw = lineToolsRef.current.getLineToolByID?.(lastSelected.id);
-            if (!raw) return;
-            try {
-                const parsed = JSON.parse(raw) as Array<{ id: string; toolType: string; points?: Array<{ price: number }> }>;
-                const tool = parsed[0];
-                if (tool?.id && tool.points) {
-                    updateLongShortText({ id: tool.id, points: tool.points });
-                }
-            } catch {
-                // ignore
-            }
-        }
-    }, [isChartReady, longShortLots, longShortSymbol, updateLongShortText]);
+        refreshVisibleLongShortDrawings();
+        scheduleTimeGuideOverlayRefreshRef.current();
+    }, [isChartReady, longShortLots, longShortSymbol, refreshVisibleLongShortDrawings]);
 
     // Handle Delete key to remove selected drawing tools
     useEffect(() => {
@@ -4371,8 +4598,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                     return;
                 }
                 e.preventDefault();
-                lineToolsRef.current?.removeSelectedLineTools();
-                window.setTimeout(() => clearAllDrawingSelections(), 0);
+                deleteSelectedDrawings();
             }
         };
 
@@ -4380,7 +4606,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         return () => {
             window.removeEventListener("keydown", handleKeyDown);
         };
-    }, [cancelActiveDrawing, clearAllDrawingSelections, isChartReady]);
+    }, [cancelActiveDrawing, clearAllDrawingSelections, deleteSelectedDrawings, isChartReady]);
 
     // Keyboard navigation (scroll/zoom) when chart is hovered
     useEffect(() => {
@@ -4506,11 +4732,15 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         },
         scrollToTrade,
         removeAllDrawingTools: () => {
-            removeAllLineToolsSafely();
+            hiddenDrawingsRef.current = [];
+            removeLineToolsByIdSafely(exportCurrentDrawings().map((drawing) => drawing.id));
             clearAllDrawingSelections();
+            scheduleTimeGuideOverlayRefreshRef.current();
         },
+        deleteSelectedDrawings,
         cancelActiveDrawing,
-        exportAllDrawings: () => exportCurrentDrawings(),
+        exportAllDrawings: () =>
+            drawingsHiddenRef.current ? [...hiddenDrawingsRef.current] : exportCurrentDrawings(),
         importDrawings: (drawings: DrawingToolExport[]) => {
             syncImportedDrawings(drawings);
         },
@@ -4561,7 +4791,10 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     }), [
         cancelActiveDrawing,
         clearAllDrawingSelections,
+        deleteSelectedDrawings,
         exportCurrentDrawings,
+        removeLineToolsByIdSafely,
+        scheduleTimeGuideOverlayRefreshRef,
         getSelectedCalloutConfig,
         scrollToTrade,
         syncImportedDrawings,
@@ -5402,6 +5635,31 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                             </div>
                         );
                     })}
+                </div>
+            )}
+
+            {longShortLabelOverlayItems.length > 0 && (
+                <div className="pointer-events-none absolute inset-0 z-[6] overflow-hidden rounded-lg">
+                    {longShortLabelOverlayItems.map((item) => (
+                     <button
+    key={item.id}
+    type="button"
+    onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setSelectedLongShortLabelsVisible(item.id, !item.labelsVisible);
+    }}
+    className="pointer-events-auto absolute flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border border-slate-500/70 bg-slate-900/95 text-[12px] font-semibold leading-none text-slate-50 shadow-lg transition-colors hover:bg-slate-800"
+    style={{
+        left: `${item.x - 20}px`,
+        top: `${item.y}px`,
+    }}
+    title={item.labelsVisible ? "Hide RR labels" : "Show RR labels"}
+    aria-label={item.labelsVisible ? "Hide RR labels" : "Show RR labels"}
+>
+    {item.labelsVisible ? "-" : "+"}
+</button>
+                    ))}
                 </div>
             )}
 

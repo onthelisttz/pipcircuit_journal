@@ -4,6 +4,8 @@ export const REPLAY_SPEED_OPTIONS = [
   { label: "60s", intervalMs: 60_000 },
   { label: "30s", intervalMs: 30_000 },
   { label: "15s", intervalMs: 15_000 },
+  { label: "10s", intervalMs: 10_000 },
+  { label: "5s", intervalMs: 5_000 },
   { label: "0.1x", intervalMs: 1800 },
   { label: "0.25x", intervalMs: 900 },
   { label: "0.5x", intervalMs: 600 },
