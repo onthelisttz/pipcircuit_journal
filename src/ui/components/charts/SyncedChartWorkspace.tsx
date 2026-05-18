@@ -105,6 +105,13 @@ const CHART_NOTICE_DISMISS_MS = 10_000;
 const SYNCED_CHART_DISPLAY_OFFSET_MS = 3 * 60 * 60 * 1000;
 const ALERT_SOUND_PATH = "/sounds/price-alert-reached.wav";
 type ChartSelection = { broker: string; symbol: string };
+type DeleteRecentPreset = "today" | "yesterday" | "threeDays" | "oneWeek";
+type DeleteRecentBarsDialogState = {
+  broker: string;
+  symbol: string;
+  availableStart: Date | null;
+  availableEnd: Date | null;
+};
 type StoredSyncedDrawingSnapshot = Omit<ChartDrawingSnapshotRecord, "key"> & {
   drawings: DrawingToolExport[];
 };
@@ -701,6 +708,67 @@ function buildLegacySyncedDrawingStorageKey(
   return `${SYNCED_CHART_DRAWINGS_STORAGE_PREFIX}:${broker.toUpperCase()}:${symbol.toUpperCase()}:${timeframe}`;
 }
 
+function toDateTimeLocalValue(date: Date): string {
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function parseDateTimeLocalValue(value: string): Date | null {
+  if (!value.trim()) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function startOfLocalDay(date: Date): Date {
+  return new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    0,
+    0,
+    0,
+    0
+  );
+}
+
+function startOfCurrentLocalWeek(date: Date): Date {
+  const day = date.getDay();
+  const diffToMonday = day === 0 ? 6 : day - 1;
+  const weekStart = new Date(date);
+  weekStart.setDate(date.getDate() - diffToMonday);
+  return startOfLocalDay(weekStart);
+}
+
+function clampDateToBounds(date: Date, minDate: Date | null, maxDate: Date | null): Date {
+  const min = minDate?.getTime() ?? Number.NEGATIVE_INFINITY;
+  const max = maxDate?.getTime() ?? Number.POSITIVE_INFINITY;
+  return new Date(Math.min(Math.max(date.getTime(), min), max));
+}
+
+function resolveDeleteRecentPresetDate(
+  preset: DeleteRecentPreset,
+  minDate: Date | null,
+  maxDate: Date | null
+): Date {
+  const anchor = maxDate ?? new Date();
+  const anchorStart = startOfLocalDay(anchor);
+  const nextDate =
+    preset === "today"
+      ? anchorStart
+      : preset === "yesterday"
+        ? new Date(anchorStart.getTime() - DAY_MS)
+        : preset === "threeDays"
+          ? new Date(anchorStart.getTime() - 3 * DAY_MS)
+          : new Date(anchorStart.getTime() - 7 * DAY_MS);
+
+  return clampDateToBounds(nextDate, minDate, maxDate);
+}
+
+function resolveDeleteRecentDefaultDate(minDate: Date | null, maxDate: Date | null): Date {
+  const anchor = maxDate ?? new Date();
+  return clampDateToBounds(startOfCurrentLocalWeek(anchor), minDate, maxDate);
+}
+
 function buildSyncedDrawingStorageKeys(
   broker?: string | null,
   symbol?: string | null,
@@ -1116,6 +1184,11 @@ export function SyncedChartWorkspace({
   const [alertActionError, setAlertActionError] = useState<string | null>(null);
   const [chartSyncActionPending, setChartSyncActionPending] = useState(false);
   const [chartSyncActionError, setChartSyncActionError] = useState<string | null>(null);
+  const [deleteRecentBarsDialog, setDeleteRecentBarsDialog] =
+    useState<DeleteRecentBarsDialogState | null>(null);
+  const [deleteRecentBarsFrom, setDeleteRecentBarsFrom] = useState("");
+  const [deleteRecentBarsError, setDeleteRecentBarsError] = useState<string | null>(null);
+  const [deleteRecentBarsPending, setDeleteRecentBarsPending] = useState(false);
   const [tradeActionError, setTradeActionError] = useState<string | null>(null);
   const [tradeActionPending, setTradeActionPending] = useState(false);
   const [isRichTradeOpen, setIsRichTradeOpen] = useState(false);
@@ -1196,6 +1269,7 @@ export function SyncedChartWorkspace({
     preferLatestTimestamp?: boolean;
   } | null>(null);
   const lastHandledObservationRequestRef = useRef<string | null>(null);
+  const pendingAutoShowDrawingToolRef = useRef<DrawingToolType | null>(null);
 
   const closeCompactActions = useCallback(() => {
     setCompactActionsOpen(false);
@@ -3905,6 +3979,21 @@ export function SyncedChartWorkspace({
     setDrawingsHidden((current) => !current);
     setSelectedDrawingTool(null);
   }, []);
+
+  useEffect(() => {
+    if (!drawingsHidden) {
+      const pendingTool = pendingAutoShowDrawingToolRef.current;
+      if (pendingTool != null && drawingTool == null) {
+        pendingAutoShowDrawingToolRef.current = null;
+        setDrawingTool(pendingTool);
+      }
+      return;
+    }
+    if (drawingTool == null) return;
+    pendingAutoShowDrawingToolRef.current = drawingTool;
+    setDrawingTool(null);
+    setDrawingsHidden(false);
+  }, [drawingTool, drawingsHidden]);
   const chartLoadErrorMessage = error?.message ?? null;
   const liveModeIssueMessage = liveError ?? null;
   const displayedAlertIssueMessage = alertActionError ?? priceAlertsError ?? null;
@@ -3996,6 +4085,195 @@ export function SyncedChartWorkspace({
       setChartSyncActionPending(false);
     }
   }, [accounts, progressRepo, refetch, refreshSyncProgress, selection, user?.id]);
+
+  const handleOpenDeleteRecentBarsDialog = useCallback(() => {
+    if (!selection) {
+      setChartSyncActionError("Select a symbol before deleting/refetching bars.");
+      return;
+    }
+
+    const availableStart = selectedProgress?.firstBarDate
+      ? new Date(selectedProgress.firstBarDate)
+      : null;
+    const availableEnd = selectedProgress?.lastBarDate
+      ? new Date(selectedProgress.lastBarDate)
+      : new Date();
+
+    setDeleteRecentBarsDialog({
+      broker: selection.broker,
+      symbol: selection.symbol,
+      availableStart,
+      availableEnd: selectedProgress?.lastBarDate ? new Date(selectedProgress.lastBarDate) : null,
+    });
+    setDeleteRecentBarsFrom(
+      toDateTimeLocalValue(resolveDeleteRecentDefaultDate(availableStart, availableEnd))
+    );
+    setDeleteRecentBarsError(null);
+  }, [selectedProgress?.firstBarDate, selectedProgress?.lastBarDate, selection]);
+
+  const handleCloseDeleteRecentBarsDialog = useCallback(() => {
+    if (deleteRecentBarsPending) return;
+    setDeleteRecentBarsDialog(null);
+    setDeleteRecentBarsFrom("");
+    setDeleteRecentBarsError(null);
+  }, [deleteRecentBarsPending]);
+
+  const applyDeleteRecentBarsPreset = useCallback((preset: DeleteRecentPreset) => {
+    if (!deleteRecentBarsDialog) return;
+
+    setDeleteRecentBarsFrom(
+      toDateTimeLocalValue(
+        resolveDeleteRecentPresetDate(
+          preset,
+          deleteRecentBarsDialog.availableStart,
+          deleteRecentBarsDialog.availableEnd ?? new Date()
+        )
+      )
+    );
+    setDeleteRecentBarsError(null);
+  }, [deleteRecentBarsDialog]);
+
+  const updateLocalProgressSnapshot = useCallback(async (
+    broker: string,
+    symbol: string,
+    status: "pending" | "completed" = "pending"
+  ) => {
+    const dexieChartRepo = new DexieChartBarRepository();
+    const [totalBars, dateRange] = await Promise.all([
+      dexieChartRepo.countBars(broker, symbol, "M1"),
+      dexieChartRepo.getDateRange(broker, symbol, "M1"),
+    ]);
+
+    await progressRepo.updateStatus(broker, symbol, status);
+    await progressRepo.updateProgress(broker, symbol, {
+      totalBars,
+      firstBarDate: dateRange.firstBarDate,
+      lastBarDate: dateRange.lastBarDate,
+      lastSyncTime: status === "completed" ? new Date() : null,
+      error: null,
+      progressPercent: status === "completed" ? 100 : 0,
+      currentFetchFrom: null,
+      currentFetchTo: null,
+      currentFetchStartedAt: null,
+    });
+  }, [progressRepo]);
+
+  const handleConfirmDeleteRecentBars = useCallback(async () => {
+    const target = deleteRecentBarsDialog;
+    if (!target) return;
+
+    if (!user?.id) {
+      setDeleteRecentBarsError("Please log in to delete/refetch bars.");
+      return;
+    }
+
+    if (!isOnline()) {
+      setDeleteRecentBarsError("Cannot trim and refetch bars while offline.");
+      return;
+    }
+
+    const token = TokenStorage.getGlobal();
+    if (!token?.accessToken) {
+      setDeleteRecentBarsError("No access token available. Please reconnect your cTrader account.");
+      return;
+    }
+
+    const deleteFromDate = parseDateTimeLocalValue(deleteRecentBarsFrom);
+    if (!deleteFromDate) {
+      setDeleteRecentBarsError("Choose the date and time where recent-bar deletion should start.");
+      return;
+    }
+
+    setDeleteRecentBarsPending(true);
+    setDeleteRecentBarsError(null);
+    setChartSyncActionError(null);
+
+    try {
+      const dexieChartRepo = new DexieChartBarRepository();
+      const currentRange = await dexieChartRepo.getDateRange(target.broker, target.symbol, "M1");
+      const currentLastBarDate = currentRange.lastBarDate;
+      if (!currentLastBarDate) {
+        setDeleteRecentBarsError("No local bars were found for this symbol.");
+        return;
+      }
+
+      if (deleteFromDate > currentLastBarDate) {
+        setDeleteRecentBarsError("The selected date/time must be within the current local range.");
+        return;
+      }
+
+      if (currentRange.firstBarDate && deleteFromDate < currentRange.firstBarDate) {
+        setDeleteRecentBarsError("The selected date/time must not be before the first local bar.");
+        return;
+      }
+
+      const brokerAccount = accounts.find((acc) => acc.broker === target.broker);
+      const accountNumber = brokerAccount?.accountNumber;
+      const api = new CTraderAPI();
+      const syncUseCase = new HybridSyncChartBarsUseCase(
+        api,
+        dexieChartRepo,
+        progressRepo
+      );
+
+      await dexieChartRepo.deleteByWindow(
+        target.symbol,
+        "M1",
+        deleteFromDate.getTime(),
+        currentLastBarDate.getTime(),
+        target.broker
+      );
+
+      await updateLocalProgressSnapshot(target.broker, target.symbol, "pending");
+      await refreshSyncProgress();
+
+      const monthsDiff =
+        (currentLastBarDate.getTime() - deleteFromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+      const timeoutMs = Math.max(60_000, Math.min(900_000, monthsDiff * 60_000 || 60_000));
+
+      const result = await Promise.race([
+        syncUseCase.execute({
+          userId: user.id,
+          broker: target.broker,
+          symbol: target.symbol,
+          fromDate: deleteFromDate,
+          toDate: currentLastBarDate,
+          accessToken: token.accessToken,
+          accountNumber,
+          forceFullSync: true,
+        }),
+        new Promise<Awaited<ReturnType<HybridSyncChartBarsUseCase["execute"]>>>((_, reject) =>
+          window.setTimeout(
+            () => reject(new Error(`Refetch timeout after ${Math.round(timeoutMs / 1000)} seconds`)),
+            timeoutMs
+          )
+        ),
+      ]);
+
+      if (!result.success) {
+        throw new Error(result.error ?? "Failed to refetch the deleted bar section.");
+      }
+
+      setDeleteRecentBarsDialog(null);
+      setDeleteRecentBarsFrom("");
+      await refreshSyncProgress();
+      await refetch();
+    } catch (deleteError) {
+      const message = deleteError instanceof Error ? deleteError.message : String(deleteError);
+      setDeleteRecentBarsError(`Failed to delete/refetch bars: ${message}`);
+    } finally {
+      setDeleteRecentBarsPending(false);
+    }
+  }, [
+    accounts,
+    deleteRecentBarsDialog,
+    deleteRecentBarsFrom,
+    progressRepo,
+    refetch,
+    refreshSyncProgress,
+    updateLocalProgressSnapshot,
+    user?.id,
+  ]);
 
   const handleQuickTrade = useCallback(async (side: "BUY" | "SELL") => {
     if (!canTradeLive) return;
@@ -5191,6 +5469,18 @@ export function SyncedChartWorkspace({
             <button
               type="button"
               onClick={() => {
+                handleOpenDeleteRecentBarsDialog();
+                closeCompactActions();
+              }}
+              disabled={!selection || deleteRecentBarsPending || chartSyncActionPending}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3 w-3 ${deleteRecentBarsPending ? "animate-spin" : ""}`} />
+              Delete and Refetch Bars
+            </button>
+            <button
+              type="button"
+              onClick={() => {
                 onTogglePageTabsVisibility?.();
                 closeCompactActions();
               }}
@@ -5439,6 +5729,106 @@ export function SyncedChartWorkspace({
             {chartContent}
           </div>
         </>
+      )}
+
+      {deleteRecentBarsDialog && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-lg rounded-xl border border-border bg-card p-6 shadow-lg">
+            <h2 className="text-lg font-semibold text-foreground">Delete and Refetch Bars</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Delete recent local M1 bars for{" "}
+              <span className="font-medium text-foreground">{deleteRecentBarsDialog.symbol}</span>{" "}
+              from the selected date/time onward, then download only that deleted section again.
+            </p>
+
+            <div className="mt-5 space-y-4 rounded-xl border border-border/70 bg-muted/20 p-4">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => applyDeleteRecentBarsPreset("today")}
+                  disabled={deleteRecentBarsPending}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyDeleteRecentBarsPreset("yesterday")}
+                  disabled={deleteRecentBarsPending}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                >
+                  Yesterday
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyDeleteRecentBarsPreset("threeDays")}
+                  disabled={deleteRecentBarsPending}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                >
+                  3 Days
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyDeleteRecentBarsPreset("oneWeek")}
+                  disabled={deleteRecentBarsPending}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                >
+                  One Week
+                </button>
+              </div>
+
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-muted-foreground">Delete recent bars starting from</span>
+                <input
+                  type="datetime-local"
+                  value={deleteRecentBarsFrom}
+                  onChange={(event) => setDeleteRecentBarsFrom(event.target.value)}
+                  max={toDateTimeLocalValue(deleteRecentBarsDialog.availableEnd ?? new Date())}
+                  disabled={deleteRecentBarsPending}
+                  className="rounded-lg border border-border bg-background px-3 py-2 text-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+                />
+              </label>
+
+              {(deleteRecentBarsDialog.availableStart || deleteRecentBarsDialog.availableEnd) && (
+                <p className="text-xs text-muted-foreground">
+                  Current local range:{" "}
+                  {deleteRecentBarsDialog.availableStart
+                    ? deleteRecentBarsDialog.availableStart.toLocaleString()
+                    : "unknown"}{" "}
+                  {"->"}{" "}
+                  {deleteRecentBarsDialog.availableEnd
+                    ? deleteRecentBarsDialog.availableEnd.toLocaleString()
+                    : "unknown"}
+                </p>
+              )}
+            </div>
+
+            {deleteRecentBarsError && (
+              <div className="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                {deleteRecentBarsError}
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCloseDeleteRecentBarsDialog}
+                disabled={deleteRecentBarsPending}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-accent disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmDeleteRecentBars()}
+                disabled={deleteRecentBarsPending}
+                className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600/90 disabled:opacity-50"
+              >
+                {deleteRecentBarsPending ? "Deleting and refetching..." : "Delete and Refetch"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

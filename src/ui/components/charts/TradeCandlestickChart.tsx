@@ -881,6 +881,9 @@ type LongShortLabelOverlayItem = {
     labelsVisible: boolean;
 };
 
+const LONG_SHORT_LABEL_BUTTON_SIZE = 20;
+const LONG_SHORT_LABEL_BUTTON_INSET = 6;
+
 function sameLongShortLabelOverlayItems(
     left: LongShortLabelOverlayItem[],
     right: LongShortLabelOverlayItem[]
@@ -2587,15 +2590,15 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         }
 
         const timeframeSeconds = timeframeToSeconds(timeframe);
-        const alignedSeconds =
+        const bucketOpenSeconds =
             timeframeSeconds > 0
-                ? Math.round(normalizedSeconds / timeframeSeconds) * timeframeSeconds
+                ? Math.floor(normalizedSeconds / timeframeSeconds) * timeframeSeconds
                 : normalizedSeconds;
         const firstSeconds = Math.round(data[0].timestamp / 1000);
         const lastSeconds = Math.round(data[data.length - 1].timestamp / 1000);
 
-        if (alignedSeconds < firstSeconds || alignedSeconds > lastSeconds) {
-            return alignedSeconds;
+        if (bucketOpenSeconds < firstSeconds || bucketOpenSeconds > lastSeconds) {
+            return bucketOpenSeconds;
         }
 
         let left = 0;
@@ -2605,30 +2608,31 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             const mid = Math.floor((left + right) / 2);
             const midSeconds = Math.round(data[mid].timestamp / 1000);
 
-            if (midSeconds === normalizedSeconds) {
+            if (midSeconds === bucketOpenSeconds) {
                 return midSeconds;
             }
 
-            if (midSeconds < normalizedSeconds) {
+            if (midSeconds < bucketOpenSeconds) {
                 left = mid + 1;
             } else {
                 right = mid - 1;
             }
         }
 
-        const leftIndex = Math.min(data.length - 1, Math.max(0, left));
-        const rightIndex = Math.min(data.length - 1, Math.max(0, right));
-        const leftSeconds = Math.round(data[leftIndex].timestamp / 1000);
-        const rightSeconds = Math.round(data[rightIndex].timestamp / 1000);
-
+        const nextSeconds =
+            left >= 0 && left < data.length ? Math.round(data[left].timestamp / 1000) : null;
+        const previousSeconds =
+            right >= 0 && right < data.length ? Math.round(data[right].timestamp / 1000) : null;
+        const previousDistance =
+            previousSeconds == null ? Number.POSITIVE_INFINITY : Math.abs(previousSeconds - bucketOpenSeconds);
+        const nextDistance =
+            nextSeconds == null ? Number.POSITIVE_INFINITY : Math.abs(nextSeconds - bucketOpenSeconds);
         const nearestSeconds =
-            Math.abs(leftSeconds - alignedSeconds) < Math.abs(rightSeconds - alignedSeconds)
-                ? leftSeconds
-                : rightSeconds;
+            previousDistance <= nextDistance ? previousSeconds : nextSeconds;
 
-        return Math.abs(nearestSeconds - alignedSeconds) <= timeframeSeconds
+        return nearestSeconds != null && Math.abs(nearestSeconds - bucketOpenSeconds) <= timeframeSeconds
             ? nearestSeconds
-            : alignedSeconds;
+            : bucketOpenSeconds;
     }, [data, timeframe]);
 
     const normalizeDrawingForCurrentData = useCallback((drawing: DrawingToolExport): DrawingToolExport => ({
@@ -2681,19 +2685,29 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                     return [];
                 }
 
+                const visibleLeft = Math.max(0, left);
+                const visibleRight = Math.min(paneSize.width, right);
+                const visibleTop = Math.max(0, top);
+                const visibleBottom = Math.min(paneSize.height, bottom);
+                const visibleWidth = visibleRight - visibleLeft;
+                const visibleHeight = visibleBottom - visibleTop;
                 const isOutsidePane =
-                    right < 0 ||
-                    left > paneSize.width ||
-                    bottom < 0 ||
-                    top > paneSize.height;
+                    visibleWidth <= 0 ||
+                    visibleHeight <= 0;
                 if (isOutsidePane) {
                     return [];
                 }
 
                 return [{
                     id: normalizedTool.id,
-                    x: Math.min(Math.max(12, right - 10), Math.max(12, paneSize.width - 12)),
-                    y: Math.min(Math.max(12, top + 10), Math.max(12, paneSize.height - 12)),
+                    x: Math.max(
+                        visibleLeft,
+                        visibleRight - LONG_SHORT_LABEL_BUTTON_SIZE - LONG_SHORT_LABEL_BUTTON_INSET
+                    ),
+                    y: Math.min(
+                        Math.max(visibleTop, visibleTop + LONG_SHORT_LABEL_BUTTON_INSET),
+                        Math.max(visibleTop, visibleBottom - LONG_SHORT_LABEL_BUTTON_SIZE)
+                    ),
                     labelsVisible: areLongShortLabelsVisible(normalizedTool.options),
                 }];
             });
@@ -5674,9 +5688,9 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         event.stopPropagation();
         setSelectedLongShortLabelsVisible(item.id, !item.labelsVisible);
     }}
-    className="pointer-events-auto absolute flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border border-slate-500/70 bg-slate-900/95 text-[12px] font-semibold leading-none text-slate-50 shadow-lg transition-colors hover:bg-slate-800"
+    className="pointer-events-auto absolute flex h-5 w-5 items-center justify-center rounded-full border border-slate-500/70 bg-slate-900/95 text-[12px] font-semibold leading-none text-slate-50 shadow-lg transition-colors hover:bg-slate-800"
     style={{
-        left: `${item.x - 20}px`,
+        left: `${item.x}px`,
         top: `${item.y}px`,
     }}
     title={item.labelsVisible ? "Hide RR labels" : "Show RR labels"}

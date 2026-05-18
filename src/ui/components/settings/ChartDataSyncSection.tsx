@@ -31,6 +31,8 @@ interface DeleteBarsDialogState {
   availableEnd: Date | null;
 }
 
+type DeleteRecentPreset = "today" | "yesterday" | "threeDays" | "oneWeek";
+
 function toDateTimeLocalValue(date: Date): string {
   const offsetMs = date.getTimezoneOffset() * 60 * 1000;
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
@@ -40,6 +42,56 @@ function parseDateTimeLocalValue(value: string): Date | null {
   if (!value.trim()) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function startOfLocalDay(date: Date): Date {
+  return new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    0,
+    0,
+    0,
+    0
+  );
+}
+
+function startOfCurrentLocalWeek(date: Date): Date {
+  const day = date.getDay();
+  const diffToMonday = day === 0 ? 6 : day - 1;
+  const weekStart = new Date(date);
+  weekStart.setDate(date.getDate() - diffToMonday);
+  return startOfLocalDay(weekStart);
+}
+
+function clampDateToBounds(date: Date, minDate: Date | null, maxDate: Date | null): Date {
+  const min = minDate?.getTime() ?? Number.NEGATIVE_INFINITY;
+  const max = maxDate?.getTime() ?? Number.POSITIVE_INFINITY;
+  return new Date(Math.min(Math.max(date.getTime(), min), max));
+}
+
+function resolveDeleteRecentPresetDate(
+  preset: DeleteRecentPreset,
+  minDate: Date | null,
+  maxDate: Date | null
+): Date {
+  const anchor = maxDate ?? new Date();
+  const anchorStart = startOfLocalDay(anchor);
+  const nextDate =
+    preset === "today"
+      ? anchorStart
+      : preset === "yesterday"
+        ? new Date(anchorStart.getTime() - DAY_MS)
+        : preset === "threeDays"
+          ? new Date(anchorStart.getTime() - 3 * DAY_MS)
+          : new Date(anchorStart.getTime() - 7 * DAY_MS);
+
+  return clampDateToBounds(nextDate, minDate, maxDate);
+}
+
+function resolveDeleteRecentDefaultDate(minDate: Date | null, maxDate: Date | null): Date {
+  const anchor = maxDate ?? new Date();
+  return clampDateToBounds(startOfCurrentLocalWeek(anchor), minDate, maxDate);
 }
 
 export function ChartDataSyncSection() {
@@ -575,9 +627,7 @@ export function ChartDataSyncSection() {
   const handleDeleteBarsClick = useCallback((broker: string, symbol: string) => {
     const progress = symbolProgress.find((item) => item.broker === broker && item.symbol === symbol) ?? null;
     const availableEnd = progress?.lastBarDate ? new Date(progress.lastBarDate) : new Date();
-    const availableStart = progress?.firstBarDate
-      ? new Date(progress.firstBarDate)
-      : new Date(availableEnd.getTime() - DAY_MS);
+    const availableStart = progress?.firstBarDate ? new Date(progress.firstBarDate) : null;
 
     setDeleteDialog({
       broker,
@@ -586,9 +636,26 @@ export function ChartDataSyncSection() {
       availableEnd: progress?.lastBarDate ? new Date(progress.lastBarDate) : null,
     });
     setDeleteMode("all");
-    setDeleteRecentFrom(toDateTimeLocalValue(availableStart));
+    setDeleteRecentFrom(
+      toDateTimeLocalValue(resolveDeleteRecentDefaultDate(availableStart, availableEnd))
+    );
     setDeleteDialogError(null);
   }, [symbolProgress]);
+
+  const applyDeleteRecentPreset = useCallback((preset: DeleteRecentPreset) => {
+    if (!deleteDialog) return;
+
+    setDeleteRecentFrom(
+      toDateTimeLocalValue(
+        resolveDeleteRecentPresetDate(
+          preset,
+          deleteDialog.availableStart,
+          deleteDialog.availableEnd ?? new Date()
+        )
+      )
+    );
+    setDeleteDialogError(null);
+  }, [deleteDialog]);
 
   const handleCloseDeleteDialog = useCallback(() => {
     if (deleteDialog == null) return;
@@ -991,6 +1058,40 @@ export function ChartDataSyncSection() {
 
             {deleteMode === "recentRange" && (
               <div className="mt-5 space-y-4 rounded-xl border border-border/70 bg-muted/20 p-4">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => applyDeleteRecentPreset("today")}
+                    disabled={deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)}
+                    className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyDeleteRecentPreset("yesterday")}
+                    disabled={deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)}
+                    className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                  >
+                    Yesterday
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyDeleteRecentPreset("threeDays")}
+                    disabled={deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)}
+                    className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                  >
+                    3 Days
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyDeleteRecentPreset("oneWeek")}
+                    disabled={deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)}
+                    className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                  >
+                    One Week
+                  </button>
+                </div>
                 <label className="flex flex-col gap-1 text-sm">
                   <span className="text-muted-foreground">Delete recent bars starting from</span>
                   <input

@@ -8,6 +8,7 @@ import {
   DexieSettingsRepository,
   DexieSymbolSyncProgressRepository,
 } from "@infrastructure/db/dexie/repositories";
+import { HybridSyncChartBarsUseCase } from "@application/use-cases/sync";
 import {
   buildLocalServiceEndpoint,
   CTRADER_LIVE_SERVICE_URL_SETTING_KEY,
@@ -26,6 +27,8 @@ const TIMEFRAME_TO_MS: Record<ChartTimeframe, number> = {
   H4: 4 * 60 * 60_000,
   D1: 24 * 60 * 60_000,
 };
+const LIVE_SERVER_REPAIR_BARS = 512;
+const LIVE_M1_REPAIR_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type LiveChartStatus =
   | "idle"
@@ -473,6 +476,34 @@ export function useCTraderLiveBar({
         .filter((bar) => sanitizeLiveBar(bar, normalizedSymbol, bar.close) != null)
         .sort((left, right) => left.timestamp - right.timestamp);
 
+    const fetchAndPersistAuthoritativeBars = async (
+      targetTimeframe: ChartTimeframe,
+      fromTimestamp: number,
+      toTimestamp: number
+    ) => {
+      if (
+        !Number.isFinite(fromTimestamp) ||
+        !Number.isFinite(toTimestamp) ||
+        fromTimestamp > toTimestamp
+      ) {
+        return [];
+      }
+
+      const apiBars = await api.getBars(
+        accessToken,
+        normalizedSymbol,
+        targetTimeframe,
+        fromTimestamp,
+        toTimestamp,
+        accountNumber
+      );
+      const authoritativeBars = mapAuthoritativeBars(apiBars);
+      if (authoritativeBars.length > 0) {
+        await chartRepo.upsertMany(authoritativeBars);
+      }
+      return authoritativeBars;
+    };
+
     const reconcileClosedBars = (
       nextOpenBucketTimestamp: number,
       fallbackBar?: ChartBar | null
@@ -718,46 +749,99 @@ export function useCTraderLiveBar({
         setStatus("backfilling");
         setError(null);
 
-        const range = await chartRepo.getDateRange(broker, normalizedSymbol, timeframe);
+        const nowTimestamp = Date.now();
         const intervalMs = TIMEFRAME_TO_MS[timeframe];
-        const currentBucketStart = floorTimestamp(Date.now(), timeframe);
+        const currentBucketStart = floorTimestamp(nowTimestamp, timeframe);
+        const currentM1BucketStart = floorTimestamp(nowTimestamp, "M1");
+        const [range, m1Range] = await Promise.all([
+          chartRepo.getDateRange(broker, normalizedSymbol, timeframe),
+          timeframe === "M1"
+            ? Promise.resolve(null)
+            : chartRepo.getDateRange(broker, normalizedSymbol, "M1"),
+        ]);
         const latestLocalTimestamp = range.lastBarDate?.getTime() ?? null;
         lastPersistedClosedBarTimestampRef.current =
           latestLocalTimestamp != null && latestLocalTimestamp < currentBucketStart
             ? latestLocalTimestamp
             : null;
-        const backfillFrom =
-          latestLocalTimestamp != null ? latestLocalTimestamp + intervalMs : null;
-        // Include the current bar being formed to avoid gaps if live stream has any delay
-        const backfillTo = currentBucketStart;
 
-        if (
-          backfillFrom != null &&
-          Number.isFinite(backfillFrom) &&
-          backfillFrom <= backfillTo
-        ) {
-          const bars = await api.getBars(
-            accessToken,
+        if (timeframe !== "M1") {
+          const earliestLocalTimestamp = range.firstBarDate?.getTime() ?? null;
+          const repairStart =
+            latestLocalTimestamp != null
+              ? Math.max(
+                  earliestLocalTimestamp ?? latestLocalTimestamp,
+                  latestLocalTimestamp - intervalMs * LIVE_SERVER_REPAIR_BARS
+                )
+              : Math.max(0, currentBucketStart - intervalMs * LIVE_SERVER_REPAIR_BARS);
+
+          await fetchAndPersistAuthoritativeBars(timeframe, repairStart, currentBucketStart);
+
+          const refreshedTimeframeRange = await chartRepo.getDateRange(
+            broker,
             normalizedSymbol,
-            timeframe,
-            backfillFrom,
-            backfillTo,
-            accountNumber
+            timeframe
           );
-          if (bars.length > 0) {
-            const mappedBars = mapAuthoritativeBars(bars);
-            await chartRepo.upsertMany(mappedBars);
-            lastPersistedClosedBarTimestampRef.current =
-              [...mappedBars]
-                .reverse()
-                .find((bar) => bar.timestamp < currentBucketStart)?.timestamp ??
-              lastPersistedClosedBarTimestampRef.current;
-            await refreshLocalProgressMetadata();
-            if (!cancelled) {
-              setBackfillCompletedAt(Date.now());
-            }
+          const refreshedLastTimestamp = refreshedTimeframeRange.lastBarDate?.getTime() ?? null;
+          lastPersistedClosedBarTimestampRef.current =
+            refreshedLastTimestamp != null && refreshedLastTimestamp < currentBucketStart
+              ? refreshedLastTimestamp
+              : null;
+        }
+
+        const earliestM1Timestamp =
+          timeframe === "M1"
+            ? range.firstBarDate?.getTime() ?? null
+            : m1Range?.firstBarDate?.getTime() ?? null;
+        const latestM1Timestamp =
+          timeframe === "M1"
+            ? latestLocalTimestamp
+            : m1Range?.lastBarDate?.getTime() ?? null;
+        const m1BackfillFrom =
+          latestM1Timestamp != null
+            ? Math.max(
+                earliestM1Timestamp ?? latestM1Timestamp,
+                latestM1Timestamp - LIVE_M1_REPAIR_LOOKBACK_MS
+              )
+            : Math.max(0, currentM1BucketStart - LIVE_M1_REPAIR_LOOKBACK_MS);
+        if (
+          Number.isFinite(m1BackfillFrom) &&
+          m1BackfillFrom <= currentM1BucketStart
+        ) {
+          const syncUseCase = new HybridSyncChartBarsUseCase(
+            api,
+            chartRepo,
+            progressRepo
+          );
+          const backfillResult = await syncUseCase.execute({
+            userId: "live-backfill",
+            broker,
+            symbol: normalizedSymbol,
+            fromDate: new Date(m1BackfillFrom),
+            toDate: new Date(currentM1BucketStart),
+            accessToken,
+            accountNumber,
+            forceFullSync: true,
+          });
+          if (!backfillResult.success) {
+            throw new Error(backfillResult.error ?? "Failed to backfill live chart bars.");
           }
-        } else if (!cancelled) {
+        }
+
+        if (timeframe === "M1") {
+          const refreshedRange = await chartRepo.getDateRange(
+            broker,
+            normalizedSymbol,
+            "M1"
+          );
+          const refreshedLastTimestamp = refreshedRange.lastBarDate?.getTime() ?? null;
+          lastPersistedClosedBarTimestampRef.current =
+            refreshedLastTimestamp != null && refreshedLastTimestamp < currentBucketStart
+              ? refreshedLastTimestamp
+              : lastPersistedClosedBarTimestampRef.current;
+        }
+
+        if (!cancelled) {
           setBackfillCompletedAt(Date.now());
         }
 

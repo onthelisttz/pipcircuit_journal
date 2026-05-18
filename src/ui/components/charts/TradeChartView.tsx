@@ -155,6 +155,7 @@ export function TradeChartView({
     const calloutTextInputRef = useRef<HTMLTextAreaElement>(null);
     const profitChartRef = useRef<{ fitContent: () => void } | null>(null);
     const skipNextCalloutApplyRef = useRef(false);
+    const pendingAutoShowDrawingToolRef = useRef<DrawingToolType | null>(null);
     const pendingTradeCenterRef = useRef(true);
     const replayTimerRef = useRef<number | null>(null);
     const showsCandlestick = viewMode !== "pnl";
@@ -332,6 +333,21 @@ export function TradeChartView({
         setDrawingsHidden((current) => !current);
         setSelectedDrawingTool(null);
     }, []);
+
+    useEffect(() => {
+        if (!drawingsHidden) {
+            const pendingTool = pendingAutoShowDrawingToolRef.current;
+            if (pendingTool != null && drawingTool == null) {
+                pendingAutoShowDrawingToolRef.current = null;
+                setDrawingTool(pendingTool);
+            }
+            return;
+        }
+        if (drawingTool == null) return;
+        pendingAutoShowDrawingToolRef.current = drawingTool;
+        setDrawingTool(null);
+        setDrawingsHidden(false);
+    }, [drawingTool, drawingsHidden]);
 
     useEffect(() => {
         if (selectedDrawingTool !== "Callout") return;

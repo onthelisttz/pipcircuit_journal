@@ -100,23 +100,6 @@ type LoadedRange = {
 
 type HistoryChartUpdateMode = "replace" | "append" | "prepend";
 
-function areDrawingsCoveredByBars(
-  drawings: DrawingToolExport[],
-  bars: ChartBar[]
-): boolean {
-  if (drawings.length === 0 || bars.length === 0) return true;
-
-  const loadedFrom = bars[0].timestamp;
-  const loadedTo = bars[bars.length - 1].timestamp;
-
-  return drawings.every((drawing) =>
-    drawing.points.every((point) => {
-      const timestamp = drawingTimestampToMs(point.timestamp);
-      return timestamp >= loadedFrom && timestamp <= loadedTo;
-    })
-  );
-}
-
 const LOAD_LIMIT = 20_000;
 const EDGE_FETCH_THRESHOLD = 10;
 const FETCH_THROTTLE_MS = 160;
@@ -795,7 +778,7 @@ export function Mt5HistoryWorkspace({
   const [replayCursorTimestamp, setReplayCursorTimestamp] = useState<number | null>(null);
   const [replayStartTimestamp, setReplayStartTimestamp] = useState<number | null>(null);
   const [replayIntervalMs, setReplayIntervalMs] = useState<number>(DEFAULT_REPLAY_INTERVAL_MS);
-  const [replayDataUpdateMode, setReplayDataUpdateMode] = useState<"replace" | "append">("replace");
+  const [replayDataUpdateMode, setReplayDataUpdateMode] = useState<"replace" | "append" | "prepend">("replace");
   const [replayPlacementTimestamp, setReplayPlacementTimestamp] = useState<number | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedHeight, setExpandedHeight] = useState(640);
@@ -817,6 +800,7 @@ export function Mt5HistoryWorkspace({
   } | null>(null);
   const lastHandledObservationRequestRef = useRef<string | null>(null);
   const skipNextCalloutApplyRef = useRef(false);
+  const pendingAutoShowDrawingToolRef = useRef<DrawingToolType | null>(null);
 
   const closeCompactActions = useCallback(() => {
     setCompactActionsOpen(false);
@@ -856,7 +840,6 @@ export function Mt5HistoryWorkspace({
   useEffect(() => {
     const pending = pendingRestoreRef.current;
     if (!pending || bars.length === 0 || isBarsLoading) return;
-    if (!areDrawingsCoveredByBars(pending.drawings, bars)) return;
     pendingRestoreRef.current = null;
     const timer = window.setTimeout(() => {
       if (pending.drawings.length > 0) {
@@ -868,6 +851,9 @@ export function Mt5HistoryWorkspace({
           pending.windowSeconds ?? undefined
         );
       }
+      centerTimestampAfterLoadRef.current = null;
+      lastVisibleRangeRef.current = null;
+      suppressEdgeLoadingUntilRef.current = Date.now() + 220;
     }, 80);
     return () => window.clearTimeout(timer);
   }, [bars, isBarsLoading]);
@@ -898,6 +884,21 @@ export function Mt5HistoryWorkspace({
     setDrawingsHidden((current) => !current);
     setSelectedDrawingTool(null);
   }, []);
+
+  useEffect(() => {
+    if (!drawingsHidden) {
+      const pendingTool = pendingAutoShowDrawingToolRef.current;
+      if (pendingTool != null && drawingTool == null) {
+        pendingAutoShowDrawingToolRef.current = null;
+        setDrawingTool(pendingTool);
+      }
+      return;
+    }
+    if (drawingTool == null) return;
+    pendingAutoShowDrawingToolRef.current = drawingTool;
+    setDrawingTool(null);
+    setDrawingsHidden(false);
+  }, [drawingTool, drawingsHidden]);
 
   useEffect(() => {
     if (selectedDrawingTool !== "Callout") return;
@@ -1899,6 +1900,9 @@ export function Mt5HistoryWorkspace({
 
     fetchingPrevRef.current = true;
     try {
+      if (isReplayModeRef.current) {
+        setReplayDataUpdateMode("prepend");
+      }
       await loadWindow(requestRange, "prepend");
     } finally {
       lastRequestedPrevRangeKeyRef.current = "";
@@ -1939,6 +1943,9 @@ export function Mt5HistoryWorkspace({
 
     fetchingNextRef.current = true;
     try {
+      if (isReplayModeRef.current) {
+        setReplayDataUpdateMode("append");
+      }
       await loadWindow(requestRange, "append");
     } finally {
       lastRequestedNextRangeKeyRef.current = "";
@@ -1981,14 +1988,13 @@ export function Mt5HistoryWorkspace({
 
       if (isReplayMode) {
         replayViewportRef.current = { from, to };
-        return;
       }
 
       const leftIndex = Math.floor(from);
       const rightIndex = Math.ceil(to);
       const nearLeft = leftIndex <= EDGE_FETCH_THRESHOLD;
       const nearRight = rightIndex >= currentBarsLength - EDGE_FETCH_THRESHOLD;
-      const edgeLoadingLocked = isReplayMode || isReplayPlacementMode;
+      const edgeLoadingLocked = isReplayPlacementMode;
 
       let shouldFetchPrev = nearLeft && !edgeLoadingLocked;
       let shouldFetchNext =
@@ -2176,6 +2182,7 @@ export function Mt5HistoryWorkspace({
               ? getReplayRestoreTimestamp()
               : null;
           // Save drawings and viewport before timeframe change
+          skipAutoFitOnNextDataRef.current = true;
           pendingRestoreRef.current = {
             drawings: chartRef.current?.exportAllDrawings() ?? [],
             centerTimestamp:
