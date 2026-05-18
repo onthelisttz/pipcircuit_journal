@@ -99,6 +99,7 @@ const CHART_SHOW_TRADES_PANEL_KEY = "chartShowTradesPanel_synced";
 const CHART_SHOW_LIVE_TRADES_ON_CHART_KEY = "chartShowLiveTradesOnChart_v1";
 const CHART_CONTINUOUS_DRAWING_KEY = "chartContinuousDrawingEnabled_v1";
 const CHART_LIVE_MODE_KEY = "chartLiveModeEnabled_v1";
+const CHART_LIVE_BACKFILL_REPAIR_KEY = "chartLiveBackfillRepairEnabled_v1";
 const CHART_SHOW_ALERTS_ON_CHART_KEY = "chartShowAlertsOnChart_v1";
 const SYNCED_CHART_DRAWINGS_STORAGE_PREFIX = "syncedChartDrawings_v1";
 const CHART_NOTICE_DISMISS_MS = 10_000;
@@ -125,6 +126,12 @@ function makeLiveModeStorageKey(storageScopeKey?: string): string {
   return storageScopeKey
     ? `${CHART_LIVE_MODE_KEY}_${storageScopeKey}`
     : CHART_LIVE_MODE_KEY;
+}
+
+function makeLiveBackfillRepairStorageKey(storageScopeKey?: string): string {
+  return storageScopeKey
+    ? `${CHART_LIVE_BACKFILL_REPAIR_KEY}_${storageScopeKey}`
+    : CHART_LIVE_BACKFILL_REPAIR_KEY;
 }
 
 const DRAW_TOOLS: { id: DrawingToolType; label: string }[] = [
@@ -677,6 +684,17 @@ function readStoredLiveMode(storageScopeKey?: string): boolean {
   }
 }
 
+function readStoredLiveBackfillRepair(storageScopeKey?: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return (
+      window.localStorage.getItem(makeLiveBackfillRepairStorageKey(storageScopeKey)) === "true"
+    );
+  } catch {
+    return false;
+  }
+}
+
 function readStoredShowAlertsOnChart(): boolean {
   if (typeof window === "undefined") return true;
   try {
@@ -1172,6 +1190,9 @@ export function SyncedChartWorkspace({
   const [liveModeEnabled, setLiveModeEnabled] = useState(() =>
     readStoredLiveMode(storageScopeKey)
   );
+  const [liveBackfillRepairEnabled, setLiveBackfillRepairEnabled] = useState(() =>
+    readStoredLiveBackfillRepair(storageScopeKey)
+  );
   const [showAlertsOnChart, setShowAlertsOnChart] = useState(() => readStoredShowAlertsOnChart());
   const [livePositions, setLivePositions] = useState<LivePositionSnapshot[]>([]);
   const [liveOrders, setLiveOrders] = useState<LiveOrderSnapshot[]>([]);
@@ -1503,6 +1524,14 @@ export function SyncedChartWorkspace({
       String(liveModeEnabled)
     );
   }, [liveModeEnabled, storageScopeKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      makeLiveBackfillRepairStorageKey(storageScopeKey),
+      String(liveBackfillRepairEnabled)
+    );
+  }, [liveBackfillRepairEnabled, storageScopeKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2081,6 +2110,7 @@ export function SyncedChartWorkspace({
     timeframe,
     accessToken,
     accountNumber: liveAccountNumber,
+    repairBackfill: liveBackfillRepairEnabled,
   });
   const {
     activeAlerts,
@@ -4377,21 +4407,39 @@ export function SyncedChartWorkspace({
 
     return (
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={() => setLiveModeEnabled((previous) => !previous)}
-          disabled={!selection || !accessToken || !liveAccountNumber}
-          className={`inline-flex py-1 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors disabled:opacity-50 ${
-            liveModeEnabled
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
-              : "border-border text-muted-foreground hover:bg-muted"
-          }`}
-        >
-          <span>{liveModeEnabled ? "Live On" : "Live Off"}</span>
-        </button>
-        <div className={`rounded-md border px-2.5 py-1 text-[11px] font-medium ${liveStatusClassName}`}>
-          {liveStatusLabel}
+        <div className="inline-flex items-center gap-1">
+          {!liveModeEnabled ? (
+            <label
+              className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground"
+              title="Use repair backfill when live starts"
+            >
+              <input
+                type="checkbox"
+                checked={liveBackfillRepairEnabled}
+                onChange={(event) => setLiveBackfillRepairEnabled(event.target.checked)}
+                className="h-3 w-3 rounded-full border border-border accent-emerald-500"
+              />
+              <span>Repair</span>
+            </label>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setLiveModeEnabled((previous) => !previous)}
+            disabled={!selection || !accessToken || !liveAccountNumber}
+            className={`inline-flex items-center rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${
+              liveModeEnabled
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                : "border-border text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            <span>{liveModeEnabled ? "Live On" : "Live Off"}</span>
+          </button>
         </div>
+        {!(liveModeEnabled && liveStatusLabel === "Live") ? (
+          <div className={`rounded-md border px-2.5 py-1 text-[11px] font-medium ${liveStatusClassName}`}>
+            {liveStatusLabel}
+          </div>
+        ) : null}
         {liveModeEnabled ? (
           <div className="flex items-center gap-1.5 rounded-lg border border-border bg-card/70 px-1.5 py-1">
             <button
@@ -4432,6 +4480,7 @@ export function SyncedChartWorkspace({
     compact,
     handleQuickTrade,
     liveAccountNumber,
+    liveBackfillRepairEnabled,
     liveModeEnabled,
     liveStatusClassName,
     liveStatusLabel,
