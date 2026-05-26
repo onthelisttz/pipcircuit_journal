@@ -874,37 +874,6 @@ function sameLiveTradeOverlayItems(left: LiveTradeOverlayItem[], right: LiveTrad
     return true;
 }
 
-type LongShortLabelOverlayItem = {
-    id: string;
-    x: number;
-    y: number;
-    labelsVisible: boolean;
-};
-
-const LONG_SHORT_LABEL_BUTTON_SIZE = 20;
-const LONG_SHORT_LABEL_BUTTON_INSET = 6;
-
-function sameLongShortLabelOverlayItems(
-    left: LongShortLabelOverlayItem[],
-    right: LongShortLabelOverlayItem[]
-): boolean {
-    if (left.length !== right.length) return false;
-
-    for (let index = 0; index < left.length; index += 1) {
-        const a = left[index];
-        const b = right[index];
-        if (a.id !== b.id || a.labelsVisible !== b.labelsVisible) {
-            return false;
-        }
-
-        if (Math.abs(a.x - b.x) > 0.5 || Math.abs(a.y - b.y) > 0.5) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 export interface TradeCandlestickChartRef {
     fitContent: () => void;
     scrollToTrade: (zoomOutMultiplier?: number) => void;
@@ -1039,7 +1008,6 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         right: null,
     });
     const [liveTradeOverlayItems, setLiveTradeOverlayItems] = useState<LiveTradeOverlayItem[]>([]);
-    const [longShortLabelOverlayItems, setLongShortLabelOverlayItems] = useState<LongShortLabelOverlayItem[]>([]);
     const [liveTradeOverlayPadRight, setLiveTradeOverlayPadRight] = useState(0);
     const [liveTradePreviewPrices, setLiveTradePreviewPrices] = useState<Record<string, number>>({});
     const [liveTradeDragSession, setLiveTradeDragSession] = useState<LiveTradeHtmlDragSession | null>(null);
@@ -1083,7 +1051,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     const overlayFrameRef = useRef<number | null>(null);
     const scheduleTimeGuideOverlayRefreshRef = useRef<() => void>(() => {});
     const scheduleReplayPlacementOverlayRefreshRef = useRef<() => void>(() => {});
-    const refreshLongShortLabelOverlayRef = useRef<() => void>(() => {});
+    const syncLongShortLabelVisibilityRef = useRef<() => void>(() => {});
     const selectedDrawingIdsRef = useRef<string[]>([]);
     const selectionSnapshotRef = useRef<Map<string, DrawingToolExport> | null>(null);
     const duplicateDragPlanRef = useRef<{
@@ -1188,6 +1156,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
 
     useEffect(() => {
         drawingToolRef.current = drawingTool;
+        syncLongShortLabelVisibilityRef.current();
     }, [drawingTool]);
 
     const applyChartInteractionLock = useCallback((touchLocked: boolean) => {
@@ -1928,7 +1897,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             refreshTimeGuideOverlay();
             refreshCandleCountdownOverlay();
             refreshLiveTradeOverlay();
-            refreshLongShortLabelOverlayRef.current();
+            syncLongShortLabelVisibilityRef.current();
         });
     }, [refreshCandleCountdownOverlay, refreshLiveTradeOverlay, refreshTimeGuideOverlay]);
 
@@ -1979,7 +1948,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             refreshReplayPlacementOverlay();
             refreshCandleCountdownOverlay();
             refreshLiveTradeOverlay();
-            refreshLongShortLabelOverlayRef.current();
+            syncLongShortLabelVisibilityRef.current();
         });
     }, [refreshCandleCountdownOverlay, refreshLiveTradeOverlay, refreshReplayPlacementOverlay, refreshTimeGuideOverlay]);
 
@@ -2389,9 +2358,10 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             } as Parameters<LineToolsApi["addLineTool"]>[2];
 
             if (toolType === "LongShortPosition") {
+                const labelsVisible = drawingToolRef.current === "LongShortPosition";
                 return {
-                    ...withLongShortLabelsVisible(undefined, false),
-                    showAutoText: false,
+                    ...withLongShortLabelsVisible(undefined, labelsVisible),
+                    showAutoText: labelsVisible,
                     showPriceAxisLabels: false,
                     showTimeAxisLabels: false,
                     initialWidthSeconds: defaultLongShortWidthSeconds(timeframe),
@@ -2643,83 +2613,67 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         })),
     }), [normalizeDrawingTimestampForCurrentData]);
 
-    const refreshLongShortLabelOverlay = useCallback(() => {
-        if (drawingsHiddenRef.current) {
-            setLongShortLabelOverlayItems((current) => (current.length === 0 ? current : []));
-            return;
-        }
+    const syncLongShortLabelVisibility = useCallback(() => {
+        const lineTools = lineToolsRef.current;
+        if (drawingsHiddenRef.current || !lineTools) return;
 
-        const chart = chartRef.current;
-        const series = seriesRef.current;
-        if (!chart || !series) {
-            setLongShortLabelOverlayItems((current) => (current.length === 0 ? current : []));
-            return;
-        }
-
-        const paneSize = chart.paneSize();
-        const nextItems = exportCurrentDrawings()
-            .filter((tool) => tool.toolType === "LongShortPosition")
-            .flatMap((tool) => {
-                const normalizedTool = normalizeDrawingForCurrentData(tool);
-                let left = Number.POSITIVE_INFINITY;
-                let right = Number.NEGATIVE_INFINITY;
-                let top = Number.POSITIVE_INFINITY;
-                let bottom = Number.NEGATIVE_INFINITY;
-                let hasCoordinates = false;
-
-                for (const point of normalizedTool.points) {
-                    const x = chart.timeScale().timeToCoordinate(drawingTimestampToChartTime(point.timestamp));
-                    const y = series.priceToCoordinate(point.price);
-                    if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) {
-                        continue;
-                    }
-
-                    hasCoordinates = true;
-                    left = Math.min(left, x);
-                    right = Math.max(right, x);
-                    top = Math.min(top, y);
-                    bottom = Math.max(bottom, y);
-                }
-
-                if (!hasCoordinates) {
-                    return [];
-                }
-
-                const visibleLeft = Math.max(0, left);
-                const visibleRight = Math.min(paneSize.width, right);
-                const visibleTop = Math.max(0, top);
-                const visibleBottom = Math.min(paneSize.height, bottom);
-                const visibleWidth = visibleRight - visibleLeft;
-                const visibleHeight = visibleBottom - visibleTop;
-                const isOutsidePane =
-                    visibleWidth <= 0 ||
-                    visibleHeight <= 0;
-                if (isOutsidePane) {
-                    return [];
-                }
-
-                return [{
-                    id: normalizedTool.id,
-                    x: Math.max(
-                        visibleLeft,
-                        visibleRight - LONG_SHORT_LABEL_BUTTON_SIZE - LONG_SHORT_LABEL_BUTTON_INSET
-                    ),
-                    y: Math.min(
-                        Math.max(visibleTop, visibleTop + LONG_SHORT_LABEL_BUTTON_INSET),
-                        Math.max(visibleTop, visibleBottom - LONG_SHORT_LABEL_BUTTON_SIZE)
-                    ),
-                    labelsVisible: areLongShortLabelsVisible(normalizedTool.options),
-                }];
-            });
-
-        setLongShortLabelOverlayItems((current) =>
-            sameLongShortLabelOverlayItems(current, nextItems) ? current : nextItems
+        const selectedIds = new Set(selectedDrawingIdsRef.current);
+        const longShortTools = exportCurrentDrawings().filter(
+            (tool) => tool.toolType === "LongShortPosition"
         );
-    }, [exportCurrentDrawings, normalizeDrawingForCurrentData]);
+        let changed = false;
+
+        for (const tool of longShortTools) {
+            const labelsVisible = selectedIds.has(tool.id);
+            const currentLabelsVisible = areLongShortLabelsVisible(tool.options);
+            const currentShowAutoText =
+                typeof tool.options?.showAutoText === "boolean" ? tool.options.showAutoText : currentLabelsVisible;
+
+            if (currentLabelsVisible !== labelsVisible || currentShowAutoText !== labelsVisible) {
+                changed = true;
+                lineTools.applyLineToolOptions({
+                    id: tool.id,
+                    toolType: "LongShortPosition",
+                    options: {
+                        ...withLongShortLabelsVisible(tool.options, labelsVisible),
+                        showAutoText: labelsVisible,
+                    },
+                } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
+
+                updateLongShortText({
+                    id: tool.id,
+                    points: tool.points,
+                });
+            }
+        }
+
+        const internalLineTools = getLineToolsInternal();
+        const toolsMap = internalLineTools?._tools;
+        const interactionManager = internalLineTools?._interactionManager;
+        if (!changed || !toolsMap || !interactionManager || selectedIds.size === 0) return;
+
+        let primaryTool: InternalLineTool | null = null;
+        const primaryId =
+            lastSelectedDrawingRef.current && selectedIds.has(lastSelectedDrawingRef.current.id)
+                ? lastSelectedDrawingRef.current.id
+                : selectedDrawingIdsRef.current[selectedDrawingIdsRef.current.length - 1];
+
+        for (const tool of toolsMap.values()) {
+            const toolId = tool.id();
+            const isSelected = selectedIds.has(toolId);
+            tool.setSelected(isSelected);
+            if (isSelected && toolId === primaryId) {
+                primaryTool = tool;
+            }
+        }
+
+        interactionManager._selectedTool = primaryTool;
+        internalLineTools?.requestUpdate?.();
+    }, [exportCurrentDrawings, getLineToolsInternal, updateLongShortText]);
 
     useEffect(() => {
-        refreshLongShortLabelOverlayRef.current = refreshLongShortLabelOverlay;
-    }, [refreshLongShortLabelOverlay]);
+        syncLongShortLabelVisibilityRef.current = syncLongShortLabelVisibility;
+    }, [syncLongShortLabelVisibility]);
 
     const refreshVisibleLongShortDrawings = useCallback(() => {
         if (drawingsHiddenRef.current) return;
@@ -2741,6 +2695,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             lastSelectedDrawingRef.current = null;
             onDrawingSelectionChangeRef.current?.(null);
             onRectangleSelectionChangeRef.current?.(false);
+            syncLongShortLabelVisibilityRef.current();
             return;
         }
 
@@ -2755,6 +2710,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         };
         onDrawingSelectionChangeRef.current?.(primaryTool.toolType);
         onRectangleSelectionChangeRef.current?.(selectedTools.some((tool) => tool.toolType === "Rectangle"));
+        syncLongShortLabelVisibilityRef.current();
     }, []);
 
     const updateDrawingSelection = useCallback(() => {
@@ -2771,26 +2727,6 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         const matches = parseDrawingToolExports(lineToolsRef.current.getLineToolByID?.(id));
         return matches[0] ?? null;
     }, [parseDrawingToolExports]);
-
-    const setSelectedLongShortLabelsVisible = useCallback((toolId: string, labelsVisible: boolean) => {
-        const tool = readDrawingToolById(toolId);
-        if (!tool || tool.toolType !== "LongShortPosition") return;
-
-        lineToolsRef.current?.applyLineToolOptions({
-            id: toolId,
-            toolType: "LongShortPosition",
-            options: {
-                ...withLongShortLabelsVisible(tool.options, labelsVisible),
-                showAutoText: labelsVisible,
-            },
-        } as Parameters<LineToolsApi["applyLineToolOptions"]>[0]);
-
-        updateLongShortText({
-            id: tool.id,
-            points: tool.points,
-        });
-        scheduleTimeGuideOverlayRefreshRef.current();
-    }, [readDrawingToolById, updateLongShortText]);
 
     const getSelectedCalloutConfig = useCallback((): {
         text: string;
@@ -4061,7 +3997,10 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                 }
 
                 if (hitToolId) {
-                    if (selectedDrawingIdsRef.current.length > 1) {
+                    const isOnlySelectedTool =
+                        selectedDrawingIdsRef.current.length === 1 &&
+                        selectedDrawingIdsRef.current[0] === hitToolId;
+                    if (!isOnlySelectedTool) {
                         syncSelectionByIds([hitToolId], hitToolId);
                     }
                     return;
@@ -5674,31 +5613,6 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                             </div>
                         );
                     })}
-                </div>
-            )}
-
-            {longShortLabelOverlayItems.length > 0 && (
-                <div className="pointer-events-none absolute inset-0 z-[6] overflow-hidden rounded-lg">
-                    {longShortLabelOverlayItems.map((item) => (
-                     <button
-    key={item.id}
-    type="button"
-    onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setSelectedLongShortLabelsVisible(item.id, !item.labelsVisible);
-    }}
-    className="pointer-events-auto absolute flex h-5 w-5 items-center justify-center rounded-full border border-slate-500/70 bg-slate-900/95 text-[12px] font-semibold leading-none text-slate-50 shadow-lg transition-colors hover:bg-slate-800"
-    style={{
-        left: `${item.x}px`,
-        top: `${item.y}px`,
-    }}
-    title={item.labelsVisible ? "Hide RR labels" : "Show RR labels"}
-    aria-label={item.labelsVisible ? "Hide RR labels" : "Show RR labels"}
->
-    {item.labelsVisible ? "-" : "+"}
-</button>
-                    ))}
                 </div>
             )}
 

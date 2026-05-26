@@ -99,6 +99,7 @@ type LoadedRange = {
 };
 
 type HistoryChartUpdateMode = "replace" | "append" | "prepend";
+type ReplayStartMode = "bar" | "date";
 
 const LOAD_LIMIT = 20_000;
 const EDGE_FETCH_THRESHOLD = 10;
@@ -440,6 +441,8 @@ interface SingleDatePopoverProps {
   max: Date;
   onClose: () => void;
   onApply: (date: Date) => void;
+  inputId?: string;
+  label?: string;
 }
 
 interface Mt5HistoryWorkspaceProps {
@@ -465,6 +468,8 @@ function SingleDatePopover({
   max,
   onClose,
   onApply,
+  inputId = "mt5-history-go-to-date-input",
+  label = "Go to date",
 }: SingleDatePopoverProps) {
   const [tempDate, setTempDate] = useState<Date>(value);
   const [visibleMonth, setVisibleMonth] = useState<Date>(startOfMonth(value));
@@ -514,13 +519,13 @@ function SingleDatePopover({
 
       <div className="mb-3">
         <label
-          htmlFor="mt5-history-go-to-date-input"
+          htmlFor={inputId}
           className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
         >
-          Go to date
+          {label}
         </label>
         <input
-          id="mt5-history-go-to-date-input"
+          id={inputId}
           type="text"
           value={inputValue}
           onChange={(event) => {
@@ -717,6 +722,7 @@ export function Mt5HistoryWorkspace({
   const barsRef = useRef<ChartBar[]>([]);
   const chartAreaRef = useRef<HTMLDivElement>(null);
   const datePickerRef = useRef<HTMLDivElement | null>(null);
+  const replayDatePickerRef = useRef<HTMLDivElement | null>(null);
   const loadedRangeRef = useRef<LoadedRange | null>(null);
   const requestedRangeRef = useRef<LoadedRange | null>(null);
   const activeSeriesKeyRef = useRef("");
@@ -780,6 +786,10 @@ export function Mt5HistoryWorkspace({
   const [replayIntervalMs, setReplayIntervalMs] = useState<number>(DEFAULT_REPLAY_INTERVAL_MS);
   const [replayDataUpdateMode, setReplayDataUpdateMode] = useState<"replace" | "append" | "prepend">("replace");
   const [replayPlacementTimestamp, setReplayPlacementTimestamp] = useState<number | null>(null);
+  const [replayStartMode, setReplayStartMode] = useState<ReplayStartMode>("bar");
+  const [replayDate, setReplayDate] = useState(initialGoToDate ?? "");
+  const [isReplayDatePickerOpen, setIsReplayDatePickerOpen] = useState(false);
+  const [replayLoadTimestamp, setReplayLoadTimestamp] = useState<number | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedHeight, setExpandedHeight] = useState(640);
   const [chartAreaHeight, setChartAreaHeight] = useState(520);
@@ -791,6 +801,7 @@ export function Mt5HistoryWorkspace({
   const replayTimerRef = useRef<number | null>(null);
   const isReplayModeRef = useRef(false);
   const isReplayPlacementModeRef = useRef(false);
+  const pendingReplayStartTimestampRef = useRef<number | null>(null);
   const pendingReplayViewportRef = useRef<{ from: number; to: number } | null>(null);
   const replayViewportRef = useRef<{ from: number; to: number } | null>(null);
   const pendingRestoreRef = useRef<{
@@ -872,6 +883,8 @@ export function Mt5HistoryWorkspace({
     () => availableTimeframes.find((item) => item.timeframe === timeframe) ?? null,
     [availableTimeframes, timeframe]
   );
+  const replayMinDate = selectedTimeframe ? toDateInputValue(selectedTimeframe.from) : "";
+  const replayMaxDate = selectedTimeframe ? toDateInputValue(selectedTimeframe.to) : "";
   const drawingFillRgba = useMemo(
     () => hexToRgba(rectangleFillColor, rectangleFillOpacity),
     [rectangleFillColor, rectangleFillOpacity]
@@ -1199,6 +1212,30 @@ export function Mt5HistoryWorkspace({
   }, [isDatePickerOpen]);
 
   useEffect(() => {
+    if (!isReplayDatePickerOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!replayDatePickerRef.current?.contains(target)) {
+        setIsReplayDatePickerOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsReplayDatePickerOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [isReplayDatePickerOpen]);
+
+  useEffect(() => {
     if (!compactActionsOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
@@ -1268,6 +1305,23 @@ export function Mt5HistoryWorkspace({
     setTimeframe(availableTimeframes[0].timeframe);
   }, [availableTimeframes, selectedSymbol, timeframe]);
 
+  useEffect(() => {
+    if (!selectedTimeframe) {
+      setReplayDate("");
+      return;
+    }
+
+    const candidate = replayDate || goToDate || toDateInputValue(selectedTimeframe.to);
+    const clamped = candidate < replayMinDate
+      ? replayMinDate
+      : candidate > replayMaxDate
+        ? replayMaxDate
+        : candidate;
+    if (clamped !== replayDate) {
+      setReplayDate(clamped);
+    }
+  }, [goToDate, replayDate, replayMaxDate, replayMinDate, selectedTimeframe]);
+
   // Report values to parent so tab labels are correct
   useEffect(() => {
     if (symbol) onSymbolChange?.(symbol);
@@ -1302,6 +1356,8 @@ export function Mt5HistoryWorkspace({
     setReplayStartTimestamp(null);
     setReplayDataUpdateMode("replace");
     setReplayPlacementTimestamp(null);
+    setReplayLoadTimestamp(null);
+    pendingReplayStartTimestampRef.current = null;
     pendingReplayViewportRef.current = null;
     replayViewportRef.current = null;
   }, [symbol]);
@@ -1324,6 +1380,8 @@ export function Mt5HistoryWorkspace({
     setReplayStartTimestamp(null);
     setReplayDataUpdateMode("replace");
     setReplayPlacementTimestamp(null);
+    setReplayLoadTimestamp(null);
+    pendingReplayStartTimestampRef.current = null;
     pendingReplayViewportRef.current = null;
     replayViewportRef.current = null;
   }, []);
@@ -1382,6 +1440,35 @@ export function Mt5HistoryWorkspace({
     );
   }, [focusTimestamp, replayCursorTimestamp, replayPlacementTimestamp, replayStartTimestamp]);
 
+  const startReplayFromDateTimestamp = useCallback((targetTimestamp: number) => {
+    if (!selectedTimeframe || bars.length === 0) return;
+
+    const clampedTarget = Math.max(
+      selectedTimeframe.from,
+      Math.min(selectedTimeframe.to, targetTimestamp)
+    );
+
+    setIsReplayPlaying(false);
+    setIsReplayPlacementMode(false);
+    setReplayPlacementTimestamp(null);
+    setIsReplayDatePickerOpen(false);
+    closeCompactActions();
+    setCompactDrawOpen(false);
+
+    if (
+      bars[0] &&
+      bars[bars.length - 1] &&
+      clampedTarget >= bars[0].timestamp &&
+      clampedTarget <= bars[bars.length - 1].timestamp
+    ) {
+      startReplayAtTimestamp(clampedTarget);
+      return;
+    }
+
+    pendingReplayStartTimestampRef.current = clampedTarget;
+    setReplayLoadTimestamp(clampedTarget);
+  }, [bars, closeCompactActions, selectedTimeframe, startReplayAtTimestamp]);
+
   const handleReplayToggle = useCallback(() => {
     if (isReplayMode) {
       exitReplay();
@@ -1396,13 +1483,32 @@ export function Mt5HistoryWorkspace({
 
     if (bars.length === 0) return;
 
+    if (replayStartMode === "date") {
+      const targetTimestamp = fromDateInputValue(replayDate);
+      if (!Number.isFinite(targetTimestamp) || !selectedTimeframe) return;
+      startReplayFromDateTimestamp(targetTimestamp);
+      return;
+    }
+
     const anchorIndex = getReplayAnchorIndex();
     setIsReplayPlaying(false);
     setIsReplayPlacementMode(true);
     setReplayPlacementTimestamp(bars[anchorIndex]?.timestamp ?? null);
+    setIsReplayDatePickerOpen(false);
     closeCompactActions();
     setCompactDrawOpen(false);
-  }, [bars, closeCompactActions, exitReplay, getReplayAnchorIndex, isReplayMode, isReplayPlacementMode]);
+  }, [
+    bars,
+    closeCompactActions,
+    exitReplay,
+    getReplayAnchorIndex,
+    isReplayMode,
+    isReplayPlacementMode,
+    replayDate,
+    replayStartMode,
+    selectedTimeframe,
+    startReplayFromDateTimestamp,
+  ]);
 
   const stepReplay = useCallback(
     (delta: number) => {
@@ -1835,13 +1941,39 @@ export function Mt5HistoryWorkspace({
     }
     const pendingCenterTimestamp = pendingRestoreRef.current?.centerTimestamp;
     const preserveReplay =
-      pendingCenterTimestamp != null &&
-      (isReplayModeRef.current || isReplayPlacementModeRef.current);
+      pendingReplayStartTimestampRef.current != null ||
+      (pendingCenterTimestamp != null &&
+        (isReplayModeRef.current || isReplayPlacementModeRef.current));
     void goToTimestamp(
       pendingCenterTimestamp ?? focusTimestamp ?? selectedTimeframe.to,
       preserveReplay ? { preserveReplay: true } : undefined
     );
   }, [focusTimestamp, goToTimestamp, selectedTimeframe, symbol]);
+
+  useEffect(() => {
+    if (replayLoadTimestamp == null) return;
+    setReplayLoadTimestamp(null);
+    void goToTimestamp(replayLoadTimestamp, { preserveReplay: true });
+  }, [goToTimestamp, replayLoadTimestamp]);
+
+  useEffect(() => {
+    const pendingReplayStartTimestamp = pendingReplayStartTimestampRef.current;
+    if (pendingReplayStartTimestamp == null || isBarsLoading || bars.length === 0) return;
+
+    const loadedFrom = bars[0]?.timestamp ?? null;
+    const loadedTo = bars[bars.length - 1]?.timestamp ?? null;
+    if (
+      loadedFrom == null ||
+      loadedTo == null ||
+      pendingReplayStartTimestamp < loadedFrom ||
+      pendingReplayStartTimestamp > loadedTo
+    ) {
+      return;
+    }
+
+    pendingReplayStartTimestampRef.current = null;
+    startReplayAtTimestamp(pendingReplayStartTimestamp);
+  }, [bars, isBarsLoading, startReplayAtTimestamp]);
 
   useEffect(() => {
     if (!shouldCenterOnNextDataRef.current || bars.length === 0) return;
@@ -2059,6 +2191,24 @@ export function Mt5HistoryWorkspace({
     [goToTimestamp, selectedTimeframe]
   );
 
+  const applyReplayDate = useCallback((date: Date) => {
+    if (!selectedTimeframe) return;
+
+    const targetTimestamp = fromDateInputValue(toDateInputValue(date.getTime()));
+    if (!Number.isFinite(targetTimestamp)) return;
+
+    const minTimestamp = fromDateInputValue(toDateInputValue(selectedTimeframe.from));
+    const maxTimestamp = fromDateInputValue(toDateInputValue(selectedTimeframe.to));
+    const clampedTarget = Math.max(
+      minTimestamp,
+      Math.min(maxTimestamp, targetTimestamp)
+    );
+
+    setReplayDate(toDateInputValue(clampedTarget));
+    setIsReplayDatePickerOpen(false);
+    startReplayFromDateTimestamp(clampedTarget);
+  }, [selectedTimeframe, startReplayFromDateTimestamp]);
+
   const refreshCurrentView = useCallback(() => {
     if (!selectedTimeframe) return;
 
@@ -2238,10 +2388,64 @@ export function Mt5HistoryWorkspace({
       />
 
       <div className="flex items-center gap-1">
+        {!isReplayMode && !isReplayPlacementMode ? (
+          <div className="flex h-7 items-center gap-1 rounded border border-border bg-background px-1">
+            <select
+              value={replayStartMode}
+              onChange={(event) => {
+                const nextMode = event.target.value as ReplayStartMode;
+                setReplayStartMode(nextMode);
+                if (nextMode !== "date") {
+                  setIsReplayDatePickerOpen(false);
+                }
+              }}
+              disabled={!selectedTimeframe}
+              className="h-5 rounded border border-border bg-background px-1 text-[10px] text-foreground"
+              aria-label="Replay start mode"
+              title="Replay start mode"
+            >
+              <option value="bar">Bar</option>
+              <option value="date">Date</option>
+            </select>
+            {replayStartMode === "date" ? (
+              <div className="relative" ref={replayDatePickerRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsReplayDatePickerOpen((current) => !current)}
+                  disabled={!selectedTimeframe || !replayDate}
+                  className="flex h-5 min-w-[92px] items-center gap-1 rounded border border-border bg-background px-1 text-[10px] text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Replay start date"
+                  title="Replay start date"
+                >
+                  <Calendar className="h-3 w-3 text-muted-foreground" />
+                  <span className="whitespace-nowrap">
+                    {replayDate ? format(new Date(`${replayDate}T00:00:00`), "MMM d") : "Date"}
+                  </span>
+                </button>
+                {isReplayDatePickerOpen && selectedTimeframe && replayDate ? (
+                  <SingleDatePopover
+                    key={`replay-${replayDate}`}
+                    value={new Date(`${replayDate}T00:00:00`)}
+                    min={new Date(selectedTimeframe.from)}
+                    max={new Date(selectedTimeframe.to)}
+                    inputId="mt5-history-replay-date-input"
+                    label="Replay date"
+                    onClose={() => setIsReplayDatePickerOpen(false)}
+                    onApply={applyReplayDate}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <button
           type="button"
           onClick={handleReplayToggle}
-          disabled={!selectedTimeframe || bars.length === 0}
+          disabled={
+            !selectedTimeframe ||
+            bars.length === 0 ||
+            (replayStartMode === "date" && !parseDateInputValue(replayDate))
+          }
           className={`flex h-7 items-center gap-1.5 rounded border px-2 text-[11px] font-medium transition-colors ${
             isReplayMode || isReplayPlacementMode
               ? "border-primary/60 bg-primary/10 text-primary"
@@ -2252,7 +2456,11 @@ export function Mt5HistoryWorkspace({
               ? "Exit replay mode"
               : isReplayPlacementMode
                 ? "Cancel replay placement"
-                : "Pick replay start on chart"
+                : replayStartMode === "bar"
+                  ? "Pick replay start on chart"
+                  : replayStartMode === "date"
+                    ? "Start replay at selected date"
+                    : "Start replay"
           }
         >
           {isReplayMode ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
