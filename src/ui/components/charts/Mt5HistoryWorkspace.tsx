@@ -397,6 +397,30 @@ function extendRangeToIncludeDrawings(
   return { from, to };
 }
 
+/**
+ * True when every drawing anchor falls inside the currently loaded bar range.
+ * Used to defer restoring drawings until the freshly selected timeframe has
+ * loaded data that actually spans each tool, so drawings snap back to their
+ * exact historical candle/time/price (TradingView-style) instead of being
+ * dropped or offset against a partially-loaded window.
+ */
+function areDrawingsCoveredByBars(
+  drawings: DrawingToolExport[],
+  bars: ChartBar[]
+): boolean {
+  if (drawings.length === 0 || bars.length === 0) return true;
+
+  const loadedFrom = bars[0].timestamp;
+  const loadedTo = bars[bars.length - 1].timestamp;
+
+  return drawings.every((drawing) =>
+    drawing.points.every((point) => {
+      const timestamp = drawingTimestampToMs(point.timestamp);
+      return timestamp >= loadedFrom && timestamp <= loadedTo;
+    })
+  );
+}
+
 const PLACEHOLDER_TRADE: Trade = {
   accountId: "",
   symbol: "",
@@ -809,6 +833,10 @@ export function Mt5HistoryWorkspace({
     centerTimestamp: number | null;
     windowSeconds?: number | null;
   } | null>(null);
+  // True while a timeframe/symbol switch is reloading data. Blocks the restore
+  // effect from importing drawings against the *previous* timeframe's bars
+  // before the new timeframe has finished its replace-load.
+  const awaitingTimeframeRestoreRef = useRef(false);
   const lastHandledObservationRequestRef = useRef<string | null>(null);
   const skipNextCalloutApplyRef = useRef(false);
   const pendingAutoShowDrawingToolRef = useRef<DrawingToolType | null>(null);
@@ -851,13 +879,27 @@ export function Mt5HistoryWorkspace({
   useEffect(() => {
     const pending = pendingRestoreRef.current;
     if (!pending || bars.length === 0 || isBarsLoading) return;
+    // Wait until the newly selected timeframe has finished its replace-load.
+    // Without this, the effect would fire on the *previous* timeframe's bars
+    // (which are still mounted for the first render after the switch), import
+    // the drawings against the wrong data, and clear the pending ref so the new
+    // timeframe ends up with no drawings.
+    if (awaitingTimeframeRestoreRef.current) return;
+    // Only restore once the loaded bars span every drawing anchor, so each tool
+    // re-attaches to its exact historical candle/time/price.
+    if (!areDrawingsCoveredByBars(pending.drawings, bars)) return;
     pendingRestoreRef.current = null;
     const timer = window.setTimeout(() => {
+      const chart = chartRef.current;
+      if (!chart) return;
+      // Clear any leftover tools first so re-import always lands on the exact
+      // anchors of the new timeframe rather than duplicating/offsetting.
+      chart.removeAllDrawingTools();
       if (pending.drawings.length > 0) {
-        chartRef.current?.importDrawings(pending.drawings);
+        chart.importDrawings(pending.drawings);
       }
       if (pending.centerTimestamp != null) {
-        chartRef.current?.scrollToTimestamp(
+        chart.scrollToTimestamp(
           pending.centerTimestamp,
           pending.windowSeconds ?? undefined
         );
@@ -1646,6 +1688,10 @@ export function Mt5HistoryWorkspace({
       onSymbolChange?.(nextSymbol);
     }
 
+    const willReload =
+      (Boolean(nextSymbol) && nextSymbol !== symbol) ||
+      (Boolean(nextTimeframe) && nextTimeframe !== timeframe);
+
     if (nextTimeframe && nextTimeframe !== timeframe) {
       setTimeframe(nextTimeframe);
       onTimeframeChange?.(nextTimeframe);
@@ -1654,11 +1700,16 @@ export function Mt5HistoryWorkspace({
     if (pending.centerTimestamp != null) {
       setFocusTimestamp(pending.centerTimestamp);
     }
+    // Block the restore effect until the reload finishes when the observation
+    // targets a different symbol/timeframe (same anchoring guarantee as a
+    // manual timeframe switch).
+    awaitingTimeframeRestoreRef.current = willReload;
     pendingRestoreRef.current = pending;
 
     const symbolMatches = !nextSymbol || nextSymbol === symbol;
     const timeframeMatches = !nextTimeframe || nextTimeframe === timeframe;
     if (symbolMatches && timeframeMatches && bars.length > 0 && !isBarsLoading) {
+      awaitingTimeframeRestoreRef.current = false;
       pendingRestoreRef.current = null;
       window.setTimeout(() => {
         if (pending.drawings.length > 0) {
@@ -1864,6 +1915,9 @@ export function Mt5HistoryWorkspace({
         loadedRangeRef.current = nextDisplayedRange;
         if (mode === "replace") {
           requestedRangeRef.current = nextDisplayedRange;
+          // The freshly selected timeframe has loaded; allow the restore effect
+          // to re-attach drawings to the new bars.
+          awaitingTimeframeRestoreRef.current = false;
         }
         setLoadedRange(nextDisplayedRange);
 
@@ -1880,6 +1934,7 @@ export function Mt5HistoryWorkspace({
         if (mode === "replace") {
           setBars([]);
           setLoadedRange(null);
+          awaitingTimeframeRestoreRef.current = false;
         }
         const fallbackMessage =
           resolvedMt5ServiceUrl && error instanceof TypeError
@@ -2333,6 +2388,8 @@ export function Mt5HistoryWorkspace({
               : null;
           // Save drawings and viewport before timeframe change
           skipAutoFitOnNextDataRef.current = true;
+          // Block the restore effect until the new timeframe finishes loading.
+          awaitingTimeframeRestoreRef.current = true;
           pendingRestoreRef.current = {
             drawings: chartRef.current?.exportAllDrawings() ?? [],
             centerTimestamp:
