@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useMemo } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { RefreshCw } from "lucide-react";
 import { useSyncProgress } from "@ui/hooks/useSyncProgress";
 import { useAccount } from "@ui/hooks/useAccount";
@@ -16,6 +16,35 @@ import type { SymbolSyncProgress } from "@domain/entities";
 import { isOnline } from "@infrastructure/sync/utils/connection";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const DISABLED_SYMBOLS_STORAGE_KEY = "personal-journal:disabled-sync-symbols";
+const SHOW_DISABLED_SYMBOLS_STORAGE_KEY =
+  "personal-journal:show-disabled-sync-symbols";
+
+function getSymbolKey(broker: string, symbol: string): string {
+  return `${broker}:${symbol}`;
+}
+
+function readStoredDisabledSymbolKeys(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+
+  try {
+    const raw = window.localStorage.getItem(DISABLED_SYMBOLS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? new Set(
+          parsed.filter((item): item is string => typeof item === "string"),
+        )
+      : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function readStoredShowDisabledSymbols(): boolean {
+  if (typeof window === "undefined") return true;
+  const raw = window.localStorage.getItem(SHOW_DISABLED_SYMBOLS_STORAGE_KEY);
+  return raw == null ? true : raw === "true";
+}
 
 interface RefetchRangeDialogState {
   broker: string;
@@ -52,7 +81,7 @@ function startOfLocalDay(date: Date): Date {
     0,
     0,
     0,
-    0
+    0,
   );
 }
 
@@ -64,7 +93,11 @@ function startOfCurrentLocalWeek(date: Date): Date {
   return startOfLocalDay(weekStart);
 }
 
-function clampDateToBounds(date: Date, minDate: Date | null, maxDate: Date | null): Date {
+function clampDateToBounds(
+  date: Date,
+  minDate: Date | null,
+  maxDate: Date | null,
+): Date {
   const min = minDate?.getTime() ?? Number.NEGATIVE_INFINITY;
   const max = maxDate?.getTime() ?? Number.POSITIVE_INFINITY;
   return new Date(Math.min(Math.max(date.getTime(), min), max));
@@ -73,7 +106,7 @@ function clampDateToBounds(date: Date, minDate: Date | null, maxDate: Date | nul
 function resolveDeleteRecentPresetDate(
   preset: DeleteRecentPreset,
   minDate: Date | null,
-  maxDate: Date | null
+  maxDate: Date | null,
 ): Date {
   const anchor = maxDate ?? new Date();
   const anchorStart = startOfLocalDay(anchor);
@@ -89,7 +122,10 @@ function resolveDeleteRecentPresetDate(
   return clampDateToBounds(nextDate, minDate, maxDate);
 }
 
-function resolveDeleteRecentDefaultDate(minDate: Date | null, maxDate: Date | null): Date {
+function resolveDeleteRecentDefaultDate(
+  minDate: Date | null,
+  maxDate: Date | null,
+): Date {
   const anchor = maxDate ?? new Date();
   return clampDateToBounds(startOfCurrentLocalWeek(anchor), minDate, maxDate);
 }
@@ -98,27 +134,40 @@ export function ChartDataSyncSection() {
   const [isLoading, setIsLoading] = useState(false);
   const [syncingBrokers, setSyncingBrokers] = useState<Set<string>>(new Set());
   const [syncingSymbols, setSyncingSymbols] = useState<Set<string>>(new Set());
-  const [deletingSymbols, setDeletingSymbols] = useState<Set<string>>(new Set());
-  const [deleteDialog, setDeleteDialog] = useState<DeleteBarsDialogState | null>(null);
+  const [deletingSymbols, setDeletingSymbols] = useState<Set<string>>(
+    new Set(),
+  );
+  const [disabledSymbolKeys, setDisabledSymbolKeys] = useState<Set<string>>(
+    readStoredDisabledSymbolKeys,
+  );
+  const [showDisabledSymbols, setShowDisabledSymbols] = useState(
+    readStoredShowDisabledSymbols,
+  );
+  const [deleteDialog, setDeleteDialog] =
+    useState<DeleteBarsDialogState | null>(null);
   const [deleteMode, setDeleteMode] = useState<"all" | "recentRange">("all");
   const [deleteRecentFrom, setDeleteRecentFrom] = useState("");
-  const [deleteDialogError, setDeleteDialogError] = useState<string | null>(null);
-  const [refetchRangeDialog, setRefetchRangeDialog] = useState<RefetchRangeDialogState | null>(null);
+  const [deleteDialogError, setDeleteDialogError] = useState<string | null>(
+    null,
+  );
+  const [refetchRangeDialog, setRefetchRangeDialog] =
+    useState<RefetchRangeDialogState | null>(null);
   const [refetchRangeStart, setRefetchRangeStart] = useState("");
   const [refetchRangeEnd, setRefetchRangeEnd] = useState("");
-  const [refetchRangeError, setRefetchRangeError] = useState<string | null>(null);
+  const [refetchRangeError, setRefetchRangeError] = useState<string | null>(
+    null,
+  );
   const [isRefetchingRange, setIsRefetchingRange] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cancelRequestedRef = useRef(false);
 
   const { user } = useAuth();
-  const progressRepo = useMemo(() => new DexieSymbolSyncProgressRepository(), []);
-  
-  const {
-    symbolProgress,
-    getBrokerProgress,
-    refresh,
-  } = useSyncProgress({
+  const progressRepo = useMemo(
+    () => new DexieSymbolSyncProgressRepository(),
+    [],
+  );
+
+  const { symbolProgress, getBrokerProgress, refresh } = useSyncProgress({
     repository: progressRepo,
     autoLoad: true,
     subscribe: true,
@@ -126,17 +175,68 @@ export function ChartDataSyncSection() {
 
   const { accounts } = useAccount();
   const maxRefetchDateTime = toDateTimeLocalValue(new Date());
+  const isSymbolDisabled = useCallback(
+    (broker: string, symbol: string) =>
+      disabledSymbolKeys.has(getSymbolKey(broker, symbol)),
+    [disabledSymbolKeys],
+  );
+  const toggleDisabledSymbol = useCallback((broker: string, symbol: string) => {
+    const symbolKey = getSymbolKey(broker, symbol);
+    setDisabledSymbolKeys((current) => {
+      const next = new Set(current);
+      if (next.has(symbolKey)) {
+        next.delete(symbolKey);
+      } else {
+        next.add(symbolKey);
+      }
+      window.localStorage.setItem(
+        DISABLED_SYMBOLS_STORAGE_KEY,
+        JSON.stringify(Array.from(next).sort()),
+      );
+      return next;
+    });
+  }, []);
+  const toggleShowDisabledSymbols = useCallback(() => {
+    setShowDisabledSymbols((current) => {
+      const next = !current;
+      window.localStorage.setItem(
+        SHOW_DISABLED_SYMBOLS_STORAGE_KEY,
+        String(next),
+      );
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (symbolProgress.length === 0) return;
+
+    const availableKeys = new Set(
+      symbolProgress.map((item) => getSymbolKey(item.broker, item.symbol)),
+    );
+    setDisabledSymbolKeys((current) => {
+      const next = new Set(
+        Array.from(current).filter((key) => availableKeys.has(key)),
+      );
+      if (next.size === current.size) return current;
+      window.localStorage.setItem(
+        DISABLED_SYMBOLS_STORAGE_KEY,
+        JSON.stringify(Array.from(next).sort()),
+      );
+      return next;
+    });
+  }, [symbolProgress]);
+
   const ensureSyncSucceeded = useCallback(
     (
       result: Awaited<ReturnType<HybridSyncChartBarsUseCase["execute"]>>,
-      fallbackMessage: string
+      fallbackMessage: string,
     ) => {
       if (!result.success) {
         throw new Error(result.error ?? fallbackMessage);
       }
       return result;
     },
-    []
+    [],
   );
 
   // Group symbols by broker
@@ -155,131 +255,169 @@ export function ChartDataSyncSection() {
     }))
     .sort((a, b) => a.broker.localeCompare(b.broker));
 
-  const handleSyncBroker = useCallback(async (broker: string) => {
-    if (!user?.id) {
-      setError("Please log in to sync");
-      return;
-    }
-
-    if (!isOnline()) {
-      setError("Cannot sync - offline");
-      return;
-    }
-
-    setSyncingBrokers((prev) => new Set(prev).add(broker));
-    setError(null);
-
-    try {
-      // Get all symbols for this broker
-      const brokerSymbols = getBrokerProgress(broker);
-      const token = TokenStorage.getGlobal();
-      if (!token) {
-        setError("No access token available. Please reconnect your cTrader account.");
+  const handleSyncBroker = useCallback(
+    async (broker: string) => {
+      if (!user?.id) {
+        setError("Please log in to sync");
         return;
       }
-      const brokerAccount = accounts.find((acc) => acc.broker === broker);
-      const accountNumber = brokerAccount?.accountNumber;
-      const dexieChartRepo = new DexieChartBarRepository();
-      const api = new CTraderAPI();
-      const syncUseCase = new HybridSyncChartBarsUseCase(
-        api,
-        dexieChartRepo,
-        progressRepo
-      );
 
-      // Sync each symbol (including completed - incremental sync from lastBarDate to now)
-      for (const symbolProgress of brokerSymbols) {
-        if (cancelRequestedRef.current) {
-          
-          break;
+      if (!isOnline()) {
+        setError("Cannot sync - offline");
+        return;
+      }
+
+      setSyncingBrokers((prev) => new Set(prev).add(broker));
+      setError(null);
+
+      try {
+        // Get all symbols for this broker
+        const brokerSymbols = getBrokerProgress(broker).filter(
+          (progress) => !isSymbolDisabled(broker, progress.symbol),
+        );
+        if (brokerSymbols.length === 0) {
+          setError("No enabled symbols to sync for this broker.");
+          return;
         }
+        const token = TokenStorage.getGlobal();
+        if (!token) {
+          setError(
+            "No access token available. Please reconnect your cTrader account.",
+          );
+          return;
+        }
+        const brokerAccount = accounts.find((acc) => acc.broker === broker);
+        const accountNumber = brokerAccount?.accountNumber;
+        const dexieChartRepo = new DexieChartBarRepository();
+        const api = new CTraderAPI();
+        const syncUseCase = new HybridSyncChartBarsUseCase(
+          api,
+          dexieChartRepo,
+          progressRepo,
+        );
 
-        const symbolKey = `${broker}:${symbolProgress.symbol}`;
-        setSyncingSymbols((prev) => new Set(prev).add(symbolKey));
-        cancelRequestedRef.current = false;
-
-        try {
-          const now = new Date();
-          let fromDate: Date;
-          let toDate: Date;
-
-          if (symbolProgress.status === "completed" && symbolProgress.lastBarDate) {
-            // Incremental sync: from last bar date to now (only new bars)
-            fromDate = new Date(symbolProgress.lastBarDate);
-            toDate = now;
-            
-          } else {
-            // Full sync: from first bar date (or 14 days ago) to last bar date (or now)
-            fromDate = symbolProgress.firstBarDate
-              ? new Date(symbolProgress.firstBarDate)
-              : new Date(Date.now() - 14 * 24 * 60 * 60 * 1000); // 14 days ago
-            toDate = symbolProgress.lastBarDate
-              ? new Date(symbolProgress.lastBarDate)
-              : now;
-          }
-
-          // Calculate timeout based on date range (allow 1 minute per month of data)
-          const monthsDiff = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
-          const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
-
-          const result = await Promise.race([
-            syncUseCase.execute({
-              userId: user.id,
-              broker,
-              symbol: symbolProgress.symbol,
-              fromDate,
-              toDate,
-              accessToken: token.accessToken,
-              accountNumber,
-              shouldCancel: () => cancelRequestedRef.current,
-            }),
-            new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>((_, reject) =>
-              setTimeout(
-                () => reject(new Error(`Sync timeout after ${Math.round(timeoutMs / 1000)} seconds`)),
-                timeoutMs
-              )
-            ),
-          ]);
-
-          ensureSyncSucceeded(result, `Failed to sync ${symbolProgress.symbol}`);
-
+        // Sync each symbol (including completed - incremental sync from lastBarDate to now)
+        for (const symbolProgress of brokerSymbols) {
           if (cancelRequestedRef.current) {
             break;
           }
-        } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          console.error(`Failed to sync ${symbolProgress.symbol}:`, errorMsg);
-          throw new Error(`Failed to sync ${symbolProgress.symbol}: ${errorMsg}`);
-        } finally {
-          setSyncingSymbols((prev) => {
-            const next = new Set(prev);
-            next.delete(symbolKey);
-            return next;
-          });
+
+          const symbolKey = getSymbolKey(broker, symbolProgress.symbol);
+          setSyncingSymbols((prev) => new Set(prev).add(symbolKey));
+          cancelRequestedRef.current = false;
+
+          try {
+            const now = new Date();
+            let fromDate: Date;
+            let toDate: Date;
+
+            if (
+              symbolProgress.status === "completed" &&
+              symbolProgress.lastBarDate
+            ) {
+              // Incremental sync: from last bar date to now (only new bars)
+              fromDate = new Date(symbolProgress.lastBarDate);
+              toDate = now;
+            } else {
+              // Full sync: from first bar date (or 14 days ago) to last bar date (or now)
+              fromDate = symbolProgress.firstBarDate
+                ? new Date(symbolProgress.firstBarDate)
+                : new Date(Date.now() - 14 * 24 * 60 * 60 * 1000); // 14 days ago
+              toDate = symbolProgress.lastBarDate
+                ? new Date(symbolProgress.lastBarDate)
+                : now;
+            }
+
+            // Calculate timeout based on date range (allow 1 minute per month of data)
+            const monthsDiff =
+              (toDate.getTime() - fromDate.getTime()) /
+              (1000 * 60 * 60 * 24 * 30);
+            const timeoutMs = Math.max(
+              60000,
+              Math.min(900000, monthsDiff * 60000),
+            ); // 1-15 minutes
+
+            const result = await Promise.race([
+              syncUseCase.execute({
+                userId: user.id,
+                broker,
+                symbol: symbolProgress.symbol,
+                fromDate,
+                toDate,
+                accessToken: token.accessToken,
+                accountNumber,
+                shouldCancel: () => cancelRequestedRef.current,
+              }),
+              new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>(
+                (_, reject) =>
+                  setTimeout(
+                    () =>
+                      reject(
+                        new Error(
+                          `Sync timeout after ${Math.round(timeoutMs / 1000)} seconds`,
+                        ),
+                      ),
+                    timeoutMs,
+                  ),
+              ),
+            ]);
+
+            ensureSyncSucceeded(
+              result,
+              `Failed to sync ${symbolProgress.symbol}`,
+            );
+
+            if (cancelRequestedRef.current) {
+              break;
+            }
+          } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            console.error(`Failed to sync ${symbolProgress.symbol}:`, errorMsg);
+            throw new Error(
+              `Failed to sync ${symbolProgress.symbol}: ${errorMsg}`,
+            );
+          } finally {
+            setSyncingSymbols((prev) => {
+              const next = new Set(prev);
+              next.delete(symbolKey);
+              return next;
+            });
+          }
         }
-      }
 
-      await refresh();
+        await refresh();
 
-      if (cancelRequestedRef.current) {
-        setError(null);
+        if (cancelRequestedRef.current) {
+          setError(null);
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        setError(`Failed to sync broker: ${errorMsg}`);
+        console.error("Broker sync error:", err);
+      } finally {
+        cancelRequestedRef.current = false;
+        setSyncingBrokers((prev) => {
+          const next = new Set(prev);
+          next.delete(broker);
+          return next;
+        });
       }
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      setError(`Failed to sync broker: ${errorMsg}`);
-      console.error("Broker sync error:", err);
-    } finally {
-      cancelRequestedRef.current = false;
-      setSyncingBrokers((prev) => {
-        const next = new Set(prev);
-        next.delete(broker);
-        return next;
-      });
-    }
-  }, [user?.id, accounts, getBrokerProgress, progressRepo, refresh, ensureSyncSucceeded]);
+    },
+    [
+      user?.id,
+      accounts,
+      getBrokerProgress,
+      progressRepo,
+      refresh,
+      ensureSyncSucceeded,
+      isSymbolDisabled,
+    ],
+  );
 
   const handleOpenRefetchRange = useCallback((progress: SymbolSyncProgress) => {
-    const availableEnd = progress.lastBarDate ? new Date(progress.lastBarDate) : new Date();
+    const availableEnd = progress.lastBarDate
+      ? new Date(progress.lastBarDate)
+      : new Date();
     const availableStart = progress.firstBarDate
       ? new Date(progress.firstBarDate)
       : new Date(availableEnd.getTime() - DAY_MS);
@@ -287,8 +425,12 @@ export function ChartDataSyncSection() {
     setRefetchRangeDialog({
       broker: progress.broker,
       symbol: progress.symbol,
-      availableStart: progress.firstBarDate ? new Date(progress.firstBarDate) : null,
-      availableEnd: progress.lastBarDate ? new Date(progress.lastBarDate) : null,
+      availableStart: progress.firstBarDate
+        ? new Date(progress.firstBarDate)
+        : null,
+      availableEnd: progress.lastBarDate
+        ? new Date(progress.lastBarDate)
+        : null,
     });
     setRefetchRangeStart(toDateTimeLocalValue(availableStart));
     setRefetchRangeEnd(toDateTimeLocalValue(availableEnd));
@@ -318,7 +460,9 @@ export function ChartDataSyncSection() {
 
     const token = TokenStorage.getGlobal();
     if (!token) {
-      setRefetchRangeError("No access token available. Please reconnect your cTrader account.");
+      setRefetchRangeError(
+        "No access token available. Please reconnect your cTrader account.",
+      );
       return;
     }
 
@@ -339,7 +483,7 @@ export function ChartDataSyncSection() {
     }
 
     const { broker, symbol } = refetchRangeDialog;
-    const symbolKey = `${broker}:${symbol}`;
+    const symbolKey = getSymbolKey(broker, symbol);
     setRefetchRangeError(null);
     setError(null);
     setIsRefetchingRange(true);
@@ -354,7 +498,7 @@ export function ChartDataSyncSection() {
       const syncUseCase = new HybridSyncChartBarsUseCase(
         api,
         dexieChartRepo,
-        progressRepo
+        progressRepo,
       );
 
       const monthsDiff =
@@ -373,16 +517,24 @@ export function ChartDataSyncSection() {
           forceFullSync: true,
           shouldCancel: () => cancelRequestedRef.current,
         }),
-        new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`Refetch timeout after ${Math.round(timeoutMs / 1000)} seconds`)),
-            timeoutMs
-          )
+        new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>(
+          (_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `Refetch timeout after ${Math.round(timeoutMs / 1000)} seconds`,
+                  ),
+                ),
+              timeoutMs,
+            ),
         ),
       ]);
 
       if (!result.success) {
-        throw new Error(result.error ?? "Failed to refetch the selected range.");
+        throw new Error(
+          result.error ?? "Failed to refetch the selected range.",
+        );
       }
 
       await refresh();
@@ -412,250 +564,327 @@ export function ChartDataSyncSection() {
     refresh,
   ]);
 
-  const handleCancelBrokerSync = useCallback((broker: string) => {
-    if (syncingBrokers.has(broker)) {
-      cancelRequestedRef.current = true;
-      setError("Cancelling sync...");
-    }
-  }, [syncingBrokers]);
+  const handleCancelBrokerSync = useCallback(
+    (broker: string) => {
+      if (syncingBrokers.has(broker)) {
+        cancelRequestedRef.current = true;
+        setError("Cancelling sync...");
+      }
+    },
+    [syncingBrokers],
+  );
 
-  const handleCancelSymbolSync = useCallback((broker: string, symbol: string) => {
-    const symbolKey = `${broker}:${symbol}`;
-    if (syncingSymbols.has(symbolKey)) {
-      cancelRequestedRef.current = true;
-      setError("Cancelling sync...");
-    }
-  }, [syncingSymbols]);
+  const handleCancelSymbolSync = useCallback(
+    (broker: string, symbol: string) => {
+      const symbolKey = `${broker}:${symbol}`;
+      if (syncingSymbols.has(symbolKey)) {
+        cancelRequestedRef.current = true;
+        setError("Cancelling sync...");
+      }
+    },
+    [syncingSymbols],
+  );
 
-  const handleSyncSymbol = useCallback(async (broker: string, symbol: string) => {
-    if (!user?.id) {
-      setError("Please log in to sync");
-      return;
-    }
-
-    if (!isOnline()) {
-      setError("Cannot sync - offline");
-      return;
-    }
-
-    const symbolKey = `${broker}:${symbol}`;
-    setSyncingSymbols((prev) => new Set(prev).add(symbolKey));
-    setError(null);
-    cancelRequestedRef.current = false;
-
-    try {
-      // Get progress for this symbol
-      const symbolProgress = await progressRepo.getByBrokerAndSymbol(broker, symbol);
-
-      const token = TokenStorage.getGlobal();
-      if (!token) {
-        setError("No access token available. Please reconnect your cTrader account.");
+  const handleSyncSymbol = useCallback(
+    async (broker: string, symbol: string) => {
+      if (!user?.id) {
+        setError("Please log in to sync");
         return;
       }
 
-      // Get account for this broker
-      const brokerAccount = accounts.find((acc) => acc.broker === broker);
-      const accountNumber = brokerAccount?.accountNumber;
-
-      // Create repositories and use case
-      const dexieChartRepo = new DexieChartBarRepository();
-      const api = new CTraderAPI();
-      const syncUseCase = new HybridSyncChartBarsUseCase(
-        api,
-        dexieChartRepo,
-        progressRepo
-      );
-
-      const now = new Date();
-      let fromDate: Date;
-      let toDate: Date;
-
-      if (symbolProgress?.status === "completed" && symbolProgress?.lastBarDate) {
-        // Incremental sync: from last bar date to now (only new bars)
-        fromDate = new Date(symbolProgress.lastBarDate);
-        toDate = now;
-        
-      } else {
-        // Full sync: from first bar date (or 14 days ago) to last bar date (or now)
-        fromDate = symbolProgress?.firstBarDate
-          ? new Date(symbolProgress.firstBarDate)
-          : new Date(Date.now() - 14 * 24 * 60 * 60 * 1000); // 14 days ago
-        toDate = symbolProgress?.lastBarDate
-          ? new Date(symbolProgress.lastBarDate)
-          : now;
+      if (!isOnline()) {
+        setError("Cannot sync - offline");
+        return;
       }
 
-      
+      const symbolKey = getSymbolKey(broker, symbol);
+      if (isSymbolDisabled(broker, symbol)) {
+        setError(`${symbol} is disabled. Enable it before syncing.`);
+        return;
+      }
 
-      
-      
-      // Calculate timeout based on date range (allow 1 minute per month of data)
-      const monthsDiff = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
-      const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
-      
-      
-      const result = await Promise.race([
-        syncUseCase.execute({
-          userId: user.id,
+      setSyncingSymbols((prev) => new Set(prev).add(symbolKey));
+      setError(null);
+      cancelRequestedRef.current = false;
+
+      try {
+        // Get progress for this symbol
+        const symbolProgress = await progressRepo.getByBrokerAndSymbol(
           broker,
           symbol,
-          fromDate,
-          toDate,
-          accessToken: token.accessToken,
-          accountNumber,
-          shouldCancel: () => cancelRequestedRef.current,
-        }),
-        new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>((_, reject) => 
-          setTimeout(() => reject(new Error(`Sync timeout after ${Math.round(timeoutMs/1000)} seconds`)), timeoutMs)
-        )
-      ]);
+        );
 
-      ensureSyncSucceeded(result, `Failed to sync ${symbol}`);
+        const token = TokenStorage.getGlobal();
+        if (!token) {
+          setError(
+            "No access token available. Please reconnect your cTrader account.",
+          );
+          return;
+        }
 
-      await refresh();
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      setError(`Failed to sync symbol: ${errorMsg}`);
-      console.error("Symbol sync error:", err);
-    } finally {
-      cancelRequestedRef.current = false;
-      setSyncingSymbols((prev) => {
-        const next = new Set(prev);
-        next.delete(symbolKey);
-        return next;
-      });
-    }
-  }, [user?.id, accounts, progressRepo, refresh, ensureSyncSucceeded]);
+        // Get account for this broker
+        const brokerAccount = accounts.find((acc) => acc.broker === broker);
+        const accountNumber = brokerAccount?.accountNumber;
 
-  const handleRetryFailed = useCallback(async (broker: string) => {
-    if (!user?.id) {
-      setError("Please log in to sync");
-      return;
-    }
+        // Create repositories and use case
+        const dexieChartRepo = new DexieChartBarRepository();
+        const api = new CTraderAPI();
+        const syncUseCase = new HybridSyncChartBarsUseCase(
+          api,
+          dexieChartRepo,
+          progressRepo,
+        );
 
-    if (!isOnline()) {
-      setError("Cannot sync - offline");
-      return;
-    }
+        const now = new Date();
+        let fromDate: Date;
+        let toDate: Date;
 
-    const token = TokenStorage.getGlobal();
-    if (!token) {
-      setError("No access token available. Please reconnect your cTrader account.");
-      return;
-    }
-
-    setSyncingBrokers((prev) => new Set(prev).add(broker));
-    setError(null);
-
-    try {
-      // Get failed symbols for this broker
-      const brokerSymbols = getBrokerProgress(broker).filter(
-        (p) => p.status === "failed"
-      );
-
-      if (brokerSymbols.length === 0) {
-        return; // No failed symbols
-      }
-
-      // Get account for this broker
-      const brokerAccount = accounts.find((acc) => acc.broker === broker);
-      const accountNumber = brokerAccount?.accountNumber;
-
-      // Create repositories and use case
-      const dexieChartRepo = new DexieChartBarRepository();
-      const api = new CTraderAPI();
-      
-      const syncUseCase = new HybridSyncChartBarsUseCase(
-        api,
-        dexieChartRepo,
-        progressRepo
-      );
-
-      // Retry each failed symbol
-      for (const symbolProgress of brokerSymbols) {
-        const symbolKey = `${broker}:${symbolProgress.symbol}`;
-        setSyncingSymbols((prev) => new Set(prev).add(symbolKey));
-
-        try {
-          // Reset status to pending before retry
-          await progressRepo.updateStatus(broker, symbolProgress.symbol, "pending");
-
-          const fromDate = symbolProgress.firstBarDate 
+        if (
+          symbolProgress?.status === "completed" &&
+          symbolProgress?.lastBarDate
+        ) {
+          // Incremental sync: from last bar date to now (only new bars)
+          fromDate = new Date(symbolProgress.lastBarDate);
+          toDate = now;
+        } else {
+          // Full sync: from first bar date (or 14 days ago) to last bar date (or now)
+          fromDate = symbolProgress?.firstBarDate
             ? new Date(symbolProgress.firstBarDate)
-            : new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-          const toDate = symbolProgress.lastBarDate 
+            : new Date(Date.now() - 14 * 24 * 60 * 60 * 1000); // 14 days ago
+          toDate = symbolProgress?.lastBarDate
             ? new Date(symbolProgress.lastBarDate)
-            : new Date();
+            : now;
+        }
 
-          const result = await syncUseCase.execute({
+        // Calculate timeout based on date range (allow 1 minute per month of data)
+        const monthsDiff =
+          (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+        const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
+
+        const result = await Promise.race([
+          syncUseCase.execute({
             userId: user.id,
             broker,
-            symbol: symbolProgress.symbol,
+            symbol,
             fromDate,
             toDate,
             accessToken: token.accessToken,
             accountNumber,
-          });
-          ensureSyncSucceeded(result, `Failed to retry ${symbolProgress.symbol}`);
-        } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          console.error(`Failed to retry ${symbolProgress.symbol}:`, errorMsg);
-          throw new Error(`Failed to retry ${symbolProgress.symbol}: ${errorMsg}`);
-        } finally {
-          setSyncingSymbols((prev) => {
-            const next = new Set(prev);
-            next.delete(symbolKey);
-            return next;
-          });
-        }
+            shouldCancel: () => cancelRequestedRef.current,
+          }),
+          new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>(
+            (_, reject) =>
+              setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      `Sync timeout after ${Math.round(timeoutMs / 1000)} seconds`,
+                    ),
+                  ),
+                timeoutMs,
+              ),
+          ),
+        ]);
+
+        ensureSyncSucceeded(result, `Failed to sync ${symbol}`);
+
+        await refresh();
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        setError(`Failed to sync symbol: ${errorMsg}`);
+        console.error("Symbol sync error:", err);
+      } finally {
+        cancelRequestedRef.current = false;
+        setSyncingSymbols((prev) => {
+          const next = new Set(prev);
+          next.delete(symbolKey);
+          return next;
+        });
+      }
+    },
+    [
+      user?.id,
+      accounts,
+      progressRepo,
+      refresh,
+      ensureSyncSucceeded,
+      isSymbolDisabled,
+    ],
+  );
+
+  const handleRetryFailed = useCallback(
+    async (broker: string) => {
+      if (!user?.id) {
+        setError("Please log in to sync");
+        return;
       }
 
-      await refresh();
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      setError(`Failed to retry sync: ${errorMsg}`);
-      console.error("Retry sync error:", err);
-    } finally {
-      setSyncingBrokers((prev) => {
-        const next = new Set(prev);
-        next.delete(broker);
-        return next;
+      if (!isOnline()) {
+        setError("Cannot sync - offline");
+        return;
+      }
+
+      const token = TokenStorage.getGlobal();
+      if (!token) {
+        setError(
+          "No access token available. Please reconnect your cTrader account.",
+        );
+        return;
+      }
+
+      setSyncingBrokers((prev) => new Set(prev).add(broker));
+      setError(null);
+
+      try {
+        // Get failed symbols for this broker
+        const brokerSymbols = getBrokerProgress(broker).filter(
+          (p) => p.status === "failed" && !isSymbolDisabled(broker, p.symbol),
+        );
+
+        if (brokerSymbols.length === 0) {
+          return; // No failed symbols
+        }
+
+        // Get account for this broker
+        const brokerAccount = accounts.find((acc) => acc.broker === broker);
+        const accountNumber = brokerAccount?.accountNumber;
+
+        // Create repositories and use case
+        const dexieChartRepo = new DexieChartBarRepository();
+        const api = new CTraderAPI();
+
+        const syncUseCase = new HybridSyncChartBarsUseCase(
+          api,
+          dexieChartRepo,
+          progressRepo,
+        );
+
+        // Retry each failed symbol
+        for (const symbolProgress of brokerSymbols) {
+          const symbolKey = getSymbolKey(broker, symbolProgress.symbol);
+          setSyncingSymbols((prev) => new Set(prev).add(symbolKey));
+
+          try {
+            // Reset status to pending before retry
+            await progressRepo.updateStatus(
+              broker,
+              symbolProgress.symbol,
+              "pending",
+            );
+
+            const fromDate = symbolProgress.firstBarDate
+              ? new Date(symbolProgress.firstBarDate)
+              : new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+            const toDate = symbolProgress.lastBarDate
+              ? new Date(symbolProgress.lastBarDate)
+              : new Date();
+
+            const result = await syncUseCase.execute({
+              userId: user.id,
+              broker,
+              symbol: symbolProgress.symbol,
+              fromDate,
+              toDate,
+              accessToken: token.accessToken,
+              accountNumber,
+            });
+            ensureSyncSucceeded(
+              result,
+              `Failed to retry ${symbolProgress.symbol}`,
+            );
+          } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            console.error(
+              `Failed to retry ${symbolProgress.symbol}:`,
+              errorMsg,
+            );
+            throw new Error(
+              `Failed to retry ${symbolProgress.symbol}: ${errorMsg}`,
+            );
+          } finally {
+            setSyncingSymbols((prev) => {
+              const next = new Set(prev);
+              next.delete(symbolKey);
+              return next;
+            });
+          }
+        }
+
+        await refresh();
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        setError(`Failed to retry sync: ${errorMsg}`);
+        console.error("Retry sync error:", err);
+      } finally {
+        setSyncingBrokers((prev) => {
+          const next = new Set(prev);
+          next.delete(broker);
+          return next;
+        });
+      }
+    },
+    [
+      user?.id,
+      accounts,
+      getBrokerProgress,
+      progressRepo,
+      refresh,
+      ensureSyncSucceeded,
+      isSymbolDisabled,
+    ],
+  );
+
+  const handleDeleteBarsClick = useCallback(
+    (broker: string, symbol: string) => {
+      const progress =
+        symbolProgress.find(
+          (item) => item.broker === broker && item.symbol === symbol,
+        ) ?? null;
+      const availableEnd = progress?.lastBarDate
+        ? new Date(progress.lastBarDate)
+        : new Date();
+      const availableStart = progress?.firstBarDate
+        ? new Date(progress.firstBarDate)
+        : null;
+
+      setDeleteDialog({
+        broker,
+        symbol,
+        availableStart: progress?.firstBarDate
+          ? new Date(progress.firstBarDate)
+          : null,
+        availableEnd: progress?.lastBarDate
+          ? new Date(progress.lastBarDate)
+          : null,
       });
-    }
-  }, [user?.id, accounts, getBrokerProgress, progressRepo, refresh, ensureSyncSucceeded]);
+      setDeleteMode("all");
+      setDeleteRecentFrom(
+        toDateTimeLocalValue(
+          resolveDeleteRecentDefaultDate(availableStart, availableEnd),
+        ),
+      );
+      setDeleteDialogError(null);
+    },
+    [symbolProgress],
+  );
 
-  const handleDeleteBarsClick = useCallback((broker: string, symbol: string) => {
-    const progress = symbolProgress.find((item) => item.broker === broker && item.symbol === symbol) ?? null;
-    const availableEnd = progress?.lastBarDate ? new Date(progress.lastBarDate) : new Date();
-    const availableStart = progress?.firstBarDate ? new Date(progress.firstBarDate) : null;
+  const applyDeleteRecentPreset = useCallback(
+    (preset: DeleteRecentPreset) => {
+      if (!deleteDialog) return;
 
-    setDeleteDialog({
-      broker,
-      symbol,
-      availableStart: progress?.firstBarDate ? new Date(progress.firstBarDate) : null,
-      availableEnd: progress?.lastBarDate ? new Date(progress.lastBarDate) : null,
-    });
-    setDeleteMode("all");
-    setDeleteRecentFrom(
-      toDateTimeLocalValue(resolveDeleteRecentDefaultDate(availableStart, availableEnd))
-    );
-    setDeleteDialogError(null);
-  }, [symbolProgress]);
-
-  const applyDeleteRecentPreset = useCallback((preset: DeleteRecentPreset) => {
-    if (!deleteDialog) return;
-
-    setDeleteRecentFrom(
-      toDateTimeLocalValue(
-        resolveDeleteRecentPresetDate(
-          preset,
-          deleteDialog.availableStart,
-          deleteDialog.availableEnd ?? new Date()
-        )
-      )
-    );
-    setDeleteDialogError(null);
-  }, [deleteDialog]);
+      setDeleteRecentFrom(
+        toDateTimeLocalValue(
+          resolveDeleteRecentPresetDate(
+            preset,
+            deleteDialog.availableStart,
+            deleteDialog.availableEnd ?? new Date(),
+          ),
+        ),
+      );
+      setDeleteDialogError(null);
+    },
+    [deleteDialog],
+  );
 
   const handleCloseDeleteDialog = useCallback(() => {
     if (deleteDialog == null) return;
@@ -668,36 +897,39 @@ export function ChartDataSyncSection() {
     setDeleteDialogError(null);
   }, [deleteDialog, deletingSymbols, syncingSymbols]);
 
-  const updateLocalProgressSnapshot = useCallback(async (
-    broker: string,
-    symbol: string,
-    status: SymbolSyncProgress["status"] = "pending"
-  ) => {
-    const dexieChartRepo = new DexieChartBarRepository();
-    const [totalBars, dateRange] = await Promise.all([
-      dexieChartRepo.countBars(broker, symbol, "M1"),
-      dexieChartRepo.getDateRange(broker, symbol, "M1"),
-    ]);
+  const updateLocalProgressSnapshot = useCallback(
+    async (
+      broker: string,
+      symbol: string,
+      status: SymbolSyncProgress["status"] = "pending",
+    ) => {
+      const dexieChartRepo = new DexieChartBarRepository();
+      const [totalBars, dateRange] = await Promise.all([
+        dexieChartRepo.countBars(broker, symbol, "M1"),
+        dexieChartRepo.getDateRange(broker, symbol, "M1"),
+      ]);
 
-    await progressRepo.updateStatus(broker, symbol, status);
-    await progressRepo.updateProgress(broker, symbol, {
-      totalBars,
-      firstBarDate: dateRange.firstBarDate,
-      lastBarDate: dateRange.lastBarDate,
-      lastSyncTime: status === "completed" ? new Date() : null,
-      error: null,
-      progressPercent: status === "completed" ? 100 : 0,
-      currentFetchFrom: null,
-      currentFetchTo: null,
-      currentFetchStartedAt: null,
-    });
+      await progressRepo.updateStatus(broker, symbol, status);
+      await progressRepo.updateProgress(broker, symbol, {
+        totalBars,
+        firstBarDate: dateRange.firstBarDate,
+        lastBarDate: dateRange.lastBarDate,
+        lastSyncTime: status === "completed" ? new Date() : null,
+        error: null,
+        progressPercent: status === "completed" ? 100 : 0,
+        currentFetchFrom: null,
+        currentFetchTo: null,
+        currentFetchStartedAt: null,
+      });
 
-    return {
-      totalBars,
-      firstBarDate: dateRange.firstBarDate,
-      lastBarDate: dateRange.lastBarDate,
-    };
-  }, [progressRepo]);
+      return {
+        totalBars,
+        firstBarDate: dateRange.firstBarDate,
+        lastBarDate: dateRange.lastBarDate,
+      };
+    },
+    [progressRepo],
+  );
 
   const handleDeleteBarsConfirm = useCallback(async () => {
     const target = deleteDialog;
@@ -715,10 +947,14 @@ export function ChartDataSyncSection() {
         await dexieChartRepo.deleteAllForSymbol(
           target.broker,
           target.symbol,
-          "M1"
+          "M1",
         );
 
-        await progressRepo.updateStatus(target.broker, target.symbol, "pending");
+        await progressRepo.updateStatus(
+          target.broker,
+          target.symbol,
+          "pending",
+        );
         await progressRepo.updateProgress(target.broker, target.symbol, {
           totalBars: 0,
           firstBarDate: null,
@@ -745,17 +981,25 @@ export function ChartDataSyncSection() {
 
       const token = TokenStorage.getGlobal();
       if (!token) {
-        setDeleteDialogError("No access token available. Please reconnect your cTrader account.");
+        setDeleteDialogError(
+          "No access token available. Please reconnect your cTrader account.",
+        );
         return;
       }
 
       const deleteFromDate = parseDateTimeLocalValue(deleteRecentFrom);
       if (!deleteFromDate) {
-        setDeleteDialogError("Choose the date and time where recent-bar deletion should start.");
+        setDeleteDialogError(
+          "Choose the date and time where recent-bar deletion should start.",
+        );
         return;
       }
 
-      const currentRange = await dexieChartRepo.getDateRange(target.broker, target.symbol, "M1");
+      const currentRange = await dexieChartRepo.getDateRange(
+        target.broker,
+        target.symbol,
+        "M1",
+      );
       const currentLastBarDate = currentRange.lastBarDate;
       if (!currentLastBarDate) {
         setDeleteDialogError("No local bars were found for this symbol.");
@@ -763,22 +1007,31 @@ export function ChartDataSyncSection() {
       }
 
       if (deleteFromDate > currentLastBarDate) {
-        setDeleteDialogError("The selected date/time must be within the current local range.");
+        setDeleteDialogError(
+          "The selected date/time must be within the current local range.",
+        );
         return;
       }
 
-      if (currentRange.firstBarDate && deleteFromDate < currentRange.firstBarDate) {
-        setDeleteDialogError("The selected date/time must not be before the first local bar.");
+      if (
+        currentRange.firstBarDate &&
+        deleteFromDate < currentRange.firstBarDate
+      ) {
+        setDeleteDialogError(
+          "The selected date/time must not be before the first local bar.",
+        );
         return;
       }
 
-      const brokerAccount = accounts.find((acc) => acc.broker === target.broker);
+      const brokerAccount = accounts.find(
+        (acc) => acc.broker === target.broker,
+      );
       const accountNumber = brokerAccount?.accountNumber;
       const api = new CTraderAPI();
       const syncUseCase = new HybridSyncChartBarsUseCase(
         api,
         dexieChartRepo,
-        progressRepo
+        progressRepo,
       );
 
       setSyncingSymbols((prev) => new Set(prev).add(symbolKey));
@@ -788,15 +1041,23 @@ export function ChartDataSyncSection() {
         "M1",
         deleteFromDate.getTime(),
         currentLastBarDate.getTime(),
-        target.broker
+        target.broker,
       );
 
-      await updateLocalProgressSnapshot(target.broker, target.symbol, "pending");
+      await updateLocalProgressSnapshot(
+        target.broker,
+        target.symbol,
+        "pending",
+      );
       await refresh();
 
       const monthsDiff =
-        (currentLastBarDate.getTime() - deleteFromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
-      const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000 || 60000));
+        (currentLastBarDate.getTime() - deleteFromDate.getTime()) /
+        (1000 * 60 * 60 * 24 * 30);
+      const timeoutMs = Math.max(
+        60000,
+        Math.min(900000, monthsDiff * 60000 || 60000),
+      );
 
       const result = await Promise.race([
         syncUseCase.execute({
@@ -810,11 +1071,17 @@ export function ChartDataSyncSection() {
           forceFullSync: true,
           shouldCancel: () => cancelRequestedRef.current,
         }),
-        new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`Refetch timeout after ${Math.round(timeoutMs / 1000)} seconds`)),
-            timeoutMs
-          )
+        new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>(
+          (_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `Refetch timeout after ${Math.round(timeoutMs / 1000)} seconds`,
+                  ),
+                ),
+              timeoutMs,
+            ),
         ),
       ]);
 
@@ -857,118 +1124,149 @@ export function ChartDataSyncSection() {
     user?.id,
   ]);
 
-  const handleResetToPending = useCallback(async (broker: string, symbol: string) => {
-    const symbolKey = `${broker}:${symbol}`;
-    try {
-      await progressRepo.updateStatus(broker, symbol, "pending");
-      await progressRepo.updateProgress(broker, symbol, {
-        error: null,
-        progressPercent: 0,
-        currentFetchFrom: null,
-        currentFetchTo: null,
-        currentFetchStartedAt: null,
-      });
-      setSyncingSymbols((prev) => {
-        const next = new Set(prev);
-        next.delete(symbolKey);
-        return next;
-      });
-      setError(null);
-      await refresh();
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      setError(`Failed to reset: ${errorMsg}`);
-    }
-  }, [progressRepo, refresh]);
+  const handleResetToPending = useCallback(
+    async (broker: string, symbol: string) => {
+      const symbolKey = `${broker}:${symbol}`;
+      try {
+        await progressRepo.updateStatus(broker, symbol, "pending");
+        await progressRepo.updateProgress(broker, symbol, {
+          error: null,
+          progressPercent: 0,
+          currentFetchFrom: null,
+          currentFetchTo: null,
+          currentFetchStartedAt: null,
+        });
+        setSyncingSymbols((prev) => {
+          const next = new Set(prev);
+          next.delete(symbolKey);
+          return next;
+        });
+        setError(null);
+        await refresh();
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        setError(`Failed to reset: ${errorMsg}`);
+      }
+    },
+    [progressRepo, refresh],
+  );
 
-  const handleContinueSymbol = useCallback(async (broker: string, symbol: string) => {
-    if (!user?.id) {
-      setError("Please log in to sync");
-      return;
-    }
-
-    if (!isOnline()) {
-      setError("Cannot sync - offline");
-      return;
-    }
-
-    const token = TokenStorage.getGlobal();
-    if (!token) {
-      setError("No access token available. Please reconnect your cTrader account.");
-      return;
-    }
-
-    const symbolKey = `${broker}:${symbol}`;
-    setSyncingSymbols((prev) => new Set(prev).add(symbolKey));
-    setError(null);
-
-    try {
-      // Get progress for this symbol
-      const symbolProgress = await progressRepo.getByBrokerAndSymbol(broker, symbol);
-      if (!symbolProgress) {
-        setError(`No progress record found for ${symbol}`);
+  const handleContinueSymbol = useCallback(
+    async (broker: string, symbol: string) => {
+      if (!user?.id) {
+        setError("Please log in to sync");
         return;
       }
 
-      // Get account for this broker
-      const brokerAccount = accounts.find((acc) => acc.broker === broker);
-      const accountNumber = brokerAccount?.accountNumber;
+      if (!isOnline()) {
+        setError("Cannot sync - offline");
+        return;
+      }
 
-      // Create repositories and use case
-      const dexieChartRepo = new DexieChartBarRepository();
-      const api = new CTraderAPI();
-      
-      const syncUseCase = new HybridSyncChartBarsUseCase(
-        api,
-        dexieChartRepo,
-        progressRepo
-      );
+      const token = TokenStorage.getGlobal();
+      if (!token) {
+        setError(
+          "No access token available. Please reconnect your cTrader account.",
+        );
+        return;
+      }
 
-      // Restart from the planned range; the sync use case will resume from the
-      // actual last local bar when partial history already exists.
-      const fromDate = symbolProgress.firstBarDate 
-        ? new Date(symbolProgress.firstBarDate)
-        : new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-      
-      const toDate = symbolProgress.lastBarDate 
-        ? new Date(symbolProgress.lastBarDate)
-        : new Date();
+      const symbolKey = getSymbolKey(broker, symbol);
+      if (isSymbolDisabled(broker, symbol)) {
+        setError(`${symbol} is disabled. Enable it before continuing sync.`);
+        return;
+      }
 
-      
+      setSyncingSymbols((prev) => new Set(prev).add(symbolKey));
+      setError(null);
 
-      // Calculate timeout based on date range
-      const monthsDiff = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
-      const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
-      
-      const result = await Promise.race([
-        syncUseCase.execute({
-          userId: user.id,
+      try {
+        // Get progress for this symbol
+        const symbolProgress = await progressRepo.getByBrokerAndSymbol(
           broker,
           symbol,
-          fromDate,
-          toDate,
-          accessToken: token.accessToken,
-          accountNumber,
-        }),
-        new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>((_, reject) => 
-          setTimeout(() => reject(new Error(`Sync timeout after ${Math.round(timeoutMs/1000)} seconds`)), timeoutMs)
-        )
-      ]);
+        );
+        if (!symbolProgress) {
+          setError(`No progress record found for ${symbol}`);
+          return;
+        }
 
-      ensureSyncSucceeded(result, `Failed to continue sync for ${symbol}`);
-      await refresh();
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      setError(`Failed to continue sync: ${errorMsg}`);
-      console.error("Continue sync error:", err);
-    } finally {
-      setSyncingSymbols((prev) => {
-        const next = new Set(prev);
-        next.delete(symbolKey);
-        return next;
-      });
-    }
-  }, [user?.id, accounts, progressRepo, refresh, ensureSyncSucceeded]);
+        // Get account for this broker
+        const brokerAccount = accounts.find((acc) => acc.broker === broker);
+        const accountNumber = brokerAccount?.accountNumber;
+
+        // Create repositories and use case
+        const dexieChartRepo = new DexieChartBarRepository();
+        const api = new CTraderAPI();
+
+        const syncUseCase = new HybridSyncChartBarsUseCase(
+          api,
+          dexieChartRepo,
+          progressRepo,
+        );
+
+        // Restart from the planned range; the sync use case will resume from the
+        // actual last local bar when partial history already exists.
+        const fromDate = symbolProgress.firstBarDate
+          ? new Date(symbolProgress.firstBarDate)
+          : new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+
+        const toDate = symbolProgress.lastBarDate
+          ? new Date(symbolProgress.lastBarDate)
+          : new Date();
+
+        // Calculate timeout based on date range
+        const monthsDiff =
+          (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+        const timeoutMs = Math.max(60000, Math.min(900000, monthsDiff * 60000)); // 1-15 minutes
+
+        const result = await Promise.race([
+          syncUseCase.execute({
+            userId: user.id,
+            broker,
+            symbol,
+            fromDate,
+            toDate,
+            accessToken: token.accessToken,
+            accountNumber,
+          }),
+          new Promise<Awaited<ReturnType<typeof syncUseCase.execute>>>(
+            (_, reject) =>
+              setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      `Sync timeout after ${Math.round(timeoutMs / 1000)} seconds`,
+                    ),
+                  ),
+                timeoutMs,
+              ),
+          ),
+        ]);
+
+        ensureSyncSucceeded(result, `Failed to continue sync for ${symbol}`);
+        await refresh();
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        setError(`Failed to continue sync: ${errorMsg}`);
+        console.error("Continue sync error:", err);
+      } finally {
+        setSyncingSymbols((prev) => {
+          const next = new Set(prev);
+          next.delete(symbolKey);
+          return next;
+        });
+      }
+    },
+    [
+      user?.id,
+      accounts,
+      progressRepo,
+      refresh,
+      ensureSyncSucceeded,
+      isSymbolDisabled,
+    ],
+  );
 
   const handleRefresh = useCallback(async () => {
     setIsLoading(true);
@@ -983,7 +1281,9 @@ export function ChartDataSyncSection() {
     <section className="rounded-xl border border-border bg-card p-4 sm:p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-foreground">Chart Data Sync</h2>
+          <h2 className="text-xl font-semibold text-foreground">
+            Chart Data Sync
+          </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Manage synchronization of M1 chart bars for offline access
           </p>
@@ -1004,8 +1304,8 @@ export function ChartDataSyncSection() {
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-destructive">
           <p className="text-sm">{error}</p>
           <p className="mt-1 text-xs text-destructive/80">
-            Your existing local bars remain available. You can continue using the app and retry
-            chart sync later when your connection is healthy.
+            Your existing local bars remain available. You can continue using
+            the app and retry chart sync later when your connection is healthy.
           </p>
         </div>
       )}
@@ -1013,11 +1313,16 @@ export function ChartDataSyncSection() {
       {deleteDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
           <div className="w-full max-w-xl rounded-xl border border-border bg-card p-6 shadow-lg">
-            <h2 className="text-lg font-semibold text-foreground">Delete Chart Bars</h2>
+            <h2 className="text-lg font-semibold text-foreground">
+              Delete Chart Bars
+            </h2>
             <p className="mt-2 text-sm text-muted-foreground">
               Choose whether to wipe all local bars for{" "}
-              <span className="font-medium text-foreground">{deleteDialog.symbol}</span> or remove
-              only the recent tail and download that deleted section again.
+              <span className="font-medium text-foreground">
+                {deleteDialog.symbol}
+              </span>{" "}
+              or remove only the recent tail and download that deleted section
+              again.
             </p>
 
             <div className="mt-5 space-y-3">
@@ -1030,10 +1335,12 @@ export function ChartDataSyncSection() {
                     : "border-border hover:bg-accent/40"
                 }`}
               >
-                <div className="text-sm font-medium text-foreground">Delete all bars</div>
+                <div className="text-sm font-medium text-foreground">
+                  Delete all bars
+                </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  This keeps today&apos;s behavior: remove the symbol&apos;s local M1 history and reset
-                  sync so you can start from scratch.
+                  This keeps today&apos;s behavior: remove the symbol&apos;s
+                  local M1 history and reset sync so you can start from scratch.
                 </div>
               </button>
 
@@ -1050,8 +1357,9 @@ export function ChartDataSyncSection() {
                   Delete recent bars from a chosen date/time, then refetch them
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  This trims local history from the selected date/time to the most recent local bar,
-                  updates the stored sync progress, and then downloads only that deleted tail again.
+                  This trims local history from the selected date/time to the
+                  most recent local bar, updates the stored sync progress, and
+                  then downloads only that deleted tail again.
                 </div>
               </button>
             </div>
@@ -1062,7 +1370,9 @@ export function ChartDataSyncSection() {
                   <button
                     type="button"
                     onClick={() => applyDeleteRecentPreset("today")}
-                    disabled={deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)}
+                    disabled={deletingSymbols.has(
+                      `${deleteDialog.broker}:${deleteDialog.symbol}`,
+                    )}
                     className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
                   >
                     Today
@@ -1070,7 +1380,9 @@ export function ChartDataSyncSection() {
                   <button
                     type="button"
                     onClick={() => applyDeleteRecentPreset("yesterday")}
-                    disabled={deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)}
+                    disabled={deletingSymbols.has(
+                      `${deleteDialog.broker}:${deleteDialog.symbol}`,
+                    )}
                     className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
                   >
                     Yesterday
@@ -1078,7 +1390,9 @@ export function ChartDataSyncSection() {
                   <button
                     type="button"
                     onClick={() => applyDeleteRecentPreset("threeDays")}
-                    disabled={deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)}
+                    disabled={deletingSymbols.has(
+                      `${deleteDialog.broker}:${deleteDialog.symbol}`,
+                    )}
                     className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
                   >
                     3 Days
@@ -1086,20 +1400,28 @@ export function ChartDataSyncSection() {
                   <button
                     type="button"
                     onClick={() => applyDeleteRecentPreset("oneWeek")}
-                    disabled={deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)}
+                    disabled={deletingSymbols.has(
+                      `${deleteDialog.broker}:${deleteDialog.symbol}`,
+                    )}
                     className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
                   >
                     One Week
                   </button>
                 </div>
                 <label className="flex flex-col gap-1 text-sm">
-                  <span className="text-muted-foreground">Delete recent bars starting from</span>
+                  <span className="text-muted-foreground">
+                    Delete recent bars starting from
+                  </span>
                   <input
                     type="datetime-local"
                     value={deleteRecentFrom}
-                    onChange={(event) => setDeleteRecentFrom(event.target.value)}
+                    onChange={(event) =>
+                      setDeleteRecentFrom(event.target.value)
+                    }
                     max={maxRefetchDateTime}
-                    disabled={deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)}
+                    disabled={deletingSymbols.has(
+                      `${deleteDialog.broker}:${deleteDialog.symbol}`,
+                    )}
                     className="rounded-lg border border-border bg-background px-3 py-2 text-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
                   />
                 </label>
@@ -1129,8 +1451,12 @@ export function ChartDataSyncSection() {
               <button
                 onClick={handleCloseDeleteDialog}
                 disabled={
-                  deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`) ||
-                  syncingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)
+                  deletingSymbols.has(
+                    `${deleteDialog.broker}:${deleteDialog.symbol}`,
+                  ) ||
+                  syncingSymbols.has(
+                    `${deleteDialog.broker}:${deleteDialog.symbol}`,
+                  )
                 }
                 className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-accent disabled:opacity-50"
               >
@@ -1139,8 +1465,12 @@ export function ChartDataSyncSection() {
               <button
                 onClick={() => void handleDeleteBarsConfirm()}
                 disabled={
-                  deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`) ||
-                  syncingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)
+                  deletingSymbols.has(
+                    `${deleteDialog.broker}:${deleteDialog.symbol}`,
+                  ) ||
+                  syncingSymbols.has(
+                    `${deleteDialog.broker}:${deleteDialog.symbol}`,
+                  )
                 }
                 className={`rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
                   deleteMode === "all"
@@ -1148,8 +1478,12 @@ export function ChartDataSyncSection() {
                     : "bg-amber-600 hover:bg-amber-600/90"
                 }`}
               >
-                {deletingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`) ||
-                syncingSymbols.has(`${deleteDialog.broker}:${deleteDialog.symbol}`)
+                {deletingSymbols.has(
+                  `${deleteDialog.broker}:${deleteDialog.symbol}`,
+                ) ||
+                syncingSymbols.has(
+                  `${deleteDialog.broker}:${deleteDialog.symbol}`,
+                )
                   ? deleteMode === "all"
                     ? "Deleting..."
                     : "Deleting and refetching..."
@@ -1169,11 +1503,18 @@ export function ChartDataSyncSection() {
               Refetch Bars
             </h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              Fetch M1 bars again for <span className="font-medium text-foreground">{refetchRangeDialog.symbol}</span> between the selected start and end date/time and merge them into local history.
+              Fetch M1 bars again for{" "}
+              <span className="font-medium text-foreground">
+                {refetchRangeDialog.symbol}
+              </span>{" "}
+              between the selected start and end date/time and merge them into
+              local history.
             </p>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <label className="flex flex-col gap-1 text-sm">
-                <span className="text-muted-foreground">Start date and time</span>
+                <span className="text-muted-foreground">
+                  Start date and time
+                </span>
                 <input
                   type="datetime-local"
                   value={refetchRangeStart}
@@ -1195,7 +1536,8 @@ export function ChartDataSyncSection() {
                 />
               </label>
             </div>
-            {(refetchRangeDialog.availableStart || refetchRangeDialog.availableEnd) && (
+            {(refetchRangeDialog.availableStart ||
+              refetchRangeDialog.availableEnd) && (
               <p className="mt-3 text-xs text-muted-foreground">
                 Current local range:{" "}
                 {refetchRangeDialog.availableStart
@@ -1235,7 +1577,8 @@ export function ChartDataSyncSection() {
       {brokers.length === 0 ? (
         <div className="rounded-lg border border-border bg-muted/30 p-8 text-center">
           <p className="text-muted-foreground">
-            No sync progress found. Sync will start automatically after importing trades.
+            No sync progress found. Sync will start automatically after
+            importing trades.
           </p>
         </div>
       ) : (
@@ -1254,9 +1597,13 @@ export function ChartDataSyncSection() {
               onRefetchRange={handleOpenRefetchRange}
               onCancelBrokerSync={handleCancelBrokerSync}
               onCancelSymbolSync={handleCancelSymbolSync}
+              onToggleDisabledSymbol={toggleDisabledSymbol}
+              onToggleShowDisabled={toggleShowDisabledSymbols}
               isSyncing={syncingBrokers.has(broker)}
               syncingSymbols={syncingSymbols}
               deletingSymbols={deletingSymbols}
+              disabledSymbolKeys={disabledSymbolKeys}
+              showDisabledSymbols={showDisabledSymbols}
             />
           ))}
         </div>

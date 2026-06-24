@@ -11,9 +11,11 @@ import {
   Play,
   RefreshCw,
   PlayCircle,
+  Power,
   RotateCcw,
   Trash2,
   X,
+  Ban,
 } from "lucide-react";
 import type { SymbolSyncProgress } from "@domain/entities";
 import { DexieChartBarRepository } from "@infrastructure/db/dexie/repositories";
@@ -26,8 +28,10 @@ export interface SymbolSyncItemProps {
   onDeleteBars?: () => void;
   onRefetchRange?: () => void;
   onCancel?: () => void;
+  onToggleDisabled?: () => void;
   isSyncing?: boolean;
   isDeleting?: boolean;
+  isDisabled?: boolean;
 }
 
 export function SymbolSyncItem({
@@ -38,8 +42,10 @@ export function SymbolSyncItem({
   onDeleteBars,
   onRefetchRange,
   onCancel,
+  onToggleDisabled,
   isSyncing = false,
   isDeleting = false,
+  isDisabled = false,
 }: SymbolSyncItemProps) {
   const [calculatedDates, setCalculatedDates] = useState<{
     firstBarDate: Date | null;
@@ -50,8 +56,9 @@ export function SymbolSyncItem({
   useEffect(() => {
     const shouldCalculate =
       progress.status === "completed"
-        ? (!progress.firstBarDate || !progress.lastBarDate)
-        : progress.totalBars > 0 && (!progress.firstBarDate || !progress.lastBarDate);
+        ? !progress.firstBarDate || !progress.lastBarDate
+        : progress.totalBars > 0 &&
+          (!progress.firstBarDate || !progress.lastBarDate);
 
     if (shouldCalculate || progress.status === "completed") {
       const dexieChartRepo = new DexieChartBarRepository();
@@ -65,7 +72,10 @@ export function SymbolSyncItem({
             }
           })
           .catch((error) => {
-            console.error(`[SymbolSyncItem] Error calculating dates for ${progress.symbol}:`, error);
+            console.error(
+              `[SymbolSyncItem] Error calculating dates for ${progress.symbol}:`,
+              error,
+            );
           });
       }
 
@@ -76,7 +86,10 @@ export function SymbolSyncItem({
             setLocalBarCount(count);
           })
           .catch((error) => {
-            console.error(`[SymbolSyncItem] Error counting Dexie bars for ${progress.symbol}:`, error);
+            console.error(
+              `[SymbolSyncItem] Error counting Dexie bars for ${progress.symbol}:`,
+              error,
+            );
             setLocalBarCount(null);
           });
       }
@@ -136,17 +149,30 @@ export function SymbolSyncItem({
     return format(new Date(date), "MMM d, yyyy HH:mm");
   };
 
-  const firstBarDate = progress.firstBarDate || calculatedDates?.firstBarDate || null;
-  const lastBarDate = progress.lastBarDate || calculatedDates?.lastBarDate || null;
+  const firstBarDate =
+    progress.firstBarDate || calculatedDates?.firstBarDate || null;
+  const lastBarDate =
+    progress.lastBarDate || calculatedDates?.lastBarDate || null;
 
   return (
-    <div className="p-4 transition-colors hover:bg-accent/30">
+    <div
+      className={`p-4 transition-colors hover:bg-accent/30 ${isDisabled ? "opacity-70" : ""}`}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex items-center gap-2">
             {getStatusIcon()}
-            <span className="font-medium text-foreground">{progress.symbol}</span>
-            <span className={`text-xs ${getStatusColor()}`}>{progress.status}</span>
+            <span className="font-medium text-foreground">
+              {progress.symbol}
+            </span>
+            <span className={`text-xs ${getStatusColor()}`}>
+              {progress.status}
+            </span>
+            {isDisabled && (
+              <span className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                disabled
+              </span>
+            )}
           </div>
 
           <div className="space-y-1 text-xs text-muted-foreground">
@@ -157,16 +183,21 @@ export function SymbolSyncItem({
             )}
             {progress.status === "completed" && (
               <div className="space-y-0.5 text-muted-foreground">
-                {localBarCount !== null && <div>Local: {localBarCount.toLocaleString()} bars</div>}
+                {localBarCount !== null && (
+                  <div>Local: {localBarCount.toLocaleString()} bars</div>
+                )}
                 {localBarCount === null && (
-                  <div className="italic text-muted-foreground">Loading counts...</div>
+                  <div className="italic text-muted-foreground">
+                    Loading counts...
+                  </div>
                 )}
               </div>
             )}
             {firstBarDate && lastBarDate && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span>
-                  Date range: {formatActualDate(firstBarDate)} - {formatActualDate(lastBarDate)}
+                  Date range: {formatActualDate(firstBarDate)} -{" "}
+                  {formatActualDate(lastBarDate)}
                 </span>
                 {progress.currentFetchFrom && progress.currentFetchTo && (
                   <span className="text-amber-500">
@@ -177,9 +208,15 @@ export function SymbolSyncItem({
                 )}
               </div>
             )}
-            {firstBarDate && !lastBarDate && <div>First bar: {formatActualDate(firstBarDate)}</div>}
-            {lastBarDate && !firstBarDate && <div>Last bar: {formatActualDate(lastBarDate)}</div>}
-            {progress.lastSyncTime && <div>Last sync: {formatDate(progress.lastSyncTime)}</div>}
+            {firstBarDate && !lastBarDate && (
+              <div>First bar: {formatActualDate(firstBarDate)}</div>
+            )}
+            {lastBarDate && !firstBarDate && (
+              <div>Last bar: {formatActualDate(lastBarDate)}</div>
+            )}
+            {progress.lastSyncTime && (
+              <div>Last sync: {formatDate(progress.lastSyncTime)}</div>
+            )}
             {progress.status !== "completed" && progress.totalBars > 0 && (
               <div>Total bars: {progress.totalBars.toLocaleString()}</div>
             )}
@@ -191,20 +228,23 @@ export function SymbolSyncItem({
             </div>
           )}
 
-          {progress.status === "syncing" && progress.progressPercent !== undefined && (
-            <div className="mt-2 space-y-1">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Progress</span>
-                <span className="text-muted-foreground">{progress.progressPercent}%</span>
+          {progress.status === "syncing" &&
+            progress.progressPercent !== undefined && (
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Progress</span>
+                  <span className="text-muted-foreground">
+                    {progress.progressPercent}%
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full bg-amber-500 transition-all duration-300"
+                    style={{ width: `${progress.progressPercent}%` }}
+                  />
+                </div>
               </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full bg-amber-500 transition-all duration-300"
-                  style={{ width: `${progress.progressPercent}%` }}
-                />
-              </div>
-            </div>
-          )}
+            )}
           {isDeleting && (
             <div className="mt-2 flex items-center gap-2 text-xs text-amber-500">
               <RefreshCw className="h-3.5 w-3.5 animate-spin" />
@@ -214,101 +254,131 @@ export function SymbolSyncItem({
         </div>
 
         <div className="flex items-center gap-2">
-          {isSyncing && !isStuck && (
+          {isDisabled ? (
+            onToggleDisabled && (
+              <button
+                onClick={onToggleDisabled}
+                className="rounded p-1.5 text-emerald-500 transition-colors hover:bg-emerald-500/10"
+                title="Enable symbol"
+                aria-label={`Enable ${progress.symbol}`}
+              >
+                <Power className="h-4 w-4" />
+              </button>
+            )
+          ) : (
             <>
-              <div className="rounded p-1.5 text-amber-500">
-                <RefreshCw className="h-4 w-4 animate-spin" />
-              </div>
-              {onCancel && (
+              {onToggleDisabled && (
                 <button
-                  onClick={onCancel}
-                  className="rounded p-1.5 text-destructive transition-colors hover:bg-destructive/10"
-                  title="Cancel sync"
+                  onClick={onToggleDisabled}
+                  disabled={isSyncing || isDeleting}
+                  className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
+                  title="Disable symbol"
+                  aria-label={`Disable ${progress.symbol}`}
                 >
-                  <X className="h-4 w-4" />
+                  <Ban className="h-4 w-4" />
+                </button>
+              )}
+              {isSyncing && !isStuck && (
+                <>
+                  <div className="rounded p-1.5 text-amber-500">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  </div>
+                  {onCancel && (
+                    <button
+                      onClick={onCancel}
+                      className="rounded p-1.5 text-destructive transition-colors hover:bg-destructive/10"
+                      title="Cancel sync"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </>
+              )}
+              {(isStuck || (progress.status === "syncing" && !isSyncing)) &&
+                (onContinue || onResetToPending) && (
+                  <>
+                    {onContinue && (
+                      <button
+                        onClick={onContinue}
+                        disabled={isSyncing}
+                        className="rounded p-1.5 text-amber-500 transition-colors hover:bg-amber-500/10 disabled:opacity-50"
+                        title="Restart / continue sync"
+                      >
+                        <PlayCircle className="h-4 w-4" />
+                      </button>
+                    )}
+                    {onResetToPending && (
+                      <button
+                        onClick={onResetToPending}
+                        disabled={isSyncing}
+                        className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 disabled:opacity-50"
+                        title="Reset to pending (clears stuck state)"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </button>
+                    )}
+                  </>
+                )}
+              {!isSyncing && progress.status === "failed" && (
+                <button
+                  onClick={onSync}
+                  disabled={isSyncing}
+                  className="rounded p-1.5 text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+                  title="Retry sync"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </button>
+              )}
+              {!isSyncing && progress.status === "pending" && (
+                <button
+                  onClick={onSync}
+                  disabled={isSyncing}
+                  className="rounded p-1.5 text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
+                  title="Start sync"
+                >
+                  <Play className="h-4 w-4" />
+                </button>
+              )}
+              {!isSyncing && progress.status === "completed" && onSync && (
+                <button
+                  onClick={onSync}
+                  disabled={isSyncing}
+                  className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 disabled:opacity-50"
+                  title="Sync new bars (incremental)"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </button>
+              )}
+              {!isSyncing &&
+                progress.status === "completed" &&
+                onDeleteBars && (
+                  <button
+                    onClick={onDeleteBars}
+                    disabled={isSyncing || isDeleting}
+                    className="rounded p-1.5 text-destructive/80 transition-colors hover:bg-destructive/10 disabled:opacity-50"
+                    title={
+                      isDeleting ? "Deleting..." : "Delete bars and start over"
+                    }
+                  >
+                    {isDeleting ? (
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4" />
+                    )}
+                  </button>
+                )}
+              {!isSyncing && onRefetchRange && (
+                <button
+                  onClick={onRefetchRange}
+                  disabled={isSyncing || isDeleting}
+                  className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
+                  title="Refetch a selected date/time range"
+                  aria-label="Refetch a selected date/time range"
+                >
+                  <Clock className="h-4 w-4" />
                 </button>
               )}
             </>
-          )}
-          {(isStuck || (progress.status === "syncing" && !isSyncing)) &&
-            (onContinue || onResetToPending) && (
-              <>
-                {onContinue && (
-                  <button
-                    onClick={onContinue}
-                    disabled={isSyncing}
-                    className="rounded p-1.5 text-amber-500 transition-colors hover:bg-amber-500/10 disabled:opacity-50"
-                    title="Restart / continue sync"
-                  >
-                    <PlayCircle className="h-4 w-4" />
-                  </button>
-                )}
-                {onResetToPending && (
-                  <button
-                    onClick={onResetToPending}
-                    disabled={isSyncing}
-                    className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 disabled:opacity-50"
-                    title="Reset to pending (clears stuck state)"
-                  >
-                    <RotateCcw className="h-4 w-4" />
-                  </button>
-                )}
-              </>
-            )}
-          {!isSyncing && progress.status === "failed" && (
-            <button
-              onClick={onSync}
-              disabled={isSyncing}
-              className="rounded p-1.5 text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-              title="Retry sync"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
-          )}
-          {!isSyncing && progress.status === "pending" && (
-            <button
-              onClick={onSync}
-              disabled={isSyncing}
-              className="rounded p-1.5 text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
-              title="Start sync"
-            >
-              <Play className="h-4 w-4" />
-            </button>
-          )}
-          {!isSyncing && progress.status === "completed" && onSync && (
-            <button
-              onClick={onSync}
-              disabled={isSyncing}
-              className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 disabled:opacity-50"
-              title="Sync new bars (incremental)"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
-          )}
-          {!isSyncing && progress.status === "completed" && onDeleteBars && (
-            <button
-              onClick={onDeleteBars}
-              disabled={isSyncing || isDeleting}
-              className="rounded p-1.5 text-destructive/80 transition-colors hover:bg-destructive/10 disabled:opacity-50"
-              title={isDeleting ? "Deleting..." : "Delete bars and start over"}
-            >
-              {isDeleting ? (
-                <RefreshCw className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-            </button>
-          )}
-          {!isSyncing && onRefetchRange && (
-            <button
-              onClick={onRefetchRange}
-              disabled={isSyncing || isDeleting}
-              className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
-              title="Refetch a selected date/time range"
-              aria-label="Refetch a selected date/time range"
-            >
-              <Clock className="h-4 w-4" />
-            </button>
           )}
         </div>
       </div>
