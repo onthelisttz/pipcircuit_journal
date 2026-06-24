@@ -2,7 +2,7 @@
 
 This document defines the architectural principles, layering, and detailed file structure
 for the pipCircuit application. The architecture ensures business logic remains
-independent from frameworks, databases, and UI concerns.
+independent from frameworks, databases, and UI concerns..
 
 ---
 
