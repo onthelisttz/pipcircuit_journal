@@ -5,6 +5,8 @@ import type { Account } from "@domain/entities";
 import { TokenStorage } from "@infrastructure/auth";
 import { Direction, OrderType } from "@domain/enums";
 import { createAccountRepository, createTradeRepository } from "@infrastructure/db/createDualRepositories";
+import { DexieTradeRepository } from "@infrastructure/db/dexie/repositories";
+import { SupabaseTradeRepository } from "@infrastructure/db/supabase/repositories";
 import { useAccountStore } from "@ui/state";
 import { useAuth } from "@ui/hooks/useAuth";
 import { estimateGrossProfit, volumeToLots, priceDiffToPips } from "@lib/pnl-estimate";
@@ -372,6 +374,82 @@ export function useAccount() {
     [accountRepository, setAccounts]
   );
 
+  const clearLastSyncAt = useCallback(
+    async (accountId: number) => {
+      await accountRepository.update(accountId, { lastSyncAt: null, updatedAt: new Date() });
+      const refreshed = await accountRepository.list();
+      setAccounts(refreshed);
+    },
+    [accountRepository, setAccounts]
+  );
+
+  const pullTradesFromSupabase = useCallback(
+    async (accountNumber: string) => {
+      if (!user?.id) {
+        throw new Error("Not authenticated");
+      }
+
+      const supabaseTradeRepo = new SupabaseTradeRepository(user.id);
+      const existingAccount = await accountRepository.getByAccountNumber(accountNumber);
+
+      const from = existingAccount?.lastSyncAt instanceof Date
+        ? existingAccount.lastSyncAt
+        : undefined;
+
+      const trades = await supabaseTradeRepo.list({
+        accountId: accountNumber,
+        from,
+      });
+
+      if (trades.length > 0) {
+        await tradeRepository.bulkUpsert(trades);
+
+        const account = await accountRepository.getByAccountNumber(accountNumber);
+        if (account?.id) {
+          await accountRepository.update(account.id, { lastSyncAt: new Date(), updatedAt: new Date() });
+          const refreshed = await accountRepository.list();
+          setAccounts(refreshed);
+        }
+      }
+    },
+    [user?.id, accountRepository, tradeRepository, setAccounts]
+  );
+
+  const deleteTrades = useCallback(
+    async (accountNumber: string, scope: "local" | "both", from?: Date, to?: Date) => {
+      const trades = await tradeRepository.list({
+        accountId: accountNumber,
+        from: from ?? undefined,
+        to: to ?? undefined,
+      });
+
+      if (trades.length === 0) return;
+
+      if (scope === "both") {
+        for (const trade of trades) {
+          if (trade.id != null) {
+            await tradeRepository.delete(trade.id);
+          }
+        }
+      } else {
+        const dexieTradeRepo = new DexieTradeRepository();
+        for (const trade of trades) {
+          if (trade.id != null) {
+            await dexieTradeRepo.delete(trade.id);
+          }
+        }
+      }
+
+      const account = await accountRepository.getByAccountNumber(accountNumber);
+      if (account?.id) {
+        await accountRepository.update(account.id, { lastSyncAt: null, updatedAt: new Date() });
+        const refreshed = await accountRepository.list();
+        setAccounts(refreshed);
+      }
+    },
+    [accountRepository, tradeRepository, setAccounts]
+  );
+
   const activeAccount: Account | undefined = accounts.find(
     (account) => account.id === activeAccountId
   );
@@ -421,5 +499,8 @@ export function useAccount() {
     syncTradesForAccount,
     renameAccount,
     setActive,
+    clearLastSyncAt,
+    pullTradesFromSupabase,
+    deleteTrades,
   };
 }
