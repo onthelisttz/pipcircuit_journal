@@ -798,6 +798,8 @@ export interface TradeCandlestickChartProps {
     candleCountdownAnchorTimestamp?: number | null;
     /** Optional timestamp to jump to when the End key is pressed */
     endKeyScrollTargetTimestamp?: number | null;
+    /** Called when a trade history overlay is clicked on the chart */
+    onTradeHistoryClick?: (trade: Trade) => void;
 }
 
 function sameReplayPlacementOverlay(
@@ -960,6 +962,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     onActivePriceAlertDelete,
     onCrosshairQuickAlertCreate,
     onCrosshairQuickOrderCreate,
+    onTradeHistoryClick,
     liveBidPrice = null,
     liveAskPrice = null,
     showCandleCountdown = false,
@@ -1087,6 +1090,8 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     const onActivePriceAlertDeleteRef = useRef<typeof onActivePriceAlertDelete>(onActivePriceAlertDelete);
     const onCrosshairQuickAlertCreateRef = useRef<typeof onCrosshairQuickAlertCreate>(onCrosshairQuickAlertCreate);
     const onCrosshairQuickOrderCreateRef = useRef<typeof onCrosshairQuickOrderCreate>(onCrosshairQuickOrderCreate);
+    const onTradeHistoryClickRef = useRef<typeof onTradeHistoryClick>(onTradeHistoryClick);
+    const tradeHistoryRef = useRef<Trade[] | undefined>(tradeHistory);
     const crosshairQuickActionRef = useRef<HTMLDivElement | null>(null);
     const crosshairQuickActionFrameRef = useRef<number | null>(null);
     const pendingCrosshairQuickActionRef = useRef<CrosshairQuickActionState | null>(null);
@@ -1231,6 +1236,11 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         onReplayPlacementPreviewChangeRef.current = onReplayPlacementPreviewChange;
         onReplayPlacementSelectRef.current = onReplayPlacementSelect;
     }, [onReplayPlacementPreviewChange, onReplayPlacementSelect]);
+
+    useEffect(() => {
+        onTradeHistoryClickRef.current = onTradeHistoryClick;
+        tradeHistoryRef.current = tradeHistory;
+    }, [onTradeHistoryClick, tradeHistory]);
 
     useEffect(() => {
         replayPlacementModeRef.current = replayPlacementMode;
@@ -3726,6 +3736,25 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                     onReplayPlacementSelectRef.current?.(replayTimestamp);
                 }
                 return;
+            }
+
+            const clickedTime = param.time ? Number(param.time) * 1000 : null;
+            if (clickedTime) {
+                const tradeHistory = tradeHistoryRef.current;
+                const onTradeHistoryClick = onTradeHistoryClickRef.current;
+                if (tradeHistory && onTradeHistoryClick) {
+                    const matchedTrade = tradeHistory.find((t) => {
+                        const openTime = new Date(t.openTime).getTime();
+                        const closeTime = t.closeTime
+                            ? new Date(t.closeTime).getTime()
+                            : openTime;
+                        return clickedTime >= openTime && clickedTime <= closeTime;
+                    });
+                    if (matchedTrade) {
+                        onTradeHistoryClick(matchedTrade);
+                        return;
+                    }
+                }
             }
 
             window.setTimeout(() => {

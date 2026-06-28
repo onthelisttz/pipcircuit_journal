@@ -43,6 +43,7 @@ import type { DrawingToolType, TradeCandlestickChartRef } from "@ui/components/c
 import type { ChartTradeHistoryPanelData } from "./ChartTradeHistoryPanel";
 type DrawingToolExport = ReturnType<TradeCandlestickChartRef["exportAllDrawings"]>[number];
 import { useChartData } from "@ui/hooks/useChartData";
+import { useTradePanel } from "@ui/providers";
 import {
   useCTraderLiveBar,
   type LiveOrderSnapshot,
@@ -1129,6 +1130,7 @@ export function SyncedChartWorkspace({
 }: SyncedChartWorkspaceProps = {}) {
   const { activeAccount, accounts, syncTradesForAccount } = useAccount();
   const { user, session } = useAuth();
+  const { openPanel } = useTradePanel();
   const progressRepo = useMemo(() => new DexieSymbolSyncProgressRepository(), []);
 
   const { symbolProgress, refresh: refreshSyncProgress } = useSyncProgress({
@@ -2326,6 +2328,16 @@ export function SyncedChartWorkspace({
       return closeTime >= visibleStart && openTime <= visibleEnd;
     });
   }, [brokerSymbolTrades, displayData, showTradeOverlay]);
+
+  const handleTradeHistoryClick = useCallback((trade: Trade) => {
+    const tradeIds = displayTradeHistory
+      .map((t) => t.id)
+      .filter((id): id is number => id != null);
+    if (trade.id != null) {
+      openPanel({ title: "Trades", tradeIds, selectedTradeId: trade.id });
+    }
+  }, [displayTradeHistory, openPanel]);
+
   const symbolPriceAlerts = useMemo(() => {
     if (!selection) return [];
     return activeAlerts.filter(
@@ -5792,6 +5804,7 @@ ref={richTradePopupRef}>
           showRiskReward={false}
           onVisibleRangeChange={handleVisibleRangeChange}
           autoScrollOnData={false}
+          onTradeHistoryClick={handleTradeHistoryClick}
         />
       </div>
     </div>
