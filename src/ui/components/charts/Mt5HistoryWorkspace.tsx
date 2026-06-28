@@ -856,14 +856,17 @@ export function Mt5HistoryWorkspace({
   // Restore drawings and viewport after timeframe data loads
   useEffect(() => {
     const pending = pendingRestoreRef.current;
-    if (!pending || bars.length === 0 || isBarsLoading) return;
-    pendingRestoreRef.current = null;
+    if (!pending || !chartRef.current || bars.length === 0 || isBarsLoading) return;
     const timer = window.setTimeout(() => {
+      const chart = chartRef.current;
+      if (!chart) return;
+      pendingRestoreRef.current = null;
+      chart.removeAllDrawingTools();
       if (pending.drawings.length > 0) {
-        chartRef.current?.importDrawings(pending.drawings);
+        chart.importDrawings(pending.drawings);
       }
       if (pending.centerTimestamp != null) {
-        chartRef.current?.scrollToTimestamp(
+        chart.scrollToTimestamp(
           pending.centerTimestamp,
           pending.windowSeconds ?? undefined
         );
