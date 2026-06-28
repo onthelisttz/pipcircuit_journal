@@ -1133,6 +1133,8 @@ export function SyncedChartWorkspace({
   const { openPanel, selectedTradeId } = useTradePanel();
   const [highlightedTradeId, setHighlightedTradeId] = useState<number | null>(null);
   const lastChartTradeIdRef = useRef<number | null>(null);
+  const lastChartClickTimeRef = useRef(0);
+  const savedViewportRef = useRef<{ from: number; to: number } | null>(null);
   const progressRepo = useMemo(() => new DexieSymbolSyncProgressRepository(), []);
 
   const { symbolProgress, refresh: refreshSyncProgress } = useSyncProgress({
@@ -2333,6 +2335,10 @@ export function SyncedChartWorkspace({
 
   const handleTradeHistoryClick = useCallback((trade: Trade) => {
     const id = trade.id ?? null;
+    lastChartClickTimeRef.current = Date.now();
+    // Save current viewport BEFORE any state changes so we can restore it
+    // if any side-effect scrolls the chart.
+    savedViewportRef.current = chartRef.current?.getVisibleLogicalRange() ?? null;
     // Highlight directly via ref BEFORE any React state updates,
     // bypassing prop/effect timing issues.
     chartRef.current?.setHighlightedTradeId(id);
@@ -2350,6 +2356,9 @@ export function SyncedChartWorkspace({
   useLayoutEffect(() => {
     if (selectedTradeId == null) return;
     if (selectedTradeId === lastChartTradeIdRef.current) return;
+    // Safety net: suppress scroll within 1s after a chart click
+    // to handle edge cases where the ref comparison might miss.
+    if (Date.now() - lastChartClickTimeRef.current < 1000) return;
 
     setHighlightedTradeId(selectedTradeId);
 
@@ -2359,6 +2368,22 @@ export function SyncedChartWorkspace({
     const openTs = new Date(trade.openTime).getTime();
     chartRef.current?.scrollToTimestamp(openTs);
   }, [displayTradeHistory, selectedTradeId]);
+
+  // Restore viewport after any side-effect scroll triggered by chart click + panel open.
+  // Must run AFTER the scroll effect above (defined after it) so we undo any unwanted scroll
+  // before the browser paints — the user never sees the intermediate position.
+  useLayoutEffect(() => {
+    const saved = savedViewportRef.current;
+    if (!saved) return;
+    savedViewportRef.current = null;
+
+    const current = chartRef.current?.getVisibleLogicalRange();
+    if (!current) return;
+    if (current.from === saved.from && current.to === saved.to) return;
+
+    suppressEdgeFetchUntilRef.current = Date.now() + 600;
+    chartRef.current?.setVisibleLogicalRange(saved);
+  }, [selectedTradeId]);
 
   const symbolPriceAlerts = useMemo(() => {
     if (!selection) return [];
