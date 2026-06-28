@@ -4916,6 +4916,12 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                 applyFullDataFallback();
             }
         } else {
+            // Remove existing drawings before data replacement to prevent
+            // the line tools plugin from corrupting its internal bar-index
+            // mapping when the entire series is swapped (e.g. M1 → M15).
+            if (drawingsBeforeDataUpdate.length > 0) {
+                removeLineToolsByIdSafely(drawingsBeforeDataUpdate.map((d) => d.id));
+            }
             const formattedData = formatData(data);
             series.setData(formattedData);
         }
@@ -4984,7 +4990,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             }, 0);
         }
         prevBarsRef.current = data;
-    }, [data, isChartReady, formatData, replayFutureTimestamps, autoScrollOnData, dataUpdateMode, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, isLastBarMutationUpdate, scheduleFreePriceScaleMode, syncImportedDrawings, toCandlestickPoint]);
+    }, [data, isChartReady, formatData, replayFutureTimestamps, autoScrollOnData, dataUpdateMode, exportCurrentDrawings, findNearestIndexByTimestamp, getLineToolsInternal, getPrependedBarCount, isAppendOnlyUpdate, isLastBarMutationUpdate, removeLineToolsByIdSafely, scheduleFreePriceScaleMode, syncImportedDrawings, toCandlestickPoint]);
 
     useEffect(() => {
         if (!autoScrollOnData || !isChartReady || data.length === 0) return;

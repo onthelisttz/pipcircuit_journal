@@ -4707,6 +4707,7 @@ export function SyncedChartWorkspace({
                     windowSeconds: chartRef.current?.getVisibleWindowSeconds() ?? null,
                     preferLatestTimestamp: liveVisualsEnabled,
                   };
+                  chartRef.current?.removeAllDrawingTools();
                   if (isReplayMode || isReplayPlacementMode) {
                     setIsReplayPlaying(false);
                   }
@@ -5797,7 +5798,6 @@ ref={richTradePopupRef}>
 
       <div ref={chartAreaRef} className="mt-3 min-h-[420px] flex-1">
         <TradeCandlestickChart
-          key={timeframe}
           ref={handleChartRef}
           data={displayData}
           replayFutureTimestamps={replayFutureTimestamps}
