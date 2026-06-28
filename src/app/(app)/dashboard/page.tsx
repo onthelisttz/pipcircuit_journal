@@ -25,6 +25,7 @@ import type { DashboardFiltersState } from "@ui/features/dashboard";
 import { useDashboard, useDashboardSymbols, useScrollPersistence } from "@ui/hooks";
 import Link from "next/link";
 import { clampDateToAllTimeStart } from "@lib/date-range";
+import { recomputePresetDates } from "@ui/components/common/DateRangePopover";
 
 function getAdvancedQueryFilters(filters: DashboardFiltersState): Pick<
   TradeQuery,
@@ -99,10 +100,13 @@ export default function DashboardPage() {
       const safeTo = Number.isFinite(rawTo.getTime()) ? rawTo : defaultFilters.to;
       const clampedFrom = clampDateToAllTimeStart(safeFrom);
       const clampedTo = clampDateToAllTimeStart(safeTo);
-      const from =
+      const sortedFrom =
         clampedFrom.getTime() <= clampedTo.getTime() ? clampedFrom : clampedTo;
-      const to =
+      const sortedTo =
         clampedFrom.getTime() <= clampedTo.getTime() ? clampedTo : clampedFrom;
+      const recomputed = recomputePresetDates(sortedFrom, sortedTo, "dashboard-date-quick-preset");
+      const from = recomputed ? recomputed.from : sortedFrom;
+      const to = recomputed ? recomputed.to : sortedTo;
       const direction: DashboardFiltersState["direction"] =
         parsed.direction === "Buy" || parsed.direction === "Sell" || parsed.direction === "Both"
           ? (parsed.direction as DashboardFiltersState["direction"])

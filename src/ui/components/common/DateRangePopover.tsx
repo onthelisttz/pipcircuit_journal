@@ -31,7 +31,7 @@ export interface DateRangePopoverProps {
   compact?: boolean;
 }
 
-type QuickPresetKey =
+export type QuickPresetKey =
   | "today"
   | "yesterday"
   | "currentWeek"
@@ -48,7 +48,7 @@ interface QuickPreset {
   getRange: (now: Date) => { from: Date; to: Date };
 }
 
-const QUICK_PRESETS: QuickPreset[] = [
+export const QUICK_PRESETS: QuickPreset[] = [
   {
     key: "today",
     label: "Today",
@@ -114,7 +114,7 @@ function isQuickPresetKey(value: string): value is QuickPresetKey {
   return QUICK_PRESET_KEYS.has(value as QuickPresetKey);
 }
 
-function readStoredQuickPreset(storageKey?: string): QuickPresetKey | null {
+export function readStoredQuickPreset(storageKey?: string): QuickPresetKey | null {
   if (!storageKey || typeof window === "undefined") {
     return null;
   }
@@ -149,6 +149,28 @@ function detectQuickPreset(from: Date, to: Date, now: Date): QuickPresetKey | nu
     const range = preset.getRange(now);
     if (matchesDayRange(from, to, range.from, range.to)) {
       return preset.key;
+    }
+  }
+  return null;
+}
+
+export function recomputePresetDates(
+  from: Date,
+  to: Date,
+  quickPresetStorageKey?: string
+): { from: Date; to: Date } | null {
+  const storedKey = readStoredQuickPreset(quickPresetStorageKey);
+  if (storedKey) {
+    const preset = QUICK_PRESETS.find((p) => p.key === storedKey);
+    if (preset) {
+      return preset.getRange(new Date());
+    }
+  }
+  const detected = detectQuickPreset(from, to, new Date());
+  if (detected) {
+    const preset = QUICK_PRESETS.find((p) => p.key === detected);
+    if (preset) {
+      return preset.getRange(new Date());
     }
   }
   return null;

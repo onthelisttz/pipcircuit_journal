@@ -14,6 +14,7 @@ import { ObservationFilters } from "./ObservationFilters";
 import type { ObservationFiltersState } from "./ObservationFilters";
 import { format } from "date-fns";
 import { clampDateToAllTimeStart } from "@lib/date-range";
+import { recomputePresetDates } from "@ui/components/common/DateRangePopover";
 
 function stripHtml(html: string): string {
   if (!html) return "";
@@ -81,8 +82,11 @@ export function ObservationsPage() {
       }
       const clampedFrom = clampDateToAllTimeStart(parsedFrom);
       const clampedTo = clampDateToAllTimeStart(parsedTo);
-      const from = clampedFrom.getTime() <= clampedTo.getTime() ? clampedFrom : clampedTo;
-      const to = clampedFrom.getTime() <= clampedTo.getTime() ? clampedTo : clampedFrom;
+      const sortedFrom = clampedFrom.getTime() <= clampedTo.getTime() ? clampedFrom : clampedTo;
+      const sortedTo = clampedFrom.getTime() <= clampedTo.getTime() ? clampedTo : clampedFrom;
+      const recomputed = recomputePresetDates(sortedFrom, sortedTo, "observations-date-quick-preset");
+      const from = recomputed ? recomputed.from : sortedFrom;
+      const to = recomputed ? recomputed.to : sortedTo;
       return {
         from,
         to,
