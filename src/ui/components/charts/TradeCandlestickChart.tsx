@@ -800,6 +800,8 @@ export interface TradeCandlestickChartProps {
     endKeyScrollTargetTimestamp?: number | null;
     /** Called when a trade history overlay is clicked on the chart */
     onTradeHistoryClick?: (trade: Trade) => void;
+    /** Trade history ID to highlight and auto-scroll to */
+    selectedTradeHistoryId?: number | null;
 }
 
 function sameReplayPlacementOverlay(
@@ -878,6 +880,7 @@ function sameLiveTradeOverlayItems(left: LiveTradeOverlayItem[], right: LiveTrad
 
 export interface TradeCandlestickChartRef {
     fitContent: () => void;
+    setHighlightedTradeId: (tradeId: number | null) => void;
     scrollToTrade: (zoomOutMultiplier?: number) => void;
     removeAllDrawingTools: () => void;
     deleteSelectedDrawings: () => void;
@@ -963,6 +966,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     onCrosshairQuickAlertCreate,
     onCrosshairQuickOrderCreate,
     onTradeHistoryClick,
+    selectedTradeHistoryId,
     liveBidPrice = null,
     liveAskPrice = null,
     showCandleCountdown = false,
@@ -1092,6 +1096,11 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     const onCrosshairQuickOrderCreateRef = useRef<typeof onCrosshairQuickOrderCreate>(onCrosshairQuickOrderCreate);
     const onTradeHistoryClickRef = useRef<typeof onTradeHistoryClick>(onTradeHistoryClick);
     const tradeHistoryRef = useRef<Trade[] | undefined>(tradeHistory);
+    const clickCycleTimestampRef = useRef<number | null>(null);
+    const clickCycleIndexRef = useRef<number>(0);
+    const tradeHistoryPluginMapRef = useRef<Map<number, RiskRewardPlugin>>(new Map());
+    const selectedTradeHistoryIdRef = useRef<number | null | undefined>(selectedTradeHistoryId);
+    selectedTradeHistoryIdRef.current = selectedTradeHistoryId;
     const crosshairQuickActionRef = useRef<HTMLDivElement | null>(null);
     const crosshairQuickActionFrameRef = useRef<number | null>(null);
     const pendingCrosshairQuickActionRef = useRef<CrosshairQuickActionState | null>(null);
@@ -1157,6 +1166,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         }
 
         tradeHistoryPluginsRef.current = [];
+        tradeHistoryPluginMapRef.current.clear();
     }, []);
 
     useEffect(() => {
@@ -3743,19 +3753,29 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                 const tradeHistory = tradeHistoryRef.current;
                 const onTradeHistoryClick = onTradeHistoryClickRef.current;
                 if (tradeHistory && onTradeHistoryClick) {
-                    const matchedTrade = tradeHistory.find((t) => {
+                    const matchedTrades = tradeHistory.filter((t) => {
                         const openTime = new Date(t.openTime).getTime();
                         const closeTime = t.closeTime
                             ? new Date(t.closeTime).getTime()
                             : openTime;
                         return clickedTime >= openTime && clickedTime <= closeTime;
-                    });
-                    if (matchedTrade) {
-                        onTradeHistoryClick(matchedTrade);
+                    }).sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+                    if (matchedTrades.length > 0) {
+                        const lastTs = clickCycleTimestampRef.current;
+                        const timeThreshold = 500;
+                        if (lastTs != null && Math.abs(clickedTime - lastTs) <= timeThreshold) {
+                            clickCycleIndexRef.current = (clickCycleIndexRef.current + 1) % matchedTrades.length;
+                        } else {
+                            clickCycleIndexRef.current = 0;
+                        }
+                        clickCycleTimestampRef.current = clickedTime;
+                        onTradeHistoryClick(matchedTrades[clickCycleIndexRef.current]);
                         return;
                     }
                 }
             }
+            clickCycleTimestampRef.current = null;
+            clickCycleIndexRef.current = 0;
 
             window.setTimeout(() => {
                 const selectedRaw = lineTools.getSelectedLineTools?.();
@@ -4737,6 +4757,18 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         fitContent: () => {
             chartRef.current?.timeScale().fitContent();
         },
+        setHighlightedTradeId: (tradeId: number | null) => {
+            const pluginMap = tradeHistoryPluginMapRef.current;
+            for (const [, plugin] of pluginMap) {
+                plugin.setSelected(false);
+            }
+            if (tradeId != null) {
+                const plugin = pluginMap.get(tradeId);
+                if (plugin) {
+                    plugin.setSelected(true);
+                }
+            }
+        },
         scrollToTrade,
         removeAllDrawingTools: () => {
             hiddenDrawingsRef.current = [];
@@ -4979,9 +5011,12 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         clearTradeHistoryPlugins(series);
 
         const attachedPlugins = tradeHistory
-            .map((historyTrade) => buildTradeOverlay(historyTrade, data, true))
-            .filter((overlay): overlay is TradeOverlayData => overlay !== null)
-            .map((overlay) => {
+            .map((historyTrade) => {
+                const overlay = buildTradeOverlay(historyTrade, data, true);
+                return overlay ? { overlay, tradeId: historyTrade.id } : null;
+            })
+            .filter((entry): entry is { overlay: TradeOverlayData; tradeId: number | undefined } => entry !== null)
+            .map(({ overlay, tradeId }) => {
                 const plugin = new RiskRewardPlugin(
                     overlay.entryPrice,
                     overlay.scaledRiskPrice,
@@ -4993,10 +5028,21 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                     overlay.labels
                 );
                 series.attachPrimitive(plugin);
+                if (tradeId != null) {
+                    tradeHistoryPluginMapRef.current.set(tradeId, plugin);
+                }
                 return plugin;
             });
 
         tradeHistoryPluginsRef.current = attachedPlugins;
+
+        const selectedId = selectedTradeHistoryIdRef.current;
+        if (selectedId != null) {
+            const plugin = tradeHistoryPluginMapRef.current.get(selectedId);
+            if (plugin) {
+                plugin.setSelected(true);
+            }
+        }
 
         return () => {
             for (const plugin of attachedPlugins) {
@@ -5012,6 +5058,22 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             }
         };
     }, [clearTradeHistoryPlugins, data, isChartReady, tradeHistory]);
+
+    useEffect(() => {
+        const pluginMap = tradeHistoryPluginMapRef.current;
+        if (pluginMap.size === 0) return;
+
+        for (const [, plugin] of pluginMap) {
+            plugin.setSelected(false);
+        }
+
+        if (selectedTradeHistoryId != null) {
+            const plugin = pluginMap.get(selectedTradeHistoryId);
+            if (plugin) {
+                plugin.setSelected(true);
+            }
+        }
+    }, [selectedTradeHistoryId]);
 
     // Manage R:R Visualization (Plugin + Price Lines) with Adaptive Scaling
     useEffect(() => {

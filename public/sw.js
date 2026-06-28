@@ -1,9 +1,10 @@
 const CACHE_PREFIX = "pipcircuit";
-const CACHE_VERSION = "v264";
+const CACHE_VERSION = "v273";
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${CACHE_VERSION}`;
 const PAGE_CACHE = `${CACHE_PREFIX}-pages-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `${CACHE_PREFIX}-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = "/offline";
+
 const APP_SHELL_ROUTES = [
   "/",
   "/dashboard",

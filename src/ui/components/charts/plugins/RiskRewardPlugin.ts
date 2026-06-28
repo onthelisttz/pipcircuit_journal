@@ -31,6 +31,7 @@ export class RiskRewardPlugin implements ISeriesPrimitive<unknown> {
     _isBuy: boolean;
     _useMae: boolean;
     _labels: RiskRewardLabels;
+    _selected: boolean = false;
 
     constructor(
         entry: number,
@@ -50,6 +51,12 @@ export class RiskRewardPlugin implements ISeriesPrimitive<unknown> {
         this._isBuy = isBuy;
         this._useMae = useMae;
         this._labels = labels;
+    }
+
+    setSelected(selected: boolean) {
+        if (this._selected === selected) return;
+        this._selected = selected;
+        this.requestUpdate();
     }
 
     attached(param: unknown) {
@@ -106,7 +113,8 @@ export class RiskRewardPlugin implements ISeriesPrimitive<unknown> {
                     this._useMae,
                     this._labels,
                     this._chart!,
-                    this._series!
+                    this._series!,
+                    this._selected
                 );
             },
             zOrder: () => 'normal' as const
@@ -129,7 +137,8 @@ class RiskRewardPaneRenderer implements IPrimitivePaneRenderer {
         private _useMae: boolean,
         private _labels: RiskRewardLabels,
         private _chart: IChartApi,
-        private _series: ISeriesApi<"Candlestick">
+        private _series: ISeriesApi<"Candlestick">,
+        private _selected: boolean = false
     ) { }
 
     draw(target: CanvasRenderingTarget2D) {
@@ -181,16 +190,24 @@ class RiskRewardPaneRenderer implements IPrimitivePaneRenderer {
 
         // --- Draw zones (Y increases downward, higher price = smaller Y) ---
 
+        const riskFillAlpha = this._selected ? 0.45 : 0.25;
+        const rewardFillAlpha = this._selected ? 0.45 : 0.25;
+
         // Risk Zone - Red (below entry for Buy, above entry for Sell).
         // The zone is geometry-driven, independent from label visibility.
         const riskHeight = this._isBuy ? slY - entryY : entryY - slY;
         if (riskHeight > 1) {
             target.save();
-            target.fillStyle = 'rgba(185, 28, 28, 0.25)';
+            target.fillStyle = `rgba(185, 28, 28, ${riskFillAlpha})`;
             if (this._isBuy) {
                 target.fillRect(finalStartX, entryY, width, riskHeight);
             } else {
                 target.fillRect(finalStartX, slY, width, riskHeight);
+            }
+            if (this._selected) {
+                target.strokeStyle = 'rgba(239, 68, 68, 0.8)';
+                target.lineWidth = 2;
+                target.strokeRect(finalStartX, this._isBuy ? entryY : slY, width, riskHeight);
             }
             target.restore();
         }
@@ -198,28 +215,50 @@ class RiskRewardPaneRenderer implements IPrimitivePaneRenderer {
         // Exit/Target Zone - Green when profit, red when loss (e.g. hit stop loss)
         const isProfit = this._labels.isProfit !== false;
         target.save();
-        target.fillStyle = isProfit ? 'rgba(22, 101, 52, 0.25)' : 'rgba(185, 28, 28, 0.25)';
+        const rewardFillColor = isProfit ? `rgba(22, 101, 52, ${rewardFillAlpha})` : `rgba(185, 28, 28, ${rewardFillAlpha})`;
+        const rewardStrokeColor = isProfit ? 'rgba(34, 197, 94, 0.8)' : 'rgba(239, 68, 68, 0.8)';
+        target.fillStyle = rewardFillColor;
         if (this._isBuy) {
             const rewardHeight = entryY - tpY;
             if (rewardHeight > 1) {
                 target.fillRect(finalStartX, tpY, width, rewardHeight);
+                if (this._selected) {
+                    target.strokeStyle = rewardStrokeColor;
+                    target.lineWidth = 2;
+                    target.strokeRect(finalStartX, tpY, width, rewardHeight);
+                }
             } else if (rewardHeight < -1) {
                 target.fillRect(finalStartX, entryY, width, -rewardHeight);
+                if (this._selected) {
+                    target.strokeStyle = rewardStrokeColor;
+                    target.lineWidth = 2;
+                    target.strokeRect(finalStartX, entryY, width, -rewardHeight);
+                }
             }
         } else {
             const rewardHeight = tpY - entryY;
             if (rewardHeight > 1) {
                 target.fillRect(finalStartX, entryY, width, rewardHeight);
+                if (this._selected) {
+                    target.strokeStyle = rewardStrokeColor;
+                    target.lineWidth = 2;
+                    target.strokeRect(finalStartX, entryY, width, rewardHeight);
+                }
             } else if (rewardHeight < -1) {
                 target.fillRect(finalStartX, tpY, width, -rewardHeight);
+                if (this._selected) {
+                    target.strokeStyle = rewardStrokeColor;
+                    target.lineWidth = 2;
+                    target.strokeRect(finalStartX, tpY, width, -rewardHeight);
+                }
             }
         }
         target.restore();
 
         // Entry Line (Separator) - dashed horizontal
         target.save();
-        target.strokeStyle = 'rgba(156, 163, 175, 0.9)';
-        target.lineWidth = 1;
+        target.strokeStyle = this._selected ? 'rgba(255, 255, 255, 0.95)' : 'rgba(156, 163, 175, 0.9)';
+        target.lineWidth = this._selected ? 2 : 1;
         target.setLineDash([4, 4]);
         target.beginPath();
         target.moveTo(finalStartX, entryY);

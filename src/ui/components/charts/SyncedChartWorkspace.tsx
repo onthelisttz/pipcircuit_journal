@@ -1130,7 +1130,9 @@ export function SyncedChartWorkspace({
 }: SyncedChartWorkspaceProps = {}) {
   const { activeAccount, accounts, syncTradesForAccount } = useAccount();
   const { user, session } = useAuth();
-  const { openPanel } = useTradePanel();
+  const { openPanel, selectedTradeId } = useTradePanel();
+  const [highlightedTradeId, setHighlightedTradeId] = useState<number | null>(null);
+  const lastChartTradeIdRef = useRef<number | null>(null);
   const progressRepo = useMemo(() => new DexieSymbolSyncProgressRepository(), []);
 
   const { symbolProgress, refresh: refreshSyncProgress } = useSyncProgress({
@@ -2330,13 +2332,33 @@ export function SyncedChartWorkspace({
   }, [brokerSymbolTrades, displayData, showTradeOverlay]);
 
   const handleTradeHistoryClick = useCallback((trade: Trade) => {
+    const id = trade.id ?? null;
+    // Highlight directly via ref BEFORE any React state updates,
+    // bypassing prop/effect timing issues.
+    chartRef.current?.setHighlightedTradeId(id);
+    setHighlightedTradeId(id);
+    lastChartTradeIdRef.current = id;
     const tradeIds = displayTradeHistory
       .map((t) => t.id)
       .filter((id): id is number => id != null);
-    if (trade.id != null) {
-      openPanel({ title: "Trades", tradeIds, selectedTradeId: trade.id });
+    if (id != null) {
+      openPanel({ title: "Trades", tradeIds, selectedTradeId: id });
     }
   }, [displayTradeHistory, openPanel]);
+
+  // Scroll to trade when panel navigates (selectedTradeId changes from panel, not chart)
+  useLayoutEffect(() => {
+    if (selectedTradeId == null) return;
+    if (selectedTradeId === lastChartTradeIdRef.current) return;
+
+    setHighlightedTradeId(selectedTradeId);
+
+    const trade = displayTradeHistory.find((t) => t.id === selectedTradeId);
+    if (!trade) return;
+
+    const openTs = new Date(trade.openTime).getTime();
+    chartRef.current?.scrollToTimestamp(openTs);
+  }, [displayTradeHistory, selectedTradeId]);
 
   const symbolPriceAlerts = useMemo(() => {
     if (!selection) return [];
@@ -5805,6 +5827,7 @@ ref={richTradePopupRef}>
           onVisibleRangeChange={handleVisibleRangeChange}
           autoScrollOnData={false}
           onTradeHistoryClick={handleTradeHistoryClick}
+          selectedTradeHistoryId={highlightedTradeId}
         />
       </div>
     </div>
