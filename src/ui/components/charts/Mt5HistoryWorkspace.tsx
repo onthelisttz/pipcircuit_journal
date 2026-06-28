@@ -27,6 +27,7 @@ import {
   Trash2,
   X,
   Pencil,
+  MoreHorizontal,
   MoreVertical,
 } from "lucide-react";
 import type { ChartBar, ChartTimeframe, Trade } from "@domain/entities";
@@ -722,6 +723,8 @@ export function Mt5HistoryWorkspace({
   const barsRef = useRef<ChartBar[]>([]);
   const chartAreaRef = useRef<HTMLDivElement>(null);
   const datePickerRef = useRef<HTMLDivElement | null>(null);
+  const symbolButtonRef = useRef<HTMLButtonElement>(null);
+  const symbolMenuRef = useRef<HTMLDivElement>(null);
   const replayDatePickerRef = useRef<HTMLDivElement | null>(null);
   const loadedRangeRef = useRef<LoadedRange | null>(null);
   const requestedRangeRef = useRef<LoadedRange | null>(null);
@@ -749,6 +752,8 @@ export function Mt5HistoryWorkspace({
   const [isMetaLoading, setIsMetaLoading] = useState(true);
 
   const [symbol, setSymbol] = useState<string>("");
+  const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
+  const [symbolSearchQuery, setSymbolSearchQuery] = useState("");
   const [timeframe, setTimeframe] = useState<ChartTimeframe>("M1");
   const [goToDate, setGoToDate] = useState(initialGoToDate ?? "");
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
@@ -794,6 +799,7 @@ export function Mt5HistoryWorkspace({
   const [expandedHeight, setExpandedHeight] = useState(640);
   const [chartAreaHeight, setChartAreaHeight] = useState(520);
   const [compactDrawOpen, setCompactDrawOpen] = useState(false);
+  const [overflowOpen, setOverflowOpen] = useState(false);
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
   const [compactActionsPinned, setCompactActionsPinned] = useState(false);
   const compactDrawRef = useRef<HTMLDivElement>(null);
@@ -2304,24 +2310,84 @@ export function Mt5HistoryWorkspace({
     setCompactDrawOpen(false);
   }, [isActive]);
 
+  useEffect(() => {
+    if (!symbolMenuOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        !symbolMenuRef.current?.contains(target) &&
+        !symbolButtonRef.current?.contains(target)
+      ) {
+        setSymbolMenuOpen(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSymbolMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [symbolMenuOpen]);
+
   const toolbar = (
     <div className={`relative z-20 flex flex-wrap items-center gap-2 border-b border-border ${compact ? 'pb-1.5' : 'pb-3'}`}>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-      <select
-        value={symbol}
-        onChange={(event) => {
-          setSymbol(event.target.value);
-          onSymbolChange?.(event.target.value);
-        }}
-        disabled={isMetaLoading || !meta?.symbols.length}
-        className="h-7 min-w-[120px] rounded border border-border bg-background px-2 text-xs font-medium text-foreground"
-      >
-        {meta?.symbols.map((item) => (
-          <option key={item.symbol} value={item.symbol}>
-            {item.symbol}
-          </option>
-        ))}
-      </select>
+      <div className="relative">
+        <button
+          ref={symbolButtonRef}
+          type="button"
+          onClick={() => { setSymbolMenuOpen((o) => !o); setSymbolSearchQuery(""); }}
+          disabled={isMetaLoading || !meta?.symbols.length}
+          className="flex h-7 items-center gap-2 rounded border border-border bg-background px-2 text-xs font-medium text-foreground outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span>{symbol || "Select symbol"}</span>
+          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+        </button>
+        {symbolMenuOpen && (
+          <div
+            ref={symbolMenuRef}
+            className="absolute left-0 top-full z-50 mt-1 max-h-72 w-56 overflow-y-auto rounded-md border border-border bg-popover text-popover-foreground shadow-xl"
+          >
+            <div className="border-b border-border px-2 py-1.5">
+              <input
+                type="text"
+                value={symbolSearchQuery}
+                onChange={(e) => setSymbolSearchQuery(e.target.value)}
+                placeholder="Search symbols..."
+                className="w-full rounded border border-border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
+                autoFocus
+              />
+            </div>
+            {(symbolSearchQuery
+              ? meta?.symbols.filter((s) =>
+                  s.symbol.toLowerCase().includes(symbolSearchQuery.toLowerCase())
+                )
+              : meta?.symbols
+            )?.map((item) => (
+              <button
+                key={item.symbol}
+                type="button"
+                onClick={() => {
+                  setSymbol(item.symbol);
+                  onSymbolChange?.(item.symbol);
+                  setSymbolMenuOpen(false);
+                }}
+                className={`flex w-full items-center px-3 py-2 text-left text-xs transition-colors ${
+                  item.symbol === symbol
+                    ? "bg-accent text-accent-foreground"
+                    : "text-foreground hover:bg-muted"
+                }`}
+              >
+                <span className="font-medium">{item.symbol}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
 
       <select
         value={timeframe}
@@ -2357,7 +2423,19 @@ export function Mt5HistoryWorkspace({
         ))}
       </select>
 
-      <div className="relative" ref={datePickerRef}>
+      <button
+        type="button"
+        onClick={() => setOverflowOpen((o) => !o)}
+        className="flex md:hidden h-7 w-7 items-center justify-center rounded border border-border text-muted-foreground hover:bg-muted"
+        title={overflowOpen ? "Hide extra tools" : "Show extra tools"}
+        aria-label={overflowOpen ? "Hide extra tools" : "Show extra tools"}
+      >
+        <MoreHorizontal className="h-3.5 w-3.5" />
+      </button>
+
+      <div className={`flex-wrap items-center gap-2 ${overflowOpen ? "flex" : "hidden"} md:flex`}>
+      <div className="relative" 
+ref={datePickerRef}>
         <button
           type="button"
           onClick={() => setIsDatePickerOpen((current) => !current)}
@@ -2697,6 +2775,7 @@ export function Mt5HistoryWorkspace({
         );
       })()}
       </div>
+      </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2 max-[480px]:ml-0">
         <button
@@ -2898,7 +2977,7 @@ export function Mt5HistoryWorkspace({
   return (
     <>
       <section className="min-w-0 flex-1">
-        <div className="flex h-full min-h-0 flex-col rounded-xl border border-border bg-card p-3 text-foreground">
+        <div className="flex h-full min-h-0 flex-col rounded-xl border border-border bg-card p-0 text-foreground md:p-3">
           {!isExpanded && chartContent}
         </div>
       </section>
@@ -2911,7 +2990,7 @@ export function Mt5HistoryWorkspace({
             aria-hidden="true"
           />
           <div
-            className="fixed inset-4 z-50 flex flex-col rounded-xl border border-border bg-card p-3 shadow-2xl"
+            className="fixed inset-0 z-50 flex flex-col rounded-xl border border-border bg-card p-0 shadow-2xl md:inset-4 md:p-3"
             role="dialog"
             aria-modal="true"
             aria-label="Expanded history chart"

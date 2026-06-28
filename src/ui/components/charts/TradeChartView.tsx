@@ -1171,7 +1171,7 @@ export function TradeChartView({
                 />
                 <div
                     ref={chartContainerRef}
-                    className="fixed inset-2 z-50 flex flex-col rounded-2xl border border-border bg-background p-3 shadow-2xl md:inset-4 md:p-4"
+                    className="fixed inset-0 z-50 flex flex-col rounded-2xl border border-border bg-background p-0 shadow-2xl md:inset-4 md:p-4"
                     role="dialog"
                     aria-modal="true"
                     aria-label="Expanded chart"
@@ -1256,7 +1256,7 @@ export function TradeChartView({
     return (
         <div
             ref={chartContainerRef}
-            className="flex h-full min-h-0 flex-col gap-2 overflow-hidden rounded-xl border border-border bg-card/80 p-2 pt-0"
+            className="flex h-full min-h-0 flex-col gap-2 overflow-hidden rounded-xl border border-border bg-card/80 p-0 md:p-2"
         >
             {chartContent()}
         </div>

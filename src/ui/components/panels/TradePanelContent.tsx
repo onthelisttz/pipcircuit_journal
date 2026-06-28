@@ -654,7 +654,7 @@ export function TradePanelContent({
                     ? "px-3 pb-2 pt-1"
                     : "px-4 pb-4 pt-3"
                   : isChartFocused
-                    ? "px-2 pb-2 pt-0"
+                    ? "px-2 pb-0 pt-0 md:pb-2"
                     : "px-4 pb-4 pt-4"
               }`}
             >

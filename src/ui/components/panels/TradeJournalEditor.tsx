@@ -39,6 +39,33 @@ function ToolbarButton({ onClick, active, children, title }: ToolbarButtonProps)
   );
 }
 
+const NOTE_TEMPLATE = `
+<p><span style="color: #e2e8f0; font-size: 15px"><strong>1. Reason for Taking This Trade</strong></span></p>
+<p><span style="color: #94a3b8; font-size: 12px">Why did I take this trade? What was my edge or setup?</span></p>
+<br>
+<p><span style="color: #e2e8f0; font-size: 15px"><strong>2. What I Missed from the Setup or Trade</strong></span></p>
+<p><span style="color: #94a3b8; font-size: 12px">What did I overlook or fail to notice?</span></p>
+<br>
+<p><span style="color: #e2e8f0; font-size: 15px"><strong>3. What Mistakes I Made</strong></span></p>
+<p><span style="color: #94a3b8; font-size: 12px">What errors did I commit during this trade?</span></p>
+<br>
+<p><span style="color: #e2e8f0; font-size: 15px"><strong>4. What Can I Do Better Next Time / What I Learned</strong></span></p>
+<p><span style="color: #94a3b8; font-size: 12px">What lesson did this trade teach me? How will I improve?</span></p>
+<br>
+<p><span style="color: #e2e8f0; font-size: 15px"><strong>5. Future Me Is Watching</strong></span></p>
+<p><span style="color: #94a3b8; font-size: 12px">Will my future self be proud of this trade?</span></p>
+<br>
+<p><span style="color: #e2e8f0; font-size: 15px"><strong>6. Trading For Them, Not Against Them</strong></span></p>
+<p><span style="color: #94a3b8; font-size: 12px">By taking this trade, am I making my mama, wife, and children proud — or am I disappointing them?</span></p>
+<br>
+`.trim();
+
+function isContentEmpty(html: string): boolean {
+  if (!html) return true;
+  const text = html.replace(/<[^>]*>/g, "").trim();
+  return text === "";
+}
+
 export function TradeJournalEditor({ tradeId, initialComment }: TradeJournalEditorProps) {
   const { note, isLoading, error, saveNote } = useTradeNote(tradeId, initialComment);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
@@ -232,7 +259,7 @@ export function TradeJournalEditor({ tradeId, initialComment }: TradeJournalEdit
   // Load existing content when note (or trade) changes
   useEffect(() => {
     if (!editor) return;
-    if (note) {
+    if (note && !isContentEmpty(note.content)) {
       const c = note.content || "<p></p>";
       editor.commands.setContent(c, { emitUpdate: false });
       initialContentRef.current = c;
@@ -240,9 +267,9 @@ export function TradeJournalEditor({ tradeId, initialComment }: TradeJournalEdit
       hasDirtyRef.current = false;
       isInitializedRef.current = true;
     } else {
-      editor.commands.setContent("<p></p>", { emitUpdate: false });
-      initialContentRef.current = "<p></p>";
-      lastHtmlRef.current = "<p></p>";
+      editor.commands.setContent(NOTE_TEMPLATE, { emitUpdate: false });
+      initialContentRef.current = NOTE_TEMPLATE;
+      lastHtmlRef.current = NOTE_TEMPLATE;
       hasDirtyRef.current = false;
       isInitializedRef.current = true;
     }
@@ -324,6 +351,14 @@ export function TradeJournalEditor({ tradeId, initialComment }: TradeJournalEdit
       }
     };
     input.click();
+  }, [editor]);
+
+  const resetContent = useCallback(() => {
+    if (!editor) return;
+    editor.commands.setContent(NOTE_TEMPLATE, { emitUpdate: false });
+    initialContentRef.current = NOTE_TEMPLATE;
+    lastHtmlRef.current = NOTE_TEMPLATE;
+    hasDirtyRef.current = false;
   }, [editor]);
 
   if (isLoading) {
@@ -492,6 +527,14 @@ export function TradeJournalEditor({ tradeId, initialComment }: TradeJournalEdit
             title="Add image"
           >
             <ImagePlus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={resetContent}
+            className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+            title="Reset to template"
+          >
+            <RotateCcw className="h-4 w-4" />
           </button>
           {saveStatus === "saving" && (
             <span className="flex items-center gap-1 text-xs text-muted-foreground">

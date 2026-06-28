@@ -28,6 +28,7 @@ import {
   Pause,
   Pencil,
   Play,
+  MoreHorizontal,
   MoreVertical,
   RotateCcw,
   SkipBack,
@@ -1266,7 +1267,9 @@ export function SyncedChartWorkspace({
   const lastAlertSyncSignatureRef = useRef<string | null>(null);
   const [chartAreaHeight, setChartAreaHeight] = useState(520);
   const [compactDrawOpen, setCompactDrawOpen] = useState(false);
+  const [overflowOpen, setOverflowOpen] = useState(false);
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
+  const [symbolSearchQuery, setSymbolSearchQuery] = useState("");
   const [compactActionsPinned, setCompactActionsPinned] = useState(false);
   const [tradesMenuOpen, setTradesMenuOpen] = useState(false);
   const [timeframeRestoreAnchor, setTimeframeRestoreAnchor] = useState<{
@@ -1734,10 +1737,11 @@ export function SyncedChartWorkspace({
         !symbolButtonRef.current?.contains(target)
       ) {
         setSymbolMenuOpen(false);
+        setSymbolSearchQuery("");
       }
     };
     const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSymbolMenuOpen(false);
+      if (event.key === "Escape") { setSymbolMenuOpen(false); setSymbolSearchQuery(""); }
     };
     document.addEventListener("mousedown", handleClick);
     window.addEventListener("keydown", handleKey);
@@ -3981,8 +3985,9 @@ export function SyncedChartWorkspace({
   }, [displayData, isLoading]);
 
   const brokers = useMemo(() => {
-    const map = new Map<string, typeof symbolProgress>();
-    for (const progress of symbolProgress) {
+    const synced = symbolProgress.filter((p) => p.status === "completed");
+    const map = new Map<string, typeof synced>();
+    for (const progress of synced) {
       if (!map.has(progress.broker)) map.set(progress.broker, []);
       map.get(progress.broker)!.push(progress);
     }
@@ -3994,7 +3999,7 @@ export function SyncedChartWorkspace({
       .sort((a, b) => a.broker.localeCompare(b.broker));
   }, [symbolProgress]);
 
-  const hasSymbols = symbolProgress.length > 0;
+  const hasSymbols = symbolProgress.some((p) => p.status === "completed");
   const selectedStatus = statusMeta(selectedProgress?.status);
   const SelectedStatusIcon = selectedStatus.icon;
   const drawingFillRgba = useMemo(
@@ -4506,6 +4511,7 @@ export function SyncedChartWorkspace({
           type="button"
           onClick={() => {
             setSymbolMenuOpen((open) => !open);
+            setSymbolSearchQuery("");
             setTradesMenuOpen(false);
           }}
           disabled={!hasSymbols}
@@ -4531,12 +4537,31 @@ export function SyncedChartWorkspace({
                 No symbols synced.
               </div>
             )}
-            {brokers.map((broker) => (
+            {hasSymbols && (
+              <div className="border-b border-border px-2 py-1.5">
+                <input
+                  type="text"
+                  value={symbolSearchQuery}
+                  onChange={(e) => setSymbolSearchQuery(e.target.value)}
+                  placeholder="Search symbols..."
+                  className="w-full rounded border border-border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
+                  autoFocus
+                />
+              </div>
+            )}
+            {brokers.map((broker) => {
+              const filtered = symbolSearchQuery
+                ? broker.symbols.filter((s) =>
+                    s.symbol.toLowerCase().includes(symbolSearchQuery.toLowerCase())
+                  )
+                : broker.symbols;
+              if (filtered.length === 0) return null;
+              return (
               <div key={broker.broker} className="py-1">
                 <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                   {broker.broker}
                 </div>
-                {broker.symbols.map((symbol) => {
+                {filtered.map((symbol) => {
                   const isSelected =
                     selection?.broker === broker.broker &&
                     selection?.symbol === symbol.symbol;
@@ -4570,7 +4595,7 @@ export function SyncedChartWorkspace({
                   );
                 })}
               </div>
-            ))}
+            );})}
           </div>
         )}
       </div>
@@ -4654,6 +4679,17 @@ export function SyncedChartWorkspace({
         )}
       </div>
 
+      <button
+        type="button"
+        onClick={() => setOverflowOpen((o) => !o)}
+        className="flex md:hidden h-7 w-7 items-center justify-center rounded border border-border text-muted-foreground hover:bg-muted"
+        title={overflowOpen ? "Hide extra tools" : "Show extra tools"}
+        aria-label={overflowOpen ? "Hide extra tools" : "Show extra tools"}
+      >
+        <MoreHorizontal className="h-3.5 w-3.5" />
+      </button>
+
+      <div className={`flex-wrap items-center gap-2 ${overflowOpen ? "flex" : "hidden"} md:flex`}>
       <div className="relative" ref={datePickerRef}>
         <button
           type="button"
@@ -4699,8 +4735,9 @@ export function SyncedChartWorkspace({
             setTimeframeMenuOpen(false);
           }}
           disabled={!selection}
+
           className={`flex h-7 items-center gap-1.5 rounded border border-border px-2 text-[11px] transition-colors ${
-            showTradeOverlay || showTradePanelVisible || showLiveTradesOnChart
+            showTradeOverlay || showTradePanelVisible || (liveVisualsEnabled && showLiveTradesOnChart)
               ? "bg-primary/10 text-primary"
               : "text-muted-foreground hover:bg-muted"
           } disabled:cursor-not-allowed disabled:opacity-50`}
@@ -4736,41 +4773,45 @@ export function SyncedChartWorkspace({
               />
               <span>Sidebar</span>
             </label>
-            <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-xs transition-colors hover:bg-muted">
-              <input
-                type="checkbox"
-                checked={showLiveTradesOnChart}
-                onChange={(event) => setShowLiveTradesOnChart(event.target.checked)}
-                className="h-3.5 w-3.5 rounded border-border accent-primary"
-              />
-              <span>Live / pending</span>
-            </label>
+            {liveVisualsEnabled ? (
+              <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-xs transition-colors hover:bg-muted">
+                <input
+                  type="checkbox"
+                  checked={showLiveTradesOnChart}
+                  onChange={(event) => setShowLiveTradesOnChart(event.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-border accent-primary"
+                />
+                <span>Live / pending</span>
+              </label>
+            ) : null}
           </div>
         ) : null}
       </div>
 
-      <button
-        type="button"
-        onClick={() => setShowAlertsOnChart((current) => !current)}
-        disabled={!selection}
-        className={`flex h-7 items-center gap-1.5 rounded border px-2 text-[11px] transition-colors ${
-          showAlertsOnChart
-            ? "border-primary/60 bg-primary/10 text-primary"
-            : "border-border text-muted-foreground hover:bg-muted"
-        } disabled:cursor-not-allowed disabled:opacity-50`}
-        title={showAlertsOnChart ? "Hide alert lines on chart" : "Show alert lines on chart"}
-      >
-        <Bell className="h-3.5 w-3.5" />
-              <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-foreground">
-          {symbolPriceAlerts.length}
-        </span>
-      </button>
-
+      {liveVisualsEnabled ? (
+        <button
+          type="button"
+          onClick={() => setShowAlertsOnChart((current) => !current)}
+          disabled={!selection}
+          className={`flex h-7 items-center gap-1.5 rounded border px-2 text-[11px] transition-colors ${
+            showAlertsOnChart
+              ? "border-primary/60 bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:bg-muted"
+          } disabled:cursor-not-allowed disabled:opacity-50`}
+          title={showAlertsOnChart ? "Hide alert lines on chart" : "Show alert lines on chart"}
+        >
+          <Bell className="h-3.5 w-3.5" />
+                <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-foreground">
+            {symbolPriceAlerts.length}
+          </span>
+        </button>
+      ) : null}
       <div className="flex items-center gap-1">
         <button
           type="button"
           onClick={handleReplayToggle}
           disabled={!selection || fullDisplayData.length === 0}
+
           className={`flex h-7 items-center gap-1.5 rounded border px-2 text-[11px] font-medium transition-colors ${
             isReplayMode || isReplayPlacementMode
               ? "border-primary/60 bg-primary/10 text-primary"
@@ -4849,7 +4890,8 @@ export function SyncedChartWorkspace({
       </div>
 
       {liveVisualsEnabled && liveSessionId ? (
-      <div className="relative" ref={richTradePopupRef}>
+      <div className="relative" 
+ref={richTradePopupRef}>
         <button
           ref={richTradeButtonRef}
           type="button"
@@ -5389,6 +5431,7 @@ export function SyncedChartWorkspace({
         );
       })()}
       </div>
+      </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2 max-[480px]:ml-0">
         <button
@@ -5756,7 +5799,7 @@ export function SyncedChartWorkspace({
   return (
     <>
       <section className="min-w-0 flex-1">
-        <div className="flex h-full min-h-0 flex-col rounded-xl border border-border bg-card p-3 text-foreground">
+        <div className="flex h-full min-h-0 flex-col rounded-xl border border-border bg-card p-0 text-foreground md:p-3">
           {!isExpanded && chartContent}
         </div>
       </section>
@@ -5769,7 +5812,7 @@ export function SyncedChartWorkspace({
             aria-hidden="true"
           />
           <div
-            className="fixed inset-4 z-50 flex flex-col rounded-xl border border-border bg-card p-3 shadow-2xl"
+            className="fixed inset-0 z-50 flex flex-col rounded-xl border border-border bg-card p-0 shadow-2xl md:inset-4 md:p-3"
             role="dialog"
             aria-modal="true"
             aria-label="Expanded chart"

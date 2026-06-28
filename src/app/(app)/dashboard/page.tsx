@@ -270,7 +270,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <div className="sticky top-0 z-10 mb-3 flex flex-col gap-4 bg-background py-3 sm:flex-row sm:items-center sm:justify-between border-b border-border/40">
-        <h1 className="text-xl font-semibold text-foreground">Analytics Dashboard</h1>
+        <h1 className="text-xl font-semibold text-foreground">Dashboard</h1>
         <DashboardFilters
           filters={filters}
           onChange={setFilters}

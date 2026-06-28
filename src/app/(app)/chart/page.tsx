@@ -710,7 +710,7 @@ export default function ChartPage() {
           return (
             <div
               key={tab.id}
-              className={`min-h-0 flex-1 flex-col ${isVisible ? "flex" : "hidden"}`}
+              className={`min-h-0 flex-1 flex-col ${isVisible ? "flex" : "hidden"} -mx-3 sm:-mx-4 md:-mx-0`}
             >
               <ChartLayoutGrid
                 layout={tab.layout}
