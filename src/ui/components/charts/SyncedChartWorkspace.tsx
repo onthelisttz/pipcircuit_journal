@@ -4707,7 +4707,6 @@ export function SyncedChartWorkspace({
                     windowSeconds: chartRef.current?.getVisibleWindowSeconds() ?? null,
                     preferLatestTimestamp: liveVisualsEnabled,
                   };
-                  chartRef.current?.removeAllDrawingTools();
                   if (isReplayMode || isReplayPlacementMode) {
                     setIsReplayPlaying(false);
                   }
