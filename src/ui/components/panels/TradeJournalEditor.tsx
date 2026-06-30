@@ -53,7 +53,7 @@ const NOTE_TEMPLATE = `
 <p><span style="color: #94a3b8; font-size: 12px">What lesson did this trade teach me? How will I improve?</span></p>
 <br>
 <p><span style="color: #e2e8f0; font-size: 15px"><strong>5. Future Me Is Watching</strong></span></p>
-<p><span style="color: #94a3b8; font-size: 12px">Will my future self be proud of this trade?</span></p>
+<p><span style="color: #94a3b8; font-size: 12px">Will my future self be proud of this trade? can i get Angry about myself bcz of this trade?</span></p>
 <br>
 <p><span style="color: #e2e8f0; font-size: 15px"><strong>6. Trading For Them, Not Against Them</strong></span></p>
 <p><span style="color: #94a3b8; font-size: 12px">By taking this trade, am I making my mama, wife, and children proud — or am I disappointing them?</span></p>
