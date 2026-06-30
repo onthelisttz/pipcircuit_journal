@@ -109,6 +109,7 @@ export function AccountsTable() {
   const [syncingAccount, setSyncingAccount] = useState<string | null>(null);
   const [pullingAccount, setPullingAccount] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(null);
   const [deleteAll, setDeleteAll] = useState(false);
@@ -148,6 +149,14 @@ export function AccountsTable() {
     return () => clearTimeout(timer);
   }, [errorMessage]);
 
+  useEffect(() => {
+    if (!successMessage) return;
+    const timer = setTimeout(() => {
+      setSuccessMessage(null);
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [successMessage]);
+
   if (accounts.length === 0) {
     return (
       <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground sm:p-6">
@@ -161,6 +170,11 @@ export function AccountsTable() {
       {errorMessage && (
         <div className="border-b border-border bg-destructive/5 px-4 py-2 text-xs text-destructive">
           {errorMessage}
+        </div>
+      )}
+      {successMessage && (
+        <div className="border-b border-border bg-emerald-500/5 px-4 py-2 text-xs text-emerald-600">
+          {successMessage}
         </div>
       )}
 
@@ -293,10 +307,12 @@ export function AccountsTable() {
               <button
                 onClick={async () => {
                   setDeleting(true);
+                  setErrorMessage(null);
+                  setSuccessMessage(null);
                   try {
                     const from = deleteAll ? undefined : (deleteFrom ? new Date(deleteFrom) : undefined);
                     const to = deleteAll ? undefined : (deleteTo ? new Date(deleteTo) : undefined);
-                    await deleteTrades(
+                    const count = await deleteTrades(
                       deleteDialog.accountNumber,
                       deleteScope,
                       from,
@@ -307,6 +323,9 @@ export function AccountsTable() {
                     setDeleteFrom(todayStr());
                     setDeleteTo(todayStr());
                     setDeleteScope("local");
+                    if (count > 0) {
+                      setSuccessMessage(`Deleted ${count} trade${count !== 1 ? "s" : ""}`);
+                    }
                   } catch (error) {
                     setErrorMessage(
                       error instanceof Error ? error.message : "Failed to delete trades"
@@ -389,12 +408,14 @@ export function AccountsTable() {
                     onClick={async () => {
                       if (syncingAccount) return;
                       setErrorMessage(null);
+                      setSuccessMessage(null);
                       setSyncingAccount(account.accountNumber);
                       try {
                         await syncTradesForAccount(
                           account.accountNumber,
                           account.ctraderAccountId
                         );
+                        setSuccessMessage(`Trades synced successfully for ${account.name ?? account.accountNumber}`);
                       } catch (error) {
                         const message =
                           error instanceof Error ? error.message : "Failed to sync trades";
@@ -497,8 +518,14 @@ export function AccountsTable() {
                     setMenuAnchor(null);
                     setPullingAccount(account.accountNumber);
                     setErrorMessage(null);
+                    setSuccessMessage(null);
                     try {
-                      await pullTradesFromSupabase(account.accountNumber);
+                      const count = await pullTradesFromSupabase(account.accountNumber);
+                      if (count > 0) {
+                        setSuccessMessage(`Pulled ${count} trade${count !== 1 ? "s" : ""} from Supabase`);
+                      } else {
+                        setSuccessMessage("No new trades found on Supabase");
+                      }
                     } catch (error) {
                       setErrorMessage(
                         error instanceof Error ? error.message : "Failed to pull from Supabase"
@@ -511,7 +538,11 @@ export function AccountsTable() {
                   className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left hover:bg-accent disabled:opacity-50"
                   role="menuitem"
                 >
-                  <Database className={`h-4 w-4 ${pullingAccount === account.accountNumber ? "animate-spin" : ""}`} />
+                  {pullingAccount === account.accountNumber ? (
+                    <Database className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Database className="h-4 w-4" />
+                  )}
                   <span>Pull from Supabase</span>
                 </button>
                 <button

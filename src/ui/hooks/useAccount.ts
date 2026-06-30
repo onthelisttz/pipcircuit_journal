@@ -384,7 +384,7 @@ export function useAccount() {
   );
 
   const pullTradesFromSupabase = useCallback(
-    async (accountNumber: string) => {
+    async (accountNumber: string): Promise<number> => {
       if (!user?.id) {
         throw new Error("Not authenticated");
       }
@@ -411,19 +411,21 @@ export function useAccount() {
           setAccounts(refreshed);
         }
       }
+
+      return trades.length;
     },
     [user?.id, accountRepository, tradeRepository, setAccounts]
   );
 
   const deleteTrades = useCallback(
-    async (accountNumber: string, scope: "local" | "both", from?: Date, to?: Date) => {
+    async (accountNumber: string, scope: "local" | "both", from?: Date, to?: Date): Promise<number> => {
       const trades = await tradeRepository.list({
         accountId: accountNumber,
         from: from ?? undefined,
         to: to ?? undefined,
       });
 
-      if (trades.length === 0) return;
+      if (trades.length === 0) return 0;
 
       if (scope === "both") {
         for (const trade of trades) {
@@ -442,10 +444,25 @@ export function useAccount() {
 
       const account = await accountRepository.getByAccountNumber(accountNumber);
       if (account?.id) {
-        await accountRepository.update(account.id, { lastSyncAt: null, updatedAt: new Date() });
+        let newLastSyncAt: Date | null;
+        if (!from) {
+          newLastSyncAt = null;
+        } else {
+          newLastSyncAt = new Date(from);
+          newLastSyncAt.setHours(0, 0, 0, 0);
+        }
+
+        const remaining = await tradeRepository.list({ accountId: accountNumber });
+        if (remaining.length === 0) {
+          newLastSyncAt = null;
+        }
+
+        await accountRepository.update(account.id, { lastSyncAt: newLastSyncAt, updatedAt: new Date() });
         const refreshed = await accountRepository.list();
         setAccounts(refreshed);
       }
+
+      return trades.length;
     },
     [accountRepository, tradeRepository, setAccounts]
   );
