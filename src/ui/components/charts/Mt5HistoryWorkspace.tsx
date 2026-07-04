@@ -16,6 +16,7 @@ import {
   Eye,
   EyeOff,
   Eraser,
+  LocateFixed,
   Maximize2,
   Minimize2,
   Pause,
@@ -108,6 +109,8 @@ const FETCH_THROTTLE_MS = 160;
 const REPLAY_RIGHT_OFFSET_BARS = 12;
 const HISTORY_TIME_GUIDES_KEY = "chartTimeGuides_history";
 const CHART_CONTINUOUS_DRAWING_KEY = "chartContinuousDrawingEnabled_v1";
+const CHART_MARKER_ENABLED_KEY = "chartMarkerEnabled_v1";
+const CHART_MARKER_TIMESTAMP_KEY = "chartMarkerTimestamp_v1";
 const MAX_RENDERED_BARS: Record<ChartTimeframe, number> = {
   M1: 15_000,
   M5: 30_000,
@@ -233,6 +236,24 @@ function formatShortDate(timestamp: number): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(timestamp));
+}
+
+function formatUtc(timestamp: number): string {
+  const d = new Date(timestamp);
+  return `${pad(d.getUTCDate())}-${pad(d.getUTCMonth() + 1)}-${d.getUTCFullYear()} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
+function timeframeToSeconds(timeframe?: ChartTimeframe): number {
+  switch (timeframe) {
+    case "M1": return 60;
+    case "M5": return 5 * 60;
+    case "M15": return 15 * 60;
+    case "M30": return 30 * 60;
+    case "H1": return 60 * 60;
+    case "H4": return 4 * 60 * 60;
+    case "D1": return 24 * 60 * 60;
+    default: return 60;
+  }
 }
 
 function sortTimeframes(timeframes: TimeframeSummary[]): TimeframeSummary[] {
@@ -703,6 +724,223 @@ function SingleDatePopover({
   );
 }
 
+function MarkerTimestampPopover({
+  value,
+  onChange,
+  onClose,
+  min,
+  max,
+}: {
+  value: number;
+  onChange: (timestamp: number) => void;
+  onClose: () => void;
+  min?: Date;
+  max?: Date;
+}) {
+  const initialDate = new Date(value);
+  const [dateText, setDateText] = useState(() => toDateInputValue(value));
+  const [timeText, setTimeText] = useState(() => format(initialDate, "HH:mm"));
+  const [tempDate, setTempDate] = useState<Date>(initialDate);
+  const [visibleMonth, setVisibleMonth] = useState<Date>(startOfMonth(initialDate));
+
+  const parsedDate = parseDateInputValue(dateText);
+  const [hours, minutes] = timeText.split(":").map(Number);
+  const isTimeValid = timeText.length === 5 && !isNaN(hours) && !isNaN(minutes) && hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
+  const isApplyEnabled = parsedDate !== null && isTimeValid;
+
+  const monthDays = useMemo(() => buildMonthDays(visibleMonth), [visibleMonth]);
+  const firstWeekday = new Date(visibleMonth).getDay();
+  const today = new Date();
+
+  const updateDateSelection = (nextDate: Date) => {
+    setTempDate(nextDate);
+    setVisibleMonth(startOfMonth(nextDate));
+    setDateText(toDateInputValue(nextDate.getTime()));
+  };
+
+  return (
+    <div className="fixed inset-x-2 bottom-2 top-16 z-30 overflow-y-auto rounded-xl border border-border bg-popover p-3 shadow-2xl animate-in fade-in-0 zoom-in-95 sm:absolute sm:inset-auto sm:left-0 sm:top-full sm:mt-2 sm:w-[320px] sm:max-w-[calc(100vw-2rem)] sm:p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-sm font-medium text-foreground">Marker timestamp</span>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          onClick={onClose}
+          aria-label="Close"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <div className="mb-3 flex items-start gap-2">
+        <div className="flex-1">
+          <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Date
+          </label>
+          <input
+            type="text"
+            value={dateText}
+            onChange={(e) => {
+              const next = e.target.value;
+              setDateText(next);
+              const parsed = parseDateInputValue(next);
+              if (parsed) {
+                setTempDate(parsed);
+                setVisibleMonth(startOfMonth(parsed));
+              }
+            }}
+            placeholder="YYYY-MM-DD"
+            autoComplete="off"
+            spellCheck={false}
+            className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60"
+            aria-label="Marker date"
+          />
+          {parsedDate === null && dateText.length > 0 && (
+            <p className="mt-1 text-[10px] text-destructive">Use YYYY-MM-DD.</p>
+          )}
+        </div>
+        <div className="w-28">
+          <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Time (UTC)
+          </label>
+          <input
+            type="text"
+            value={timeText}
+            onChange={(e) => setTimeText(e.target.value)}
+            placeholder="HH:mm"
+            autoComplete="off"
+            spellCheck={false}
+            className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60"
+            aria-label="Marker time"
+          />
+        </div>
+      </div>
+
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setVisibleMonth((prev) => addMonths(prev, -1))}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          aria-label="Previous month"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <div className="flex items-center gap-2">
+          <select
+            value={visibleMonth.getMonth()}
+            onChange={(event) => {
+              setVisibleMonth(
+                new Date(visibleMonth.getFullYear(), Number(event.target.value), 1)
+              );
+            }}
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+            aria-label="Select month"
+          >
+            {MONTH_NAMES.map((monthName, index) => (
+              <option key={monthName} value={index}>
+                {monthName}
+              </option>
+            ))}
+          </select>
+          <select
+            value={visibleMonth.getFullYear()}
+            onChange={(event) => {
+              setVisibleMonth(
+                new Date(Number(event.target.value), visibleMonth.getMonth(), 1)
+              );
+            }}
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+            aria-label="Select year"
+          >
+            {(min && max
+              ? Array.from(
+                  { length: Math.max(1, max.getFullYear() - min.getFullYear() + 1) },
+                  (_, index) => max.getFullYear() - index
+                )
+              : Array.from({ length: 21 }, (_, i) => visibleMonth.getFullYear() - 10 + i)
+            ).map((year) => (
+              <option key={year} value={year}>
+                {year}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          type="button"
+          onClick={() => setVisibleMonth((prev) => addMonths(prev, 1))}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          aria-label="Next month"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="mb-2 grid grid-cols-7 gap-1 text-[10px] text-muted-foreground">
+        <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+      </div>
+
+      <div className="mb-3 grid grid-cols-7 gap-1">
+        {Array.from({ length: firstWeekday }).map((_, index) => (
+          <span key={`blank-${index}`} />
+        ))}
+        {monthDays.map((day) => {
+          const isSelected = isSameDay(day, tempDate);
+          const isToday = isSameDay(day, today);
+          return (
+            <button
+              key={day.toISOString()}
+              type="button"
+              onClick={() => updateDateSelection(day)}
+              className={[
+                "h-8 w-8 rounded-full text-xs transition-colors",
+                isSelected
+                  ? "bg-primary font-semibold text-primary-foreground"
+                  : "hover:bg-accent/60",
+                isToday ? "ring-1 ring-primary/70 ring-offset-1 ring-offset-popover" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              {day.getDate()}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={!isApplyEnabled}
+          onClick={() => {
+            if (parsedDate == null) return;
+            const ts = Date.UTC(
+              parsedDate.getFullYear(),
+              parsedDate.getMonth(),
+              parsedDate.getDate(),
+              hours,
+              minutes,
+              0,
+              0
+            );
+            onChange(ts);
+            onClose();
+          }}
+          className="rounded-lg bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Apply
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Mt5HistoryWorkspace({
   onAvailabilityTextChange,
   initialSymbol,
@@ -723,6 +961,7 @@ export function Mt5HistoryWorkspace({
   const barsRef = useRef<ChartBar[]>([]);
   const chartAreaRef = useRef<HTMLDivElement>(null);
   const datePickerRef = useRef<HTMLDivElement | null>(null);
+  const markerTimestampRef = useRef<HTMLDivElement | null>(null);
   const symbolButtonRef = useRef<HTMLButtonElement>(null);
   const symbolMenuRef = useRef<HTMLDivElement>(null);
   const replayDatePickerRef = useRef<HTMLDivElement | null>(null);
@@ -781,6 +1020,29 @@ export function Mt5HistoryWorkspace({
   const [timeGuides, setTimeGuides] = useState<TimeGuideSettings>(() =>
     readStoredTimeGuideSettings(HISTORY_TIME_GUIDES_KEY)
   );
+  const [markerEnabled, setMarkerEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(CHART_MARKER_ENABLED_KEY) === "true";
+    } catch { return false; }
+  });
+  const [markerTimestamp, setMarkerTimestamp] = useState(() => {
+    if (typeof window === "undefined") return Date.now();
+    try {
+      const raw = window.localStorage.getItem(CHART_MARKER_TIMESTAMP_KEY);
+      if (!raw) return Date.now();
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : Date.now();
+    } catch { return Date.now(); }
+  });
+  const [isMarkerTimestampOpen, setIsMarkerTimestampOpen] = useState(false);
+
+  useEffect(() => {
+    const seconds = timeframeToSeconds(timeframe);
+    const ms = seconds * 1000;
+    setMarkerTimestamp((prev) => Math.floor(prev / ms) * ms);
+  }, [timeframe]);
+
   const [isReplayMode, setIsReplayMode] = useState(false);
   const [isReplayPlacementMode, setIsReplayPlacementMode] = useState(false);
   const [isReplayPlaying, setIsReplayPlaying] = useState(false);
@@ -1013,6 +1275,37 @@ export function Mt5HistoryWorkspace({
   }, [continuousDrawingEnabled]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CHART_MARKER_ENABLED_KEY, markerEnabled ? "true" : "false");
+  }, [markerEnabled]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CHART_MARKER_TIMESTAMP_KEY, String(markerTimestamp));
+  }, [markerTimestamp]);
+
+  const goToMarkerRef = useRef<() => void>(() => {});
+  goToMarkerRef.current = () => {
+    const loaded = loadedRangeRef.current;
+    if (loaded && markerTimestamp >= loaded.from && markerTimestamp <= loaded.to) {
+      chartRef.current?.scrollToTimestamp(markerTimestamp);
+    } else {
+      goToTimestamp(markerTimestamp);
+    }
+  };
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.shiftKey && (event.key === "L" || event.key === "l")) {
+        event.preventDefault();
+        goToMarkerRef.current();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     const loadRootPath = async () => {
@@ -1219,6 +1512,30 @@ export function Mt5HistoryWorkspace({
       window.removeEventListener("keydown", handleEscape);
     };
   }, [isDatePickerOpen]);
+
+  useEffect(() => {
+    if (!isMarkerTimestampOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!markerTimestampRef.current?.contains(target)) {
+        setIsMarkerTimestampOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsMarkerTimestampOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [isMarkerTimestampOpen]);
 
   useEffect(() => {
     if (!isReplayDatePickerOpen) return;
@@ -2468,6 +2785,46 @@ ref={datePickerRef}>
         disabled={!selectedTimeframe}
       />
 
+      <div className="relative flex h-7 items-center gap-1 rounded border border-border bg-background px-2 text-xs text-foreground" ref={markerTimestampRef}>
+        <button
+          type="button"
+          onClick={() => setIsMarkerTimestampOpen((v) => !v)}
+          disabled={!selectedTimeframe}
+          className="flex items-center gap-1 text-foreground hover:text-muted-foreground disabled:opacity-50"
+          title="Edit marker timestamp"
+        >
+          <span className="tabular-nums">{formatUtc(markerTimestamp)}</span>
+        </button>
+        <label className="flex cursor-pointer items-center gap-0.5" title="Show marker line">
+          <input
+            type="checkbox"
+            checked={markerEnabled}
+            onChange={() => setMarkerEnabled((v) => !v)}
+            className="h-3 w-3 rounded border-border accent-foreground"
+            disabled={!selectedTimeframe}
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => goToMarkerRef.current()}
+          disabled={!selectedTimeframe}
+          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted disabled:opacity-50"
+          title="Scroll to marker timestamp"
+          aria-label="Scroll to marker timestamp"
+        >
+          <LocateFixed className="h-3 w-3" />
+        </button>
+        {isMarkerTimestampOpen && (
+          <MarkerTimestampPopover
+            value={markerTimestamp}
+            onChange={setMarkerTimestamp}
+            onClose={() => setIsMarkerTimestampOpen(false)}
+            min={selectedTimeframe ? new Date(selectedTimeframe.from) : undefined}
+            max={selectedTimeframe ? new Date(selectedTimeframe.to) : undefined}
+          />
+        )}
+      </div>
+
       <div className="flex items-center gap-1">
         {!isReplayMode && !isReplayPlacementMode ? (
           <div className="flex h-7 items-center gap-1 rounded border border-border bg-background px-1">
@@ -2972,6 +3329,8 @@ ref={datePickerRef}>
           showRiskRewardLabels={false}
           onVisibleRangeChange={handleVisibleRangeChange}
           autoScrollOnData={false}
+          showMarker={markerEnabled}
+          markerTimestamp={markerTimestamp}
         />
       </div>
     </div>

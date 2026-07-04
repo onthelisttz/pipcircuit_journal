@@ -18,7 +18,7 @@ export interface TimeGuideSettings {
 
 export interface TimeGuideVerticalLine {
   id: string;
-  kind: "daily" | "session";
+  kind: "daily" | "session" | "marker";
   timestamp: number;
 }
 

@@ -1177,7 +1177,7 @@ export function TradeChartView({
                     aria-label="Expanded chart"
                     onClick={(e) => e.stopPropagation()}
                 >
-                    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border pb-2">
+                    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-3 pb-2 pt-1 md:px-0">
                         <div className="min-w-0">
                             <p className="truncate text-sm font-semibold text-foreground">
                                 {trade.symbol} - {trade.direction}
@@ -1231,11 +1231,6 @@ export function TradeChartView({
                                         )}
                                 </div>
                             )}
-                            <TimeframeSelector
-                                value={timeframe}
-                                onChange={handleTimeframeChange}
-                                disabled={isLoading}
-                            />
                             <button
                                 onClick={() => setExpanded(false)}
                                 className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -1246,7 +1241,7 @@ export function TradeChartView({
                         </div>
                     </div>
                     <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-                        {chartContent(true)}
+                        {chartContent()}
                     </div>
                 </div>
             </>

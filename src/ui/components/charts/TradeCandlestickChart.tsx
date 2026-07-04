@@ -653,12 +653,12 @@ function sameTimeGuideOverlay(
     left: {
         width: number | null;
         height: number | null;
-        verticalLines: Array<{ id: string; kind: "daily" | "session"; x: number }>;
+        verticalLines: Array<{ id: string; kind: "daily" | "session" | "marker"; x: number }>;
     },
     right: {
         width: number | null;
         height: number | null;
-        verticalLines: Array<{ id: string; kind: "daily" | "session"; x: number }>;
+        verticalLines: Array<{ id: string; kind: "daily" | "session" | "marker"; x: number }>;
     }
 ): boolean {
     if (left.width !== right.width || left.height !== right.height) return false;
@@ -798,6 +798,10 @@ export interface TradeCandlestickChartProps {
     candleCountdownAnchorTimestamp?: number | null;
     /** Optional timestamp to jump to when the End key is pressed */
     endKeyScrollTargetTimestamp?: number | null;
+    /** When true, show a vertical marker line at markerTimestamp */
+    showMarker?: boolean;
+    /** Timestamp for the marker line */
+    markerTimestamp?: number;
     /** Called when a trade history overlay is clicked on the chart */
     onTradeHistoryClick?: (trade: Trade) => void;
     /** Trade history ID to highlight and auto-scroll to */
@@ -972,6 +976,8 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     showCandleCountdown = false,
     candleCountdownAnchorTimestamp = null,
     endKeyScrollTargetTimestamp = null,
+    showMarker = false,
+    markerTimestamp,
 }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -992,11 +998,20 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     const [timeGuideOverlay, setTimeGuideOverlay] = useState<{
         width: number | null;
         height: number | null;
-        verticalLines: Array<{ id: string; kind: "daily" | "session"; x: number }>;
+        verticalLines: Array<{ id: string; kind: "daily" | "session" | "marker"; x: number }>;
     }>({
         width: null,
         height: null,
         verticalLines: [],
+    });
+    const [markerOverlay, setMarkerOverlay] = useState<{
+        width: number | null;
+        height: number | null;
+        x: number | null;
+    }>({
+        width: null,
+        height: null,
+        x: null,
     });
     const [replayPlacementOverlay, setReplayPlacementOverlay] = useState<{
         width: number | null;
@@ -1399,10 +1414,11 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                     ? current
                     : { width: null, height: null, verticalLines: [] }
             );
+            setMarkerOverlay({ width: null, height: null, x: null });
             return;
         }
 
-        if (computedTimeGuides.verticalLines.length === 0) {
+        if (computedTimeGuides.verticalLines.length === 0 && !showMarker) {
             setTimeGuideOverlay((current) =>
                 current.width === null &&
                 current.height === null &&
@@ -1410,12 +1426,13 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                     ? current
                     : { width: null, height: null, verticalLines: [] }
             );
+            setMarkerOverlay({ width: null, height: null, x: null });
             return;
         }
 
         const timeScale = chart.timeScale();
         const paneSize = chart.paneSize();
-        const nextVerticalLines: Array<{ id: string; kind: "daily" | "session"; x: number }> = [];
+        const nextVerticalLines: Array<{ id: string; kind: "daily" | "session" | "marker"; x: number }> = [];
 
         for (const line of computedTimeGuides.verticalLines) {
             const x = timeScale.timeToCoordinate((line.timestamp / 1000) as Time);
@@ -1428,6 +1445,24 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             });
         }
 
+        let markerX: number | null = null;
+        if (showMarker && markerTimestamp != null) {
+            const x = timeScale.timeToCoordinate((markerTimestamp / 1000) as Time);
+            if (x != null && Number.isFinite(x) && (!clipTimeGuideOverlayToPane || (x >= 0 && x <= paneSize.width))) {
+                nextVerticalLines.push({
+                    id: "marker-user",
+                    kind: "marker",
+                    x,
+                });
+                markerX = x;
+            }
+        }
+        setMarkerOverlay({
+            width: clipTimeGuideOverlayToPane ? paneSize.width : null,
+            height: clipTimeGuideOverlayToPane ? paneSize.height : null,
+            x: markerX,
+        });
+
         const nextOverlay = {
             width: clipTimeGuideOverlayToPane ? paneSize.width : null,
             height: clipTimeGuideOverlayToPane ? paneSize.height : null,
@@ -1437,7 +1472,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         setTimeGuideOverlay((current) =>
             sameTimeGuideOverlay(current, nextOverlay) ? current : nextOverlay
         );
-    }, [clipTimeGuideOverlayToPane, computedTimeGuides]);
+    }, [clipTimeGuideOverlayToPane, computedTimeGuides, showMarker, markerTimestamp]);
 
     const refreshCandleCountdownOverlay = useCallback(() => {
         if (!useCustomLivePriceStack || candleCountdownPrice == null) {
@@ -1990,6 +2025,11 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         liveTradePreviewPrices,
         scheduleTimeGuideOverlayRefresh,
     ]);
+
+    useEffect(() => {
+        if (!isChartReady) return;
+        scheduleTimeGuideOverlayRefreshRef.current();
+    }, [showMarker, markerTimestamp, isChartReady]);
 
     useEffect(() => {
         if (!liveTradeDragSession) return;
@@ -5868,10 +5908,38 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                                 borderLeft:
                                     line.kind === "daily"
                                         ? "1px dashed rgba(148, 163, 184, 0.55)"
-                                        : "1px dashed rgba(250, 204, 21, 0.85)",
+                                        : line.kind === "marker"
+                                            ? "1px dotted rgba(56, 189, 248, 0.9)"
+                                            : "1px dashed rgba(250, 204, 21, 0.85)",
                             }}
                         />
                     ))}
+                </div>
+            )}
+
+            {markerOverlay.x != null && (
+                <div
+                    className={`pointer-events-none absolute z-[1] overflow-hidden ${
+                        clipTimeGuideOverlayToPane ? "left-0 top-0" : "inset-0 rounded-lg"
+                    }`}
+                    style={
+                        clipTimeGuideOverlayToPane &&
+                        markerOverlay.width != null &&
+                        markerOverlay.height != null
+                            ? {
+                                width: `${markerOverlay.width}px`,
+                                height: `${markerOverlay.height}px`,
+                            }
+                            : undefined
+                    }
+                >
+                    <div
+                        className="absolute bottom-0 top-0"
+                        style={{
+                            left: `${markerOverlay.x}px`,
+                            borderLeft: "1px dotted rgba(56, 189, 248, 0.9)",
+                        }}
+                    />
                 </div>
             )}
         </div>
