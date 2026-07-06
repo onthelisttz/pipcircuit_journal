@@ -691,7 +691,7 @@ type TimeGuideOverlayLine = {
 
 function getVerticalGuideBorder(kind: TimeGuideOverlayLine["kind"]): string {
     if (kind === "daily") return "1px dashed rgba(148, 163, 184, 0.82)";
-    if (kind === "marker") return "2px dotted #00A8F7";
+    if (kind === "marker") return "1.5px dotted #00A8F7";
     return "1px dotted rgba(250, 204, 21, 1)";
 }
 
