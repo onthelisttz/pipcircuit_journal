@@ -13,6 +13,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock3,
   Eye,
   EyeOff,
   Eraser,
@@ -855,6 +856,9 @@ function MarkerTimestampPopover({
   const maxMonth = max ? utcStartOfMonth(max.getTime()) : null;
   const canGoPrev = !minMonth || visibleMonth.getTime() > minMonth.getTime();
   const canGoNext = !maxMonth || visibleMonth.getTime() < maxMonth.getTime();
+  const timeControlDate = new Date(parsedTimestamp?.timestamp ?? tempTimestamp);
+  const timeControlValue = `${pad(timeControlDate.getUTCHours())}:${pad(timeControlDate.getUTCMinutes())}`;
+  const timeInputRef = useRef<HTMLInputElement | null>(null);
 
   const isDateSelectable = (day: Date) => {
     const key = toUtcDateInputValue(day.getTime());
@@ -878,6 +882,27 @@ function MarkerTimestampPopover({
     );
     setTempTimestamp(nextTimestamp);
     setVisibleMonth(utcStartOfMonth(nextTimestamp));
+    setTimestampText(formatMarkerTimestampInput(nextTimestamp));
+  };
+
+  const updateTimeSelection = (nextTime: string) => {
+    const match = nextTime.match(/^(\d{2}):(\d{2})$/);
+    if (!match) return;
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return;
+
+    const base = new Date(parsedTimestamp?.timestamp ?? tempTimestamp);
+    const nextTimestamp = Date.UTC(
+      base.getUTCFullYear(),
+      base.getUTCMonth(),
+      base.getUTCDate(),
+      hours,
+      minutes,
+      0,
+      0
+    );
+    setTempTimestamp(nextTimestamp);
     setTimestampText(formatMarkerTimestampInput(nextTimestamp));
   };
 
@@ -909,36 +934,66 @@ function MarkerTimestampPopover({
           <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Date and time (UTC)
           </label>
-          <input
-            type="text"
-            value={timestampText}
-            onChange={(e) => {
-              const next = e.target.value;
-              setTimestampText(next);
-              const parsed = parseMarkerTimestampInput(next);
-              if (
-                parsed &&
-                (!min || parsed.timestamp >= min.getTime()) &&
-                (!max || parsed.timestamp <= max.getTime())
-              ) {
-                setTempTimestamp(parsed.timestamp);
-                setVisibleMonth(utcStartOfMonth(parsed.timestamp));
-              }
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter") return;
-              event.preventDefault();
-              if (!isApplyEnabled || parsedTimestamp == null) return;
-              onChange(parsedTimestamp.timestamp);
-              onClose();
-            }}
-            placeholder="YYYY-MM-DD HH:mm"
-            autoComplete="off"
-            spellCheck={false}
-            className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60"
-            aria-label="Marker date and time"
-            aria-invalid={dateInputError ? "true" : "false"}
-          />
+          <div className="relative">
+            <input
+              type="text"
+              value={timestampText}
+              onChange={(e) => {
+                const next = e.target.value;
+                setTimestampText(next);
+                const parsed = parseMarkerTimestampInput(next);
+                if (
+                  parsed &&
+                  (!min || parsed.timestamp >= min.getTime()) &&
+                  (!max || parsed.timestamp <= max.getTime())
+                ) {
+                  setTempTimestamp(parsed.timestamp);
+                  setVisibleMonth(utcStartOfMonth(parsed.timestamp));
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                if (!isApplyEnabled || parsedTimestamp == null) return;
+                onChange(parsedTimestamp.timestamp);
+                onClose();
+              }}
+              placeholder="YYYY-MM-DD HH:mm"
+              autoComplete="off"
+              spellCheck={false}
+              className="h-9 w-full rounded-md border border-border bg-background px-3 pr-10 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60"
+              aria-label="Marker date and time"
+              aria-invalid={dateInputError ? "true" : "false"}
+            />
+            <input
+              ref={timeInputRef}
+              type="time"
+              value={timeControlValue}
+              onChange={(event) => updateTimeSelection(event.target.value)}
+              step={60}
+              className="pointer-events-none absolute right-2 top-1/2 h-0 w-0 -translate-y-1/2 opacity-0"
+              tabIndex={-1}
+              aria-label="Marker time"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const input = timeInputRef.current;
+                if (!input) return;
+                if (typeof input.showPicker === "function") {
+                  input.showPicker();
+                } else {
+                  input.focus();
+                  input.click();
+                }
+              }}
+              className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+              title="Select marker time"
+              aria-label="Select marker time"
+            >
+              <Clock3 className="h-3.5 w-3.5" />
+            </button>
+          </div>
           <p className={`mt-1 text-[10px] ${dateInputError ? "text-destructive" : "text-muted-foreground"}`}>
             {dateInputError ?? ""}
           </p>
