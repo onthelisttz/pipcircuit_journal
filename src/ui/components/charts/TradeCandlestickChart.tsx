@@ -691,14 +691,14 @@ type TimeGuideOverlayLine = {
 
 function getVerticalGuideBorder(kind: TimeGuideOverlayLine["kind"]): string {
     if (kind === "daily") return "1px dashed rgba(148, 163, 184, 0.82)";
-    if (kind === "marker") return "1.5px dotted #00A8F7";
+    if (kind === "marker") return "2px dotted #00A8F7";
     return "1px dotted rgba(250, 204, 21, 1)";
 }
 
 function getVerticalGuideFilter(kind: TimeGuideOverlayLine["kind"]): string | undefined {
     if (kind === "daily") return undefined;
     if (kind === "marker") return "drop-shadow(0 0 3px rgba(56, 189, 248, 0.9))";
-    return "drop-shadow(0 0 4px rgba(250, 204, 21, 0.75))";
+    return "drop-shadow(0 0 3px rgba(250, 204, 21, 0.75))";
 }
 
 function VerticalGuideLine({
