@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Trade, ChartTimeframe } from "@domain/entities";
-import { ChevronLeft, ChevronRight, Eye, EyeOff, Pause, Play, RotateCcw, SkipBack, SkipForward, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, EyeOff, LocateFixed, Pause, Play, RotateCcw, SkipBack, SkipForward, Trash2, X } from "lucide-react";
 import { TradeCandlestickChart } from "./TradeCandlestickChart";
 import { ProfitTimelineChart } from "./ProfitTimelineChart";
 import { TimeframeSelector } from "./TimeframeSelector";
@@ -123,6 +123,7 @@ export function TradeChartView({
     const [showMFE, setShowMFE] = useState(true);
     const [showRiskReward, setShowRiskReward] = useState(true);
     const [showRiskRewardLabels, setShowRiskRewardLabels] = useState(true);
+    const [showOpenTimeMarker, setShowOpenTimeMarker] = useState(true);
     const [internalExpanded, setInternalExpanded] = useState(false);
     const [drawingTool, setDrawingTool] = useState<DrawingToolType | null>(null);
     const [continuousDrawingEnabled, setContinuousDrawingEnabled] = useState(() => {
@@ -793,6 +794,11 @@ export function TradeChartView({
         [data.length, isReplayMode]
     );
 
+    const locateOpenTimeMarker = useCallback(() => {
+        if (tradeDisplayOpenTimestamp == null) return;
+        candlestickChartRef.current?.scrollToTimestamp(tradeDisplayOpenTimestamp);
+    }, [tradeDisplayOpenTimestamp]);
+
     const chartContent = (hideTimeframeInToolbar = false) => (
         <div className="flex min-h-0 flex-1 flex-col">
             <div
@@ -897,6 +903,33 @@ export function TradeChartView({
                             disabled={isLoading}
                             compact
                         />
+                        {viewMode === "chart" && tradeDisplayOpenTimestamp != null ? (
+                            <div className="flex h-7 items-center gap-1 rounded-md border border-border px-1.5 py-0.5">
+                                <label
+                                    className="flex cursor-pointer items-center"
+                                    title="Show trade open time marker"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={showOpenTimeMarker}
+                                        onChange={(event) => setShowOpenTimeMarker(event.target.checked)}
+                                        className="h-3.5 w-3.5 rounded border-border accent-primary"
+                                        disabled={isLoading}
+                                    />
+                                    <span className="sr-only">Show trade open time marker</span>
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={locateOpenTimeMarker}
+                                    disabled={isLoading}
+                                    className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                    title="Scroll to trade open time"
+                                    aria-label="Scroll to trade open time"
+                                >
+                                    <LocateFixed className="h-3 w-3" />
+                                </button>
+                            </div>
+                        ) : null}
                         {(() => {
                             const showDrawControls =
                                 drawingTool === "Brush" ||
@@ -1144,6 +1177,8 @@ export function TradeChartView({
                         replayPlacementTimestamp={replayPlacementTimestamp}
                         onReplayPlacementPreviewChange={setReplayPlacementTimestamp}
                         onReplayPlacementSelect={startReplayAtTimestamp}
+                        showMarker={viewMode === "chart" && showOpenTimeMarker}
+                        markerTimestamp={tradeDisplayOpenTimestamp ?? undefined}
                     />
                 )}
                 {showProfitTimeline && (

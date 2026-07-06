@@ -1403,6 +1403,52 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         return liveTradeOverlayItems.some((item) => Math.abs(item.y - crosshairQuickAction.y) <= 14);
     }, [crosshairQuickAction, liveTradeOverlayItems]);
 
+    const getMarkerCoordinate = useCallback((timestamp: number): number | null => {
+        const timeScale = chartRef.current?.timeScale();
+        if (!timeScale) return null;
+
+        const exactX = timeScale.timeToCoordinate((timestamp / 1000) as Time);
+        if (exactX != null && Number.isFinite(exactX)) {
+            return exactX;
+        }
+
+        if (data.length === 0) return null;
+        const firstTimestamp = data[0]?.timestamp ?? null;
+        const lastTimestamp = data[data.length - 1]?.timestamp ?? null;
+        if (
+            firstTimestamp == null ||
+            lastTimestamp == null ||
+            timestamp < firstTimestamp ||
+            timestamp > lastTimestamp
+        ) {
+            return null;
+        }
+
+        let left = 0;
+        let right = data.length - 1;
+        while (left < right) {
+            const mid = Math.floor((left + right) / 2);
+            if ((data[mid]?.timestamp ?? 0) < timestamp) {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+
+        const nextBar = data[left];
+        const previousBar = left > 0 ? data[left - 1] : null;
+        const nearest =
+            previousBar &&
+            nextBar &&
+            Math.abs(previousBar.timestamp - timestamp) <= Math.abs(nextBar.timestamp - timestamp)
+                ? previousBar
+                : nextBar;
+        if (!nearest) return null;
+
+        const nearestX = timeScale.timeToCoordinate((nearest.timestamp / 1000) as Time);
+        return nearestX != null && Number.isFinite(nearestX) ? nearestX : null;
+    }, [data]);
+
     const refreshTimeGuideOverlay = useCallback(() => {
         const chart = chartRef.current;
 
@@ -1447,7 +1493,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
 
         let markerX: number | null = null;
         if (showMarker && markerTimestamp != null) {
-            const x = timeScale.timeToCoordinate((markerTimestamp / 1000) as Time);
+            const x = getMarkerCoordinate(markerTimestamp);
             if (x != null && Number.isFinite(x) && (!clipTimeGuideOverlayToPane || (x >= 0 && x <= paneSize.width))) {
                 nextVerticalLines.push({
                     id: "marker-user",
@@ -1472,7 +1518,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         setTimeGuideOverlay((current) =>
             sameTimeGuideOverlay(current, nextOverlay) ? current : nextOverlay
         );
-    }, [clipTimeGuideOverlayToPane, computedTimeGuides, showMarker, markerTimestamp]);
+    }, [clipTimeGuideOverlayToPane, computedTimeGuides, getMarkerCoordinate, showMarker, markerTimestamp]);
 
     const refreshCandleCountdownOverlay = useCallback(() => {
         if (!useCustomLivePriceStack || candleCountdownPrice == null) {

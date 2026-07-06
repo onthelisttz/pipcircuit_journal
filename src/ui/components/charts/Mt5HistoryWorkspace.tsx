@@ -109,8 +109,7 @@ const FETCH_THROTTLE_MS = 160;
 const REPLAY_RIGHT_OFFSET_BARS = 12;
 const HISTORY_TIME_GUIDES_KEY = "chartTimeGuides_history";
 const CHART_CONTINUOUS_DRAWING_KEY = "chartContinuousDrawingEnabled_v1";
-const CHART_MARKER_ENABLED_KEY = "chartMarkerEnabled_v1";
-const CHART_MARKER_TIMESTAMP_KEY = "chartMarkerTimestamp_v1";
+const CHART_MARKER_STORAGE_PREFIX = "chartMarker_v2";
 const MAX_RENDERED_BARS: Record<ChartTimeframe, number> = {
   M1: 15_000,
   M5: 30_000,
@@ -213,6 +212,69 @@ function toDateInputValue(timestamp: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+function toUtcDateInputValue(timestamp: number): string {
+  const date = new Date(timestamp);
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+}
+
+function formatMarkerTimestampInput(timestamp: number): string {
+  const date = new Date(timestamp);
+  return `${toUtcDateInputValue(timestamp)} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+}
+
+function parseMarkerTimestampInput(value: string): {
+  dateKey: string;
+  hours: number;
+  minutes: number;
+  timestamp: number;
+} | null {
+  const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/);
+  if (!match) return null;
+
+  const [, yearText, monthText, dayText, hourText, minuteText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hours = Number(hourText);
+  const minutes = Number(minuteText);
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return null;
+  }
+
+  const timestamp = Date.UTC(year, month - 1, day, hours, minutes, 0, 0);
+  const normalizedDate = toUtcDateInputValue(timestamp);
+  if (normalizedDate !== `${yearText}-${monthText}-${dayText}`) return null;
+
+  return { dateKey: normalizedDate, hours, minutes, timestamp };
+}
+
+function utcStartOfMonth(timestamp: number): Date {
+  const date = new Date(timestamp);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function addUtcMonths(month: Date, amount: number): Date {
+  return new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() + amount, 1));
+}
+
+function buildUtcMonthDays(month: Date): Date[] {
+  const year = month.getUTCFullYear();
+  const monthIndex = month.getUTCMonth();
+  const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+  return Array.from(
+    { length: lastDay },
+    (_, index) => new Date(Date.UTC(year, monthIndex, index + 1))
+  );
+}
+
 function parseDateInputValue(value: string): Date | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
 
@@ -254,6 +316,22 @@ function timeframeToSeconds(timeframe?: ChartTimeframe): number {
     case "D1": return 24 * 60 * 60;
     default: return 60;
   }
+}
+
+function alignTimestampToTimeframe(timestamp: number, timeframe?: ChartTimeframe): number {
+  const ms = timeframeToSeconds(timeframe) * 1000;
+  return Math.floor(timestamp / ms) * ms;
+}
+
+function clampTimestampToSummary(timestamp: number, summary: TimeframeSummary): number {
+  return Math.max(summary.from, Math.min(summary.to, timestamp));
+}
+
+function makeMarkerStorageKey(storageScopeKey: string | undefined, symbol: string): string | null {
+  const normalizedScope = storageScopeKey?.trim() || "default";
+  const normalizedSymbol = symbol.trim();
+  if (!normalizedSymbol) return null;
+  return `${CHART_MARKER_STORAGE_PREFIX}:${normalizedScope}:${normalizedSymbol}`;
 }
 
 function sortTimeframes(timeframes: TimeframeSummary[]): TimeframeSummary[] {
@@ -480,6 +558,7 @@ interface Mt5HistoryWorkspaceProps {
   isActive?: boolean;
   arePageTabsVisible?: boolean;
   onTogglePageTabsVisibility?: () => void;
+  storageScopeKey?: string;
   /** Hide drawing tools & action buttons for compact multi-pane layouts */
   compact?: boolean;
 }
@@ -730,33 +809,86 @@ function MarkerTimestampPopover({
   onClose,
   min,
   max,
+  availableDateSet,
+  onVisibleMonthChange,
 }: {
   value: number;
   onChange: (timestamp: number) => void;
   onClose: () => void;
   min?: Date;
   max?: Date;
+  availableDateSet?: Set<string> | null;
+  onVisibleMonthChange?: (range: LoadedRange) => void;
 }) {
-  const initialDate = new Date(value);
-  const [dateText, setDateText] = useState(() => toDateInputValue(value));
-  const [timeText, setTimeText] = useState(() => format(initialDate, "HH:mm"));
-  const [tempDate, setTempDate] = useState<Date>(initialDate);
-  const [visibleMonth, setVisibleMonth] = useState<Date>(startOfMonth(initialDate));
+  const [timestampText, setTimestampText] = useState(() => formatMarkerTimestampInput(value));
+  const [tempTimestamp, setTempTimestamp] = useState(value);
+  const [visibleMonth, setVisibleMonth] = useState<Date>(utcStartOfMonth(value));
 
-  const parsedDate = parseDateInputValue(dateText);
-  const [hours, minutes] = timeText.split(":").map(Number);
-  const isTimeValid = timeText.length === 5 && !isNaN(hours) && !isNaN(minutes) && hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
-  const isApplyEnabled = parsedDate !== null && isTimeValid;
+  const parsedTimestamp = parseMarkerTimestampInput(timestampText);
+  const minDateValue = min ? toUtcDateInputValue(min.getTime()) : null;
+  const maxDateValue = max ? toUtcDateInputValue(max.getTime()) : null;
+  const isDateInRange =
+    parsedTimestamp !== null &&
+    (!min || parsedTimestamp.timestamp >= min.getTime()) &&
+    (!max || parsedTimestamp.timestamp <= max.getTime());
+  const hasBarsOnDate =
+    parsedTimestamp !== null &&
+    (!availableDateSet || availableDateSet.has(parsedTimestamp.dateKey));
+  const dateInputError =
+    timestampText.trim().length === 0
+      ? "Enter a timestamp."
+      : parsedTimestamp === null
+        ? "Use YYYY-MM-DD HH:mm."
+        : !isDateInRange && minDateValue && maxDateValue
+          ? `Date must be between ${minDateValue} and ${maxDateValue}.`
+          : !isDateInRange
+            ? "Timestamp is outside the available range."
+            : !hasBarsOnDate
+              ? "No bars found for that date."
+              : null;
+  const isApplyEnabled = parsedTimestamp !== null && !dateInputError;
 
-  const monthDays = useMemo(() => buildMonthDays(visibleMonth), [visibleMonth]);
-  const firstWeekday = new Date(visibleMonth).getDay();
+  const monthDays = useMemo(() => buildUtcMonthDays(visibleMonth), [visibleMonth]);
+  const firstWeekday = visibleMonth.getUTCDay();
   const today = new Date();
+  const minMonth = min ? utcStartOfMonth(min.getTime()) : null;
+  const maxMonth = max ? utcStartOfMonth(max.getTime()) : null;
+  const canGoPrev = !minMonth || visibleMonth.getTime() > minMonth.getTime();
+  const canGoNext = !maxMonth || visibleMonth.getTime() < maxMonth.getTime();
+
+  const isDateSelectable = (day: Date) => {
+    const key = toUtcDateInputValue(day.getTime());
+    if (minDateValue && key < minDateValue) return false;
+    if (maxDateValue && key > maxDateValue) return false;
+    return !availableDateSet || availableDateSet.has(key);
+  };
 
   const updateDateSelection = (nextDate: Date) => {
-    setTempDate(nextDate);
-    setVisibleMonth(startOfMonth(nextDate));
-    setDateText(toDateInputValue(nextDate.getTime()));
+    if (!isDateSelectable(nextDate)) return;
+    const current = parseMarkerTimestampInput(timestampText);
+    const fallback = new Date(tempTimestamp);
+    const nextTimestamp = Date.UTC(
+      nextDate.getUTCFullYear(),
+      nextDate.getUTCMonth(),
+      nextDate.getUTCDate(),
+      current?.hours ?? fallback.getUTCHours(),
+      current?.minutes ?? fallback.getUTCMinutes(),
+      0,
+      0
+    );
+    setTempTimestamp(nextTimestamp);
+    setVisibleMonth(utcStartOfMonth(nextTimestamp));
+    setTimestampText(formatMarkerTimestampInput(nextTimestamp));
   };
+
+  useEffect(() => {
+    if (!onVisibleMonthChange) return;
+    const from = visibleMonth.getTime();
+    const to = new Date(
+      Date.UTC(visibleMonth.getUTCFullYear(), visibleMonth.getUTCMonth() + 1, 0, 23, 59, 59, 999)
+    ).getTime();
+    onVisibleMonthChange({ from, to });
+  }, [onVisibleMonthChange, visibleMonth]);
 
   return (
     <div className="fixed inset-x-2 bottom-2 top-16 z-30 overflow-y-auto rounded-xl border border-border bg-popover p-3 shadow-2xl animate-in fade-in-0 zoom-in-95 sm:absolute sm:inset-auto sm:left-0 sm:top-full sm:mt-2 sm:w-[320px] sm:max-w-[calc(100vw-2rem)] sm:p-4">
@@ -772,65 +904,63 @@ function MarkerTimestampPopover({
         </button>
       </div>
 
-      <div className="mb-3 flex items-start gap-2">
-        <div className="flex-1">
+      <div className="mb-3">
+        <div>
           <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Date
+            Date and time (UTC)
           </label>
           <input
             type="text"
-            value={dateText}
+            value={timestampText}
             onChange={(e) => {
               const next = e.target.value;
-              setDateText(next);
-              const parsed = parseDateInputValue(next);
-              if (parsed) {
-                setTempDate(parsed);
-                setVisibleMonth(startOfMonth(parsed));
+              setTimestampText(next);
+              const parsed = parseMarkerTimestampInput(next);
+              if (
+                parsed &&
+                (!min || parsed.timestamp >= min.getTime()) &&
+                (!max || parsed.timestamp <= max.getTime())
+              ) {
+                setTempTimestamp(parsed.timestamp);
+                setVisibleMonth(utcStartOfMonth(parsed.timestamp));
               }
             }}
-            placeholder="YYYY-MM-DD"
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              if (!isApplyEnabled || parsedTimestamp == null) return;
+              onChange(parsedTimestamp.timestamp);
+              onClose();
+            }}
+            placeholder="YYYY-MM-DD HH:mm"
             autoComplete="off"
             spellCheck={false}
             className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60"
-            aria-label="Marker date"
+            aria-label="Marker date and time"
+            aria-invalid={dateInputError ? "true" : "false"}
           />
-          {parsedDate === null && dateText.length > 0 && (
-            <p className="mt-1 text-[10px] text-destructive">Use YYYY-MM-DD.</p>
-          )}
-        </div>
-        <div className="w-28">
-          <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Time (UTC)
-          </label>
-          <input
-            type="text"
-            value={timeText}
-            onChange={(e) => setTimeText(e.target.value)}
-            placeholder="HH:mm"
-            autoComplete="off"
-            spellCheck={false}
-            className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60"
-            aria-label="Marker time"
-          />
+          <p className={`mt-1 text-[10px] ${dateInputError ? "text-destructive" : "text-muted-foreground"}`}>
+            {dateInputError ?? ""}
+          </p>
         </div>
       </div>
 
       <div className="mb-3 flex items-center justify-between gap-2">
         <button
           type="button"
-          onClick={() => setVisibleMonth((prev) => addMonths(prev, -1))}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onClick={() => setVisibleMonth((prev) => addUtcMonths(prev, -1))}
+          disabled={!canGoPrev}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="Previous month"
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
         <div className="flex items-center gap-2">
           <select
-            value={visibleMonth.getMonth()}
+            value={visibleMonth.getUTCMonth()}
             onChange={(event) => {
               setVisibleMonth(
-                new Date(visibleMonth.getFullYear(), Number(event.target.value), 1)
+                new Date(Date.UTC(visibleMonth.getUTCFullYear(), Number(event.target.value), 1))
               );
             }}
             className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
@@ -843,10 +973,10 @@ function MarkerTimestampPopover({
             ))}
           </select>
           <select
-            value={visibleMonth.getFullYear()}
+            value={visibleMonth.getUTCFullYear()}
             onChange={(event) => {
               setVisibleMonth(
-                new Date(Number(event.target.value), visibleMonth.getMonth(), 1)
+                new Date(Date.UTC(Number(event.target.value), visibleMonth.getUTCMonth(), 1))
               );
             }}
             className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
@@ -854,10 +984,10 @@ function MarkerTimestampPopover({
           >
             {(min && max
               ? Array.from(
-                  { length: Math.max(1, max.getFullYear() - min.getFullYear() + 1) },
-                  (_, index) => max.getFullYear() - index
+                  { length: Math.max(1, max.getUTCFullYear() - min.getUTCFullYear() + 1) },
+                  (_, index) => max.getUTCFullYear() - index
                 )
-              : Array.from({ length: 21 }, (_, i) => visibleMonth.getFullYear() - 10 + i)
+              : Array.from({ length: 21 }, (_, i) => visibleMonth.getUTCFullYear() - 10 + i)
             ).map((year) => (
               <option key={year} value={year}>
                 {year}
@@ -867,8 +997,9 @@ function MarkerTimestampPopover({
         </div>
         <button
           type="button"
-          onClick={() => setVisibleMonth((prev) => addMonths(prev, 1))}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onClick={() => setVisibleMonth((prev) => addUtcMonths(prev, 1))}
+          disabled={!canGoNext}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="Next month"
         >
           <ChevronRight className="h-4 w-4" />
@@ -884,24 +1015,28 @@ function MarkerTimestampPopover({
           <span key={`blank-${index}`} />
         ))}
         {monthDays.map((day) => {
-          const isSelected = isSameDay(day, tempDate);
-          const isToday = isSameDay(day, today);
+          const isDisabled = !isDateSelectable(day);
+          const dayKey = toUtcDateInputValue(day.getTime());
+          const isSelected = dayKey === toUtcDateInputValue(tempTimestamp);
+          const isToday = dayKey === toUtcDateInputValue(today.getTime());
           return (
             <button
               key={day.toISOString()}
               type="button"
+              disabled={isDisabled}
               onClick={() => updateDateSelection(day)}
               className={[
                 "h-8 w-8 rounded-full text-xs transition-colors",
                 isSelected
                   ? "bg-primary font-semibold text-primary-foreground"
                   : "hover:bg-accent/60",
+                isDisabled ? "cursor-not-allowed opacity-35 hover:bg-transparent" : "",
                 isToday ? "ring-1 ring-primary/70 ring-offset-1 ring-offset-popover" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
             >
-              {day.getDate()}
+              {day.getUTCDate()}
             </button>
           );
         })}
@@ -919,17 +1054,8 @@ function MarkerTimestampPopover({
           type="button"
           disabled={!isApplyEnabled}
           onClick={() => {
-            if (parsedDate == null) return;
-            const ts = Date.UTC(
-              parsedDate.getFullYear(),
-              parsedDate.getMonth(),
-              parsedDate.getDate(),
-              hours,
-              minutes,
-              0,
-              0
-            );
-            onChange(ts);
+            if (parsedTimestamp == null) return;
+            onChange(parsedTimestamp.timestamp);
             onClose();
           }}
           className="rounded-lg bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
@@ -954,6 +1080,7 @@ export function Mt5HistoryWorkspace({
   isActive = true,
   arePageTabsVisible = true,
   onTogglePageTabsVisibility,
+  storageScopeKey,
   compact = false,
 }: Mt5HistoryWorkspaceProps) {
   const { user } = useAuth();
@@ -983,6 +1110,10 @@ export function Mt5HistoryWorkspace({
   const lastVisibleRangeRef = useRef<{ from: number; to: number } | null>(null);
   const lastRequestedPrevRangeKeyRef = useRef("");
   const lastRequestedNextRangeKeyRef = useRef("");
+  const markerStorageKeyRef = useRef<string | null>(null);
+  const markerPersistReadyRef = useRef(false);
+  const markerDateAvailabilityCacheRef = useRef<Map<string, Set<string>>>(new Map());
+  const markerMonthRequestKeyRef = useRef("");
 
   const [meta, setMeta] = useState<MetaResponse | null>(null);
   const [historyRootPath, setHistoryRootPath] = useState("");
@@ -1021,27 +1152,12 @@ export function Mt5HistoryWorkspace({
     readStoredTimeGuideSettings(HISTORY_TIME_GUIDES_KEY)
   );
   const [markerEnabled, setMarkerEnabled] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return window.localStorage.getItem(CHART_MARKER_ENABLED_KEY) === "true";
-    } catch { return false; }
+    return false;
   });
   const [markerTimestamp, setMarkerTimestamp] = useState(() => {
-    if (typeof window === "undefined") return Date.now();
-    try {
-      const raw = window.localStorage.getItem(CHART_MARKER_TIMESTAMP_KEY);
-      if (!raw) return Date.now();
-      const parsed = Number(raw);
-      return Number.isFinite(parsed) ? parsed : Date.now();
-    } catch { return Date.now(); }
+    return Date.now();
   });
   const [isMarkerTimestampOpen, setIsMarkerTimestampOpen] = useState(false);
-
-  useEffect(() => {
-    const seconds = timeframeToSeconds(timeframe);
-    const ms = seconds * 1000;
-    setMarkerTimestamp((prev) => Math.floor(prev / ms) * ms);
-  }, [timeframe]);
 
   const [isReplayMode, setIsReplayMode] = useState(false);
   const [isReplayPlacementMode, setIsReplayPlacementMode] = useState(false);
@@ -1154,6 +1270,11 @@ export function Mt5HistoryWorkspace({
     () => availableTimeframes.find((item) => item.timeframe === timeframe) ?? null,
     [availableTimeframes, timeframe]
   );
+  const markerStorageKey = useMemo(
+    () => makeMarkerStorageKey(storageScopeKey, symbol),
+    [storageScopeKey, symbol]
+  );
+  const [markerCalendarDateSet, setMarkerCalendarDateSet] = useState<Set<string> | null>(null);
   const replayMinDate = selectedTimeframe ? toDateInputValue(selectedTimeframe.from) : "";
   const replayMaxDate = selectedTimeframe ? toDateInputValue(selectedTimeframe.to) : "";
   const drawingFillRgba = useMemo(
@@ -1275,14 +1396,67 @@ export function Mt5HistoryWorkspace({
   }, [continuousDrawingEnabled]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(CHART_MARKER_ENABLED_KEY, markerEnabled ? "true" : "false");
-  }, [markerEnabled]);
+    markerPersistReadyRef.current = false;
+    markerStorageKeyRef.current = markerStorageKey;
+    if (typeof window === "undefined" || !markerStorageKey || !selectedTimeframe) {
+      return;
+    }
+
+    let nextEnabled = false;
+    let nextTimestamp = alignTimestampToTimeframe(
+      selectedTimeframe.to,
+      selectedTimeframe.timeframe
+    );
+
+    try {
+      const raw = window.localStorage.getItem(markerStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { enabled?: unknown; timestamp?: unknown };
+        if (typeof parsed.enabled === "boolean") {
+          nextEnabled = parsed.enabled;
+        }
+        if (typeof parsed.timestamp === "number" && Number.isFinite(parsed.timestamp)) {
+          nextTimestamp = alignTimestampToTimeframe(
+            clampTimestampToSummary(parsed.timestamp, selectedTimeframe),
+            selectedTimeframe.timeframe
+          );
+        }
+      }
+    } catch {
+      // ignore malformed marker settings
+    }
+
+    setMarkerEnabled(nextEnabled);
+    setMarkerTimestamp(nextTimestamp);
+
+    const readyTimer = window.setTimeout(() => {
+      if (markerStorageKeyRef.current === markerStorageKey) {
+        markerPersistReadyRef.current = true;
+      }
+    }, 0);
+
+    return () => window.clearTimeout(readyTimer);
+  }, [markerStorageKey, selectedTimeframe]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(CHART_MARKER_TIMESTAMP_KEY, String(markerTimestamp));
-  }, [markerTimestamp]);
+    if (
+      typeof window === "undefined" ||
+      !markerStorageKey ||
+      !selectedTimeframe ||
+      !markerPersistReadyRef.current
+    ) {
+      return;
+    }
+
+    const nextTimestamp = alignTimestampToTimeframe(
+      clampTimestampToSummary(markerTimestamp, selectedTimeframe),
+      selectedTimeframe.timeframe
+    );
+    window.localStorage.setItem(
+      markerStorageKey,
+      JSON.stringify({ enabled: markerEnabled, timestamp: nextTimestamp })
+    );
+  }, [markerEnabled, markerStorageKey, markerTimestamp, selectedTimeframe]);
 
   const goToMarkerRef = useRef<() => void>(() => {});
   goToMarkerRef.current = () => {
@@ -2091,7 +2265,7 @@ export function Mt5HistoryWorkspace({
   }, [displayBars.length, isReplayMode]);
 
   const requestBars = useCallback(
-    async (range: LoadedRange): Promise<ChartBar[]> => {
+    async (range: LoadedRange, options?: { limit?: number }): Promise<ChartBar[]> => {
       if (!symbol || !selectedTimeframe) return [];
 
       const params = new URLSearchParams({
@@ -2099,7 +2273,7 @@ export function Mt5HistoryWorkspace({
         timeframe: selectedTimeframe.timeframe,
         from: String(range.from),
         to: String(range.to),
-        limit: String(LOAD_LIMIT),
+        limit: String(options?.limit ?? LOAD_LIMIT),
       });
       if (historyRootPath) {
         params.set("rootPath", historyRootPath);
@@ -2119,6 +2293,47 @@ export function Mt5HistoryWorkspace({
       return payload.bars;
     },
     [historyRootPath, resolvedMt5ServiceUrl, selectedTimeframe, symbol]
+  );
+
+  const loadMarkerCalendarMonth = useCallback(
+    async (range: LoadedRange) => {
+      if (!symbol || !selectedTimeframe) {
+        setMarkerCalendarDateSet(null);
+        return;
+      }
+
+      const clippedRange: LoadedRange = {
+        from: Math.max(selectedTimeframe.from, range.from),
+        to: Math.min(selectedTimeframe.to, range.to),
+      };
+      if (clippedRange.to < clippedRange.from) {
+        setMarkerCalendarDateSet(new Set());
+        return;
+      }
+
+      const cacheKey = `${symbol}|${selectedTimeframe.timeframe}|${clippedRange.from}|${clippedRange.to}`;
+      markerMonthRequestKeyRef.current = cacheKey;
+      const cached = markerDateAvailabilityCacheRef.current.get(cacheKey);
+      if (cached) {
+        setMarkerCalendarDateSet(cached);
+        return;
+      }
+
+      setMarkerCalendarDateSet(null);
+      try {
+        const monthBars = await requestBars(clippedRange, { limit: 100_000 });
+        if (markerMonthRequestKeyRef.current !== cacheKey) return;
+        const dateSet = new Set<string>();
+        monthBars.forEach((bar) => dateSet.add(toUtcDateInputValue(bar.timestamp)));
+        markerDateAvailabilityCacheRef.current.set(cacheKey, dateSet);
+        setMarkerCalendarDateSet(dateSet);
+      } catch {
+        if (markerMonthRequestKeyRef.current === cacheKey) {
+          setMarkerCalendarDateSet(null);
+        }
+      }
+    },
+    [requestBars, selectedTimeframe, symbol]
   );
 
   const loadWindow = useCallback(
@@ -2821,6 +3036,8 @@ ref={datePickerRef}>
             onClose={() => setIsMarkerTimestampOpen(false)}
             min={selectedTimeframe ? new Date(selectedTimeframe.from) : undefined}
             max={selectedTimeframe ? new Date(selectedTimeframe.to) : undefined}
+            availableDateSet={markerCalendarDateSet}
+            onVisibleMonthChange={loadMarkerCalendarMonth}
           />
         )}
       </div>

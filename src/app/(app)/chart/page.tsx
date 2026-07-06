@@ -534,6 +534,7 @@ export default function ChartPage() {
       return (
         <Mt5HistoryWorkspace
           key={pane.id}
+          storageScopeKey={pane.id}
           onAvailabilityTextChange={index === 0 ? setHistoryAvailabilityText : undefined}
           initialSymbol={pane.symbol || undefined}
           initialGoToDate={pane.goToDate || undefined}
