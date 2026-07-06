@@ -1008,10 +1008,14 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         width: number | null;
         height: number | null;
         x: number | null;
+        skipFrom: number | null;
+        skipTo: number | null;
     }>({
         width: null,
         height: null,
         x: null,
+        skipFrom: null,
+        skipTo: null,
     });
     const [replayPlacementOverlay, setReplayPlacementOverlay] = useState<{
         width: number | null;
@@ -1403,50 +1407,69 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         return liveTradeOverlayItems.some((item) => Math.abs(item.y - crosshairQuickAction.y) <= 14);
     }, [crosshairQuickAction, liveTradeOverlayItems]);
 
-    const getMarkerCoordinate = useCallback((timestamp: number): number | null => {
+    const getMarkerRenderInfo = useCallback((timestamp: number): {
+        x: number;
+        skipFrom: number | null;
+        skipTo: number | null;
+    } | null => {
         const timeScale = chartRef.current?.timeScale();
+        const series = seriesRef.current;
         if (!timeScale) return null;
 
-        const exactX = timeScale.timeToCoordinate((timestamp / 1000) as Time);
-        if (exactX != null && Number.isFinite(exactX)) {
-            return exactX;
-        }
+        let x = timeScale.timeToCoordinate((timestamp / 1000) as Time);
+        let nearestBar: ChartBar | null = null;
 
-        if (data.length === 0) return null;
-        const firstTimestamp = data[0]?.timestamp ?? null;
-        const lastTimestamp = data[data.length - 1]?.timestamp ?? null;
-        if (
-            firstTimestamp == null ||
-            lastTimestamp == null ||
-            timestamp < firstTimestamp ||
-            timestamp > lastTimestamp
-        ) {
-            return null;
-        }
+        if (data.length > 0) {
+            const firstTimestamp = data[0]?.timestamp ?? null;
+            const lastTimestamp = data[data.length - 1]?.timestamp ?? null;
+            const isInsideDataRange =
+                firstTimestamp != null &&
+                lastTimestamp != null &&
+                timestamp >= firstTimestamp &&
+                timestamp <= lastTimestamp;
+            if (isInsideDataRange) {
+                let left = 0;
+                let right = data.length - 1;
+                while (left < right) {
+                    const mid = Math.floor((left + right) / 2);
+                    if ((data[mid]?.timestamp ?? 0) < timestamp) {
+                        left = mid + 1;
+                    } else {
+                        right = mid;
+                    }
+                }
 
-        let left = 0;
-        let right = data.length - 1;
-        while (left < right) {
-            const mid = Math.floor((left + right) / 2);
-            if ((data[mid]?.timestamp ?? 0) < timestamp) {
-                left = mid + 1;
-            } else {
-                right = mid;
+                const nextBar = data[left];
+                const previousBar = left > 0 ? data[left - 1] : null;
+                nearestBar =
+                    previousBar &&
+                    nextBar &&
+                    Math.abs(previousBar.timestamp - timestamp) <= Math.abs(nextBar.timestamp - timestamp)
+                        ? previousBar
+                        : nextBar ?? null;
             }
         }
 
-        const nextBar = data[left];
-        const previousBar = left > 0 ? data[left - 1] : null;
-        const nearest =
-            previousBar &&
-            nextBar &&
-            Math.abs(previousBar.timestamp - timestamp) <= Math.abs(nextBar.timestamp - timestamp)
-                ? previousBar
-                : nextBar;
-        if (!nearest) return null;
+        if (x == null || !Number.isFinite(x)) {
+            if (!nearestBar) return null;
 
-        const nearestX = timeScale.timeToCoordinate((nearest.timestamp / 1000) as Time);
-        return nearestX != null && Number.isFinite(nearestX) ? nearestX : null;
+            x = timeScale.timeToCoordinate((nearestBar.timestamp / 1000) as Time);
+            if (x == null || !Number.isFinite(x)) return null;
+        }
+
+        let skipFrom: number | null = null;
+        let skipTo: number | null = null;
+        if (nearestBar && series) {
+            const highY = series.priceToCoordinate(nearestBar.high);
+            const lowY = series.priceToCoordinate(nearestBar.low);
+            if (highY != null && lowY != null && Number.isFinite(highY) && Number.isFinite(lowY)) {
+                const padding = 3;
+                skipFrom = Math.max(0, Math.min(highY, lowY) - padding);
+                skipTo = Math.max(highY, lowY) + padding;
+            }
+        }
+
+        return { x, skipFrom, skipTo };
     }, [data]);
 
     const refreshTimeGuideOverlay = useCallback(() => {
@@ -1460,7 +1483,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                     ? current
                     : { width: null, height: null, verticalLines: [] }
             );
-            setMarkerOverlay({ width: null, height: null, x: null });
+            setMarkerOverlay({ width: null, height: null, x: null, skipFrom: null, skipTo: null });
             return;
         }
 
@@ -1472,7 +1495,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                     ? current
                     : { width: null, height: null, verticalLines: [] }
             );
-            setMarkerOverlay({ width: null, height: null, x: null });
+            setMarkerOverlay({ width: null, height: null, x: null, skipFrom: null, skipTo: null });
             return;
         }
 
@@ -1492,21 +1515,25 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         }
 
         let markerX: number | null = null;
+        let markerSkipFrom: number | null = null;
+        let markerSkipTo: number | null = null;
         if (showMarker && markerTimestamp != null) {
-            const x = getMarkerCoordinate(markerTimestamp);
-            if (x != null && Number.isFinite(x) && (!clipTimeGuideOverlayToPane || (x >= 0 && x <= paneSize.width))) {
-                nextVerticalLines.push({
-                    id: "marker-user",
-                    kind: "marker",
-                    x,
-                });
-                markerX = x;
+            const markerInfo = getMarkerRenderInfo(markerTimestamp);
+            if (
+                markerInfo &&
+                (!clipTimeGuideOverlayToPane || (markerInfo.x >= 0 && markerInfo.x <= paneSize.width))
+            ) {
+                markerX = markerInfo.x;
+                markerSkipFrom = markerInfo.skipFrom;
+                markerSkipTo = markerInfo.skipTo;
             }
         }
         setMarkerOverlay({
-            width: clipTimeGuideOverlayToPane ? paneSize.width : null,
-            height: clipTimeGuideOverlayToPane ? paneSize.height : null,
+            width: paneSize.width,
+            height: paneSize.height,
             x: markerX,
+            skipFrom: markerSkipFrom,
+            skipTo: markerSkipTo,
         });
 
         const nextOverlay = {
@@ -1518,7 +1545,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
         setTimeGuideOverlay((current) =>
             sameTimeGuideOverlay(current, nextOverlay) ? current : nextOverlay
         );
-    }, [clipTimeGuideOverlayToPane, computedTimeGuides, getMarkerCoordinate, showMarker, markerTimestamp]);
+    }, [clipTimeGuideOverlayToPane, computedTimeGuides, getMarkerRenderInfo, showMarker, markerTimestamp]);
 
     const refreshCandleCountdownOverlay = useCallback(() => {
         if (!useCustomLivePriceStack || candleCountdownPrice == null) {
@@ -5979,13 +6006,39 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                             : undefined
                     }
                 >
-                    <div
-                        className="absolute bottom-0 top-0"
-                        style={{
-                            left: `${markerOverlay.x}px`,
-                            borderLeft: "1px dotted rgba(56, 189, 248, 0.9)",
-                        }}
-                    />
+                    {markerOverlay.skipFrom != null && markerOverlay.skipTo != null ? (
+                        <>
+                            {markerOverlay.skipFrom > 0 ? (
+                                <div
+                                    className="absolute top-0"
+                                    style={{
+                                        left: `${markerOverlay.x}px`,
+                                        height: `${markerOverlay.skipFrom}px`,
+                                        borderLeft: "1px dotted rgba(56, 189, 248, 0.9)",
+                                    }}
+                                />
+                            ) : null}
+                            {markerOverlay.height != null && markerOverlay.skipTo < markerOverlay.height ? (
+                                <div
+                                    className="absolute bottom-0"
+                                    style={{
+                                        left: `${markerOverlay.x}px`,
+                                        top: `${markerOverlay.skipTo}px`,
+                                        height: `${markerOverlay.height - markerOverlay.skipTo}px`,
+                                        borderLeft: "1px dotted rgba(56, 189, 248, 0.9)",
+                                    }}
+                                />
+                            ) : null}
+                        </>
+                    ) : (
+                        <div
+                            className="absolute bottom-0 top-0"
+                            style={{
+                                left: `${markerOverlay.x}px`,
+                                borderLeft: "1px dotted rgba(56, 189, 248, 0.9)",
+                            }}
+                        />
+                    )}
                 </div>
             )}
         </div>
