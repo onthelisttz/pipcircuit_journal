@@ -653,12 +653,12 @@ function sameTimeGuideOverlay(
     left: {
         width: number | null;
         height: number | null;
-        verticalLines: Array<{ id: string; kind: "daily" | "session" | "marker"; x: number }>;
+        verticalLines: Array<TimeGuideOverlayLine>;
     },
     right: {
         width: number | null;
         height: number | null;
-        verticalLines: Array<{ id: string; kind: "daily" | "session" | "marker"; x: number }>;
+        verticalLines: Array<TimeGuideOverlayLine>;
     }
 ): boolean {
     if (left.width !== right.width || left.height !== right.height) return false;
@@ -670,9 +670,76 @@ function sameTimeGuideOverlay(
         if (a.id !== b.id || a.kind !== b.kind || Math.abs(a.x - b.x) > 0.5) {
             return false;
         }
+        if (
+            a.skipFrom !== b.skipFrom ||
+            a.skipTo !== b.skipTo
+        ) {
+            return false;
+        }
     }
 
     return true;
+}
+
+type TimeGuideOverlayLine = {
+    id: string;
+    kind: "daily" | "session" | "marker";
+    x: number;
+    skipFrom: number | null;
+    skipTo: number | null;
+};
+
+function getVerticalGuideBorder(kind: TimeGuideOverlayLine["kind"]): string {
+    if (kind === "daily") return "1px dashed rgba(148, 163, 184, 0.55)";
+    if (kind === "marker") return "1px dotted rgba(56, 189, 248, 0.9)";
+    return "1px dashed rgba(250, 204, 21, 0.85)";
+}
+
+function VerticalGuideLine({
+    line,
+    height,
+}: {
+    line: TimeGuideOverlayLine;
+    height: number | null;
+}) {
+    const borderLeft = getVerticalGuideBorder(line.kind);
+    if (line.skipFrom != null && line.skipTo != null && height != null) {
+        return (
+            <>
+                {line.skipFrom > 0 ? (
+                    <div
+                        className="absolute top-0"
+                        style={{
+                            left: `${line.x}px`,
+                            height: `${line.skipFrom}px`,
+                            borderLeft,
+                        }}
+                    />
+                ) : null}
+                {line.skipTo < height ? (
+                    <div
+                        className="absolute bottom-0"
+                        style={{
+                            left: `${line.x}px`,
+                            top: `${line.skipTo}px`,
+                            height: `${height - line.skipTo}px`,
+                            borderLeft,
+                        }}
+                    />
+                ) : null}
+            </>
+        );
+    }
+
+    return (
+        <div
+            className="absolute bottom-0 top-0"
+            style={{
+                left: `${line.x}px`,
+                borderLeft,
+            }}
+        />
+    );
 }
 
 export interface TradeCandlestickChartProps {
@@ -998,7 +1065,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
     const [timeGuideOverlay, setTimeGuideOverlay] = useState<{
         width: number | null;
         height: number | null;
-        verticalLines: Array<{ id: string; kind: "daily" | "session" | "marker"; x: number }>;
+        verticalLines: TimeGuideOverlayLine[];
     }>({
         width: null,
         height: null,
@@ -1499,18 +1566,19 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
             return;
         }
 
-        const timeScale = chart.timeScale();
         const paneSize = chart.paneSize();
-        const nextVerticalLines: Array<{ id: string; kind: "daily" | "session" | "marker"; x: number }> = [];
+        const nextVerticalLines: TimeGuideOverlayLine[] = [];
 
         for (const line of computedTimeGuides.verticalLines) {
-            const x = timeScale.timeToCoordinate((line.timestamp / 1000) as Time);
-            if (x == null || !Number.isFinite(x)) continue;
-            if (clipTimeGuideOverlayToPane && (x < 0 || x > paneSize.width)) continue;
+            const lineInfo = getMarkerRenderInfo(line.timestamp);
+            if (!lineInfo) continue;
+            if (clipTimeGuideOverlayToPane && (lineInfo.x < 0 || lineInfo.x > paneSize.width)) continue;
             nextVerticalLines.push({
                 id: line.id,
                 kind: line.kind,
-                x,
+                x: lineInfo.x,
+                skipFrom: lineInfo.skipFrom,
+                skipTo: lineInfo.skipTo,
             });
         }
 
@@ -1538,7 +1606,7 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
 
         const nextOverlay = {
             width: clipTimeGuideOverlayToPane ? paneSize.width : null,
-            height: clipTimeGuideOverlayToPane ? paneSize.height : null,
+            height: paneSize.height,
             verticalLines: nextVerticalLines,
         };
 
@@ -5973,18 +6041,10 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                     }
                 >
                     {timeGuideOverlay.verticalLines.map((line) => (
-                        <div
+                        <VerticalGuideLine
                             key={line.id}
-                            className="absolute bottom-0 top-0"
-                            style={{
-                                left: `${line.x}px`,
-                                borderLeft:
-                                    line.kind === "daily"
-                                        ? "1px dashed rgba(148, 163, 184, 0.55)"
-                                        : line.kind === "marker"
-                                            ? "1px dotted rgba(56, 189, 248, 0.9)"
-                                            : "1px dashed rgba(250, 204, 21, 0.85)",
-                            }}
+                            line={line}
+                            height={timeGuideOverlay.height}
                         />
                     ))}
                 </div>
@@ -6006,39 +6066,16 @@ const TradeCandlestickChartInner = forwardRef<TradeCandlestickChartRef, TradeCan
                             : undefined
                     }
                 >
-                    {markerOverlay.skipFrom != null && markerOverlay.skipTo != null ? (
-                        <>
-                            {markerOverlay.skipFrom > 0 ? (
-                                <div
-                                    className="absolute top-0"
-                                    style={{
-                                        left: `${markerOverlay.x}px`,
-                                        height: `${markerOverlay.skipFrom}px`,
-                                        borderLeft: "1px dotted rgba(56, 189, 248, 0.9)",
-                                    }}
-                                />
-                            ) : null}
-                            {markerOverlay.height != null && markerOverlay.skipTo < markerOverlay.height ? (
-                                <div
-                                    className="absolute bottom-0"
-                                    style={{
-                                        left: `${markerOverlay.x}px`,
-                                        top: `${markerOverlay.skipTo}px`,
-                                        height: `${markerOverlay.height - markerOverlay.skipTo}px`,
-                                        borderLeft: "1px dotted rgba(56, 189, 248, 0.9)",
-                                    }}
-                                />
-                            ) : null}
-                        </>
-                    ) : (
-                        <div
-                            className="absolute bottom-0 top-0"
-                            style={{
-                                left: `${markerOverlay.x}px`,
-                                borderLeft: "1px dotted rgba(56, 189, 248, 0.9)",
-                            }}
-                        />
-                    )}
+                    <VerticalGuideLine
+                        line={{
+                            id: "marker-user-overlay",
+                            kind: "marker",
+                            x: markerOverlay.x,
+                            skipFrom: markerOverlay.skipFrom,
+                            skipTo: markerOverlay.skipTo,
+                        }}
+                        height={markerOverlay.height}
+                    />
                 </div>
             )}
         </div>
