@@ -698,7 +698,7 @@ function getVerticalGuideBorder(kind: TimeGuideOverlayLine["kind"]): string {
 function getVerticalGuideFilter(kind: TimeGuideOverlayLine["kind"]): string | undefined {
     if (kind === "daily") return undefined;
     if (kind === "marker") return "drop-shadow(0 0 3px rgba(56, 189, 248, 0.9))";
-    return "drop-shadow(0 0 3px rgba(250, 204, 21, 0.75))";
+    return "drop-shadow(0 0 4px rgba(250, 204, 21, 0.75))";
 }
 
 function VerticalGuideLine({
