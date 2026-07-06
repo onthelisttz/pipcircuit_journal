@@ -690,9 +690,15 @@ type TimeGuideOverlayLine = {
 };
 
 function getVerticalGuideBorder(kind: TimeGuideOverlayLine["kind"]): string {
-    if (kind === "daily") return "1px dashed rgba(148, 163, 184, 0.55)";
-    if (kind === "marker") return "1px dotted rgba(56, 189, 248, 0.9)";
-    return "1px dashed rgba(250, 204, 21, 0.85)";
+    if (kind === "daily") return "1px dashed rgba(148, 163, 184, 0.82)";
+    if (kind === "marker") return "2px dotted rgba(125, 211, 252, 1)";
+    return "2px dotted rgba(250, 204, 21, 1)";
+}
+
+function getVerticalGuideFilter(kind: TimeGuideOverlayLine["kind"]): string | undefined {
+    if (kind === "daily") return undefined;
+    if (kind === "marker") return "drop-shadow(0 0 3px rgba(56, 189, 248, 0.9))";
+    return "drop-shadow(0 0 3px rgba(250, 204, 21, 0.75))";
 }
 
 function VerticalGuideLine({
@@ -703,6 +709,7 @@ function VerticalGuideLine({
     height: number | null;
 }) {
     const borderLeft = getVerticalGuideBorder(line.kind);
+    const filter = getVerticalGuideFilter(line.kind);
     if (line.skipFrom != null && line.skipTo != null && height != null) {
         return (
             <>
@@ -713,6 +720,7 @@ function VerticalGuideLine({
                             left: `${line.x}px`,
                             height: `${line.skipFrom}px`,
                             borderLeft,
+                            filter,
                         }}
                     />
                 ) : null}
@@ -724,6 +732,7 @@ function VerticalGuideLine({
                             top: `${line.skipTo}px`,
                             height: `${height - line.skipTo}px`,
                             borderLeft,
+                            filter,
                         }}
                     />
                 ) : null}
@@ -737,6 +746,7 @@ function VerticalGuideLine({
             style={{
                 left: `${line.x}px`,
                 borderLeft,
+                filter,
             }}
         />
     );
