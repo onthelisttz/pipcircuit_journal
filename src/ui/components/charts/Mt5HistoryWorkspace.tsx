@@ -1142,7 +1142,6 @@ export function Mt5HistoryWorkspace({
   const chartRef = useRef<TradeCandlestickChartRef | null>(null);
   const barsRef = useRef<ChartBar[]>([]);
   const chartAreaRef = useRef<HTMLDivElement>(null);
-  const datePickerRef = useRef<HTMLDivElement | null>(null);
   const markerTimestampRef = useRef<HTMLDivElement | null>(null);
   const symbolButtonRef = useRef<HTMLButtonElement>(null);
   const symbolMenuRef = useRef<HTMLDivElement>(null);
@@ -1181,7 +1180,6 @@ export function Mt5HistoryWorkspace({
   const [symbolSearchQuery, setSymbolSearchQuery] = useState("");
   const [timeframe, setTimeframe] = useState<ChartTimeframe>("M1");
   const [goToDate, setGoToDate] = useState(initialGoToDate ?? "");
-  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [focusTimestamp, setFocusTimestamp] = useState<number | null>(() => {
     const parsed = fromDateInputValue(initialGoToDate ?? "");
     return Number.isFinite(parsed) ? parsed : null;
@@ -1717,30 +1715,6 @@ export function Mt5HistoryWorkspace({
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [isActive]);
-
-  useEffect(() => {
-    if (!isDatePickerOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (!datePickerRef.current?.contains(target)) {
-        setIsDatePickerOpen(false);
-      }
-    };
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setIsDatePickerOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("keydown", handleEscape);
-    };
-  }, [isDatePickerOpen]);
 
   useEffect(() => {
     if (!isMarkerTimestampOpen) return;
@@ -2766,27 +2740,6 @@ export function Mt5HistoryWorkspace({
     [bars.length, effectiveReplayIndex, fetchNext, fetchPrevious, isReplayMode, isReplayPlacementMode]
   );
 
-  const applyGoToDate = useCallback(
-    (date: Date) => {
-      if (!selectedTimeframe) return;
-
-      const targetTimestamp = fromDateInputValue(toDateInputValue(date.getTime()));
-      if (!Number.isFinite(targetTimestamp)) return;
-
-      const minTimestamp = fromDateInputValue(toDateInputValue(selectedTimeframe.from));
-      const maxTimestamp = fromDateInputValue(toDateInputValue(selectedTimeframe.to));
-      const clampedTarget = Math.max(
-        minTimestamp,
-        Math.min(maxTimestamp, targetTimestamp)
-      );
-
-      setGoToDate(toDateInputValue(clampedTarget));
-      setIsDatePickerOpen(false);
-      void goToTimestamp(clampedTarget);
-    },
-    [goToTimestamp, selectedTimeframe]
-  );
-
   const applyReplayDate = useCallback((date: Date) => {
     if (!selectedTimeframe) return;
 
@@ -3024,30 +2977,6 @@ export function Mt5HistoryWorkspace({
       </button>
 
       <div className={`flex-wrap items-center gap-2 ${overflowOpen ? "flex" : "hidden"} md:flex`}>
-      <div className="relative" 
-ref={datePickerRef}>
-        <button
-          type="button"
-          onClick={() => setIsDatePickerOpen((current) => !current)}
-          disabled={!selectedTimeframe || !goToDate}
-          className="flex h-7 items-center gap-2 rounded border border-border bg-background px-2 text-xs font-medium text-foreground hover:bg-accent disabled:opacity-60"
-        >
-          <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-          <span>{goToDate ? format(new Date(`${goToDate}T00:00:00`), "MMM d, yyyy") : "Select date"}</span>
-          <ChevronDown className="h-3 w-3 text-muted-foreground" />
-        </button>
-        {isDatePickerOpen && selectedTimeframe && goToDate && (
-          <SingleDatePopover
-            key={goToDate}
-            value={new Date(`${goToDate}T00:00:00`)}
-            min={new Date(selectedTimeframe.from)}
-            max={new Date(selectedTimeframe.to)}
-            onClose={() => setIsDatePickerOpen(false)}
-            onApply={applyGoToDate}
-          />
-        )}
-      </div>
-
       <TimeGuidesControls
         value={timeGuides}
         onChange={setTimeGuides}
