@@ -39,6 +39,7 @@ interface DashboardFiltersProps {
   onChange: (filters: DashboardFiltersState) => void;
   availableSymbols: string[];
   availableTags: Tag[];
+  onSyncComplete?: () => void;
 }
 
 function countLabel(selectedCount: number, totalCount: number, allLabel: string) {
@@ -74,6 +75,7 @@ export function DashboardFilters({
   onChange,
   availableSymbols,
   availableTags,
+  onSyncComplete,
 }: DashboardFiltersProps) {
   const [dateOpen, setDateOpen] = useState(false);
   const [symbolOpen, setSymbolOpen] = useState(false);
@@ -265,6 +267,7 @@ export function DashboardFilters({
             // Keep behavior silent
           } finally {
             setSyncingTrades(false);
+            onSyncComplete?.();
           }
         }}
         disabled={!activeAccount || syncingTrades || !isOnline}

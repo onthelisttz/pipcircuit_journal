@@ -179,7 +179,7 @@ export default function DashboardPage() {
     ]
   );
 
-  const { trades } = useTradesByQuery(panelQuery);
+  const { trades, refetch: refetchTrades } = useTradesByQuery(panelQuery);
 
   const formatPanelTitle = (key: string) =>
     key.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -249,6 +249,7 @@ export default function DashboardPage() {
     streakStats,
     longShortStats,
     dayOfWeekReturns,
+    refetch: refetchDashboard,
   } = useDashboard(accountId, filters);
 
   // Use scroll persistence, waiting for loading to complete
@@ -280,6 +281,10 @@ export default function DashboardPage() {
           onChange={setFilters}
           availableSymbols={availableSymbols}
           availableTags={availableTags}
+          onSyncComplete={() => {
+            refetchTrades();
+            refetchDashboard();
+          }}
         />
       </div>
 
