@@ -3,9 +3,11 @@
 import { Direction, Mindset, TagCategory } from "@domain/enums";
 import type { Tag } from "@domain/entities";
 import { format } from "date-fns";
-import { Calendar, ChevronDown, Star } from "lucide-react";
+import { Calendar, ChevronDown, Download, Star } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DateRangePopover } from "@ui/components/common";
+import { useAccount } from "@ui/hooks";
+import { useOnlineStatus } from "@ui/hooks/useOnlineStatus";
 
 export const DASHBOARD_RATING_OPTIONS = [1, 2, 3, 4, 5] as const;
 export const DASHBOARD_MINDSET_OPTIONS: Array<{
@@ -77,6 +79,10 @@ export function DashboardFilters({
   const [symbolOpen, setSymbolOpen] = useState(false);
   const [directionOpen, setDirectionOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
+  const [syncingTrades, setSyncingTrades] = useState(false);
+
+  const { activeAccount, syncTradesForAccount } = useAccount();
+  const isOnline = useOnlineStatus();
 
   const dateRef = useRef<HTMLDivElement>(null);
   const symbolRef = useRef<HTMLDivElement>(null);
@@ -245,6 +251,30 @@ export function DashboardFilters({
 
   return (
     <div className="flex flex-wrap items-center gap-3">
+      <button
+        type="button"
+        onClick={async () => {
+          if (!activeAccount || syncingTrades || !isOnline) return;
+          setSyncingTrades(true);
+          try {
+            await syncTradesForAccount(
+              activeAccount.accountNumber,
+              activeAccount.ctraderAccountId
+            );
+          } catch {
+            // Keep behavior silent
+          } finally {
+            setSyncingTrades(false);
+          }
+        }}
+        disabled={!activeAccount || syncingTrades || !isOnline}
+        className="p-2 rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150"
+        aria-label="Download trades for active account"
+        title="Download trades"
+      >
+        <Download className={`w-4 h-4 ${syncingTrades ? "animate-spin" : ""}`} />
+      </button>
+
       <div className="relative" ref={dateRef}>
         <button
           type="button"
