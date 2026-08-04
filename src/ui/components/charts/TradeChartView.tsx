@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Trade, ChartTimeframe } from "@domain/entities";
-import { ChevronLeft, ChevronRight, Eye, EyeOff, LocateFixed, Pause, Play, RotateCcw, SkipBack, SkipForward, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, EyeOff, LocateFixed, Pause, Play, RotateCcw, Scissors, SkipBack, SkipForward, Trash2, X } from "lucide-react";
 import { TradeCandlestickChart } from "./TradeCandlestickChart";
 import { ProfitTimelineChart } from "./ProfitTimelineChart";
 import { TimeframeSelector } from "./TimeframeSelector";
@@ -493,11 +493,16 @@ export function TradeChartView({
         setReplayCursorTimestamp(displayData[anchorIndex]?.timestamp ?? anchorTimestamp);
     }, [displayData, replayStartIndex, replayStartTimestamp]);
 
-    useEffect(() => {
-        if (!isReplayMode) return;
+    const quickReplayFromEntry = useCallback(() => {
+        if (tradeDisplayOpenTimestamp == null || displayData.length === 0) return;
+        const roundedEntryIndex = findNearestReplayIndex(displayData, tradeDisplayOpenTimestamp);
+        const replayStartIndex = Math.max(0, roundedEntryIndex - 1);
+        const replayTimestamp = displayData[replayStartIndex]?.timestamp ?? tradeDisplayOpenTimestamp;
+        startReplayAtTimestamp(replayTimestamp);
+    }, [displayData, startReplayAtTimestamp, tradeDisplayOpenTimestamp]);
 
+    useEffect(() => {
         const handleReplayKeyDown = (event: KeyboardEvent) => {
-            if (event.ctrlKey || event.metaKey || event.altKey) return;
             const target = event.target as HTMLElement | null;
             if (
                 target?.tagName === "INPUT" ||
@@ -506,6 +511,15 @@ export function TradeChartView({
             ) {
                 return;
             }
+
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "x") {
+                event.preventDefault();
+                event.stopPropagation();
+                quickReplayFromEntry();
+                return;
+            }
+
+            if (!isReplayMode || event.ctrlKey || event.metaKey || event.altKey) return;
             if (event.key !== "ArrowUp") return;
             event.preventDefault();
             event.stopPropagation();
@@ -514,7 +528,7 @@ export function TradeChartView({
 
         window.addEventListener("keydown", handleReplayKeyDown, true);
         return () => window.removeEventListener("keydown", handleReplayKeyDown, true);
-    }, [isReplayMode, stepReplay]);
+    }, [isReplayMode, quickReplayFromEntry, stepReplay]);
 
     const handleTimeframeChange = useCallback((newTimeframe: ChartTimeframe) => {
         if (isReplayMode || isReplayPlacementMode) {
@@ -799,14 +813,6 @@ export function TradeChartView({
         candlestickChartRef.current?.scrollToTimestamp(tradeDisplayOpenTimestamp);
     }, [tradeDisplayOpenTimestamp]);
 
-    const quickReplayFromEntry = useCallback(() => {
-        if (tradeDisplayOpenTimestamp == null || displayData.length === 0) return;
-        const roundedEntryIndex = findNearestReplayIndex(displayData, tradeDisplayOpenTimestamp);
-        const replayStartIndex = Math.max(0, roundedEntryIndex - 1);
-        const replayTimestamp = displayData[replayStartIndex]?.timestamp ?? tradeDisplayOpenTimestamp;
-        startReplayAtTimestamp(replayTimestamp);
-    }, [displayData, startReplayAtTimestamp, tradeDisplayOpenTimestamp]);
-
     const chartContent = (hideTimeframeInToolbar = false) => (
         <div className="flex min-h-0 flex-1 flex-col">
             <div
@@ -826,6 +832,17 @@ export function TradeChartView({
                 {showsCandlestick && (
                     <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
                         <div className="flex items-center gap-1">
+                            <button
+                                type="button"
+                                onClick={quickReplayFromEntry}
+                                disabled={isLoading || displayData.length === 0}
+                                className="flex h-7 items-center gap-1.5 rounded border border-border px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                                title="Auto replay from trade entry"
+                                aria-label="Auto replay from trade entry"
+                            >
+                                <Scissors className="h-3.5 w-3.5" />
+                                <span>Cut</span>
+                            </button>
                             <button
                                 type="button"
                                 onClick={handleReplayToggle}
