@@ -799,6 +799,14 @@ export function TradeChartView({
         candlestickChartRef.current?.scrollToTimestamp(tradeDisplayOpenTimestamp);
     }, [tradeDisplayOpenTimestamp]);
 
+    const quickReplayFromEntry = useCallback(() => {
+        if (tradeDisplayOpenTimestamp == null || displayData.length === 0) return;
+        const roundedEntryIndex = findNearestReplayIndex(displayData, tradeDisplayOpenTimestamp);
+        const replayStartIndex = Math.max(0, roundedEntryIndex - 1);
+        const replayTimestamp = displayData[replayStartIndex]?.timestamp ?? tradeDisplayOpenTimestamp;
+        startReplayAtTimestamp(replayTimestamp);
+    }, [displayData, startReplayAtTimestamp, tradeDisplayOpenTimestamp]);
+
     const chartContent = (hideTimeframeInToolbar = false) => (
         <div className="flex min-h-0 flex-1 flex-col">
             <div
@@ -927,6 +935,16 @@ export function TradeChartView({
                                     aria-label="Scroll to trade open time"
                                 >
                                     <LocateFixed className="h-3 w-3" />
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={quickReplayFromEntry}
+                                    disabled={isLoading || displayData.length === 0}
+                                    className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                    title="Auto replay from trade entry"
+                                    aria-label="Auto replay from trade entry"
+                                >
+                                    <Play className="h-3 w-3" />
                                 </button>
                             </div>
                         ) : null}
