@@ -8,6 +8,8 @@ export interface DayOfWeekReturn {
   tradeCount: number;
   winning: number;
   losing: number;
+  winningTrades: number;
+  losingTrades: number;
 }
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -27,10 +29,10 @@ export class GetReturnsByDayOfWeekUseCase {
     });
 
     const closed = trades.filter((t) => t.closeTime);
-    const byDay = new Map<number, { profit: number; count: number; winning: number; losing: number }>();
+    const byDay = new Map<number, { profit: number; count: number; winning: number; losing: number; winningTrades: number; losingTrades: number }>();
 
     for (let i = 0; i < 7; i++) {
-      byDay.set(i, { profit: 0, count: 0, winning: 0, losing: 0 });
+      byDay.set(i, { profit: 0, count: 0, winning: 0, losing: 0, winningTrades: 0, losingTrades: 0 });
     }
 
     for (const trade of closed) {
@@ -39,23 +41,29 @@ export class GetReturnsByDayOfWeekUseCase {
       const dayNum = getDay(closeTime);
       const winning = net > 0 ? net : 0;
       const losing = net < 0 ? net : 0;
+      const winningTrade = net > 0 ? 1 : 0;
+      const losingTrade = net < 0 ? 1 : 0;
 
       const d = byDay.get(dayNum)!;
       d.profit += net;
       d.count += 1;
       d.winning += winning;
       d.losing += losing;
+      d.winningTrades += winningTrade;
+      d.losingTrades += losingTrade;
     }
 
     return Array.from(byDay.entries())
       .sort(([a], [b]) => a - b)
-      .map(([dayNum, { profit, count, winning, losing }]) => ({
+      .map(([dayNum, { profit, count, winning, losing, winningTrades, losingTrades }]) => ({
         dayOfWeek: DAY_NAMES[dayNum],
         dayOrder: dayNum,
         profit,
         tradeCount: count,
         winning,
         losing,
+        winningTrades,
+        losingTrades,
       }));
   }
 }

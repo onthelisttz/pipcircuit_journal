@@ -107,7 +107,7 @@ export function PerformanceCalendar({
     const losingTrades = monthData.reduce((a, d) => a + (d.losingTrades ?? 0), 0);
     const decidedTrades = winningTrades + losingTrades;
     const winRate = decidedTrades > 0 ? (winningTrades / decidedTrades) * 100 : 0;
-    return { trades, profit, winRate };
+    return { trades, profit, winRate, winningTrades, losingTrades };
   }, [monthData]);
 
   const weeks = useMemo(() => {
@@ -130,15 +130,19 @@ export function PerformanceCalendar({
     return weeks.map((weekDays) => {
       let profit = 0;
       let trades = 0;
+      let wins = 0;
+      let losses = 0;
       for (const d of weekDays) {
         const key = format(d, "yyyy-MM-dd");
         const row = byDate.get(key);
         if (row) {
           profit += row.profit;
           trades += row.tradeCount;
+          wins += row.winningTrades ?? 0;
+          losses += row.losingTrades ?? 0;
         }
       }
-      return { profit, trades };
+      return { profit, trades, wins, losses };
     });
   }, [weeks, byDate]);
 
@@ -196,9 +200,15 @@ export function PerformanceCalendar({
                     {monthSummary.trades} trades
                   </button>
                 ) : (
-                  <span className="shrink-0 rounded-full bg-muted/80 px-3 py-1 text-[11px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
-                    {monthSummary.trades} trades
-                  </span>
+                <span className="shrink-0 rounded-full bg-muted/80 px-3 py-1 text-[11px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
+                  {monthSummary.trades} trades
+                </span>
+
+                <span className="shrink-0 rounded-full bg-muted/80 px-3 py-1 text-[11px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
+                  <span className="text-emerald-600 dark:text-emerald-400">{monthSummary.winningTrades}W</span>
+                  <span className="text-muted-foreground mx-0.5">/</span>
+                  <span className="text-red-600 dark:text-red-400">{monthSummary.losingTrades}L</span>
+                </span>
                 )}
 
                 <span className="shrink-0 rounded-full bg-muted/80 px-3 py-1 text-[11px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
@@ -289,6 +299,19 @@ export function PerformanceCalendar({
                               <span className="mt-0.5 text-[8px] leading-tight text-muted-foreground sm:text-[10px]">
                                 {data!.tradeCount} trade{data!.tradeCount !== 1 ? "s" : ""}
                               </span>
+                              {(data!.winningTrades ?? 0) > 0 || (data!.losingTrades ?? 0) > 0 ? (
+                                <span className="mt-0.5 text-[7px] leading-tight sm:text-[9px]">
+                                  {(data!.winningTrades ?? 0) > 0 && (
+                                    <span className="text-emerald-600 dark:text-emerald-400">{data!.winningTrades}W</span>
+                                  )}
+                                  {(data!.winningTrades ?? 0) > 0 && (data!.losingTrades ?? 0) > 0 && (
+                                    <span className="text-muted-foreground"> </span>
+                                  )}
+                                  {(data!.losingTrades ?? 0) > 0 && (
+                                    <span className="text-red-600 dark:text-red-400">{data!.losingTrades}L</span>
+                                  )}
+                                </span>
+                              ) : null}
                             </>
                           ) : (
                             <span className="mt-0.5 text-[10px] leading-tight text-muted-foreground/50 sm:mt-1 sm:text-[11px]">
@@ -325,6 +348,19 @@ export function PerformanceCalendar({
                         <span className="mt-0.5 text-[8px] leading-tight text-muted-foreground sm:text-[10px]">
                           {weekTotal.trades} trades
                         </span>
+                        {(weekTotal.wins > 0 || weekTotal.losses > 0) && (
+                          <span className="mt-0.5 text-[7px] leading-tight sm:text-[9px]">
+                            {weekTotal.wins > 0 && (
+                              <span className="text-emerald-600 dark:text-emerald-400">{weekTotal.wins}W</span>
+                            )}
+                            {weekTotal.wins > 0 && weekTotal.losses > 0 && (
+                              <span className="text-muted-foreground"> </span>
+                            )}
+                            {weekTotal.losses > 0 && (
+                              <span className="text-red-600 dark:text-red-400">{weekTotal.losses}L</span>
+                            )}
+                          </span>
+                        )}
                       </button>
                     ) : (
                       <div className="min-h-[56px] flex flex-col justify-center rounded-lg bg-muted/50 p-1 ring-1 ring-border/50 sm:min-h-[72px] sm:rounded-xl sm:p-2.5 dark:bg-muted/30">

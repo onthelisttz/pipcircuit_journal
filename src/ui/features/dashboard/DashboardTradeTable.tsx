@@ -185,22 +185,29 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
     return arr;
   }, [trades, sortKey, sortDir, balanceByTradeId]);
 
-  const { totalPnl, longCount, longPnl, longIds, shortCount, shortPnl, shortIds } = useMemo(() => {
+  const { totalPnl, longCount, longPnl, longIds, shortCount, shortPnl, shortIds, totalCommission, longCommission, shortCommission } = useMemo(() => {
     let total = 0;
     const long: number[] = [];
     let longSum = 0;
+    let longComm = 0;
     const short: number[] = [];
     let shortSum = 0;
+    let shortComm = 0;
+    let totalComm = 0;
     for (const t of trades) {
       const pnl = t.netProfit ?? t.grossProfit ?? 0;
+      const comm = t.commission ?? 0;
       total += pnl;
+      totalComm += comm;
       if (t.id != null) {
         if (t.direction === Direction.Buy) {
           long.push(t.id);
           longSum += pnl;
+          longComm += comm;
         } else {
           short.push(t.id);
           shortSum += pnl;
+          shortComm += comm;
         }
       }
     }
@@ -212,6 +219,9 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
       shortCount: short.length,
       shortPnl: shortSum,
       shortIds: short,
+      totalCommission: totalComm,
+      longCommission: longComm,
+      shortCommission: shortComm,
     };
   }, [trades]);
 
@@ -439,7 +449,7 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
             <td colSpan={2} className="px-4 py-2 text-right text-muted-foreground font-medium">
               Long
             </td>
-            <td colSpan={8} className="px-4 py-2 text-right text-muted-foreground">
+            <td colSpan={6} className="px-4 py-2 text-right text-muted-foreground">
               {longCount} trades
             </td>
             <td
@@ -449,7 +459,12 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
             >
               {formatProfit(longPnl)}
             </td>
-            <td colSpan={3} />
+            <td colSpan={3} className="px-4 py-2 text-right text-muted-foreground">
+              —
+            </td>
+            <td className="px-4 py-2 text-right text-muted-foreground">
+              {longCommission !== 0 ? formatProfit(-longCommission) : "—"}
+            </td>
           </tr>
           <tr
             onClick={() => onSummaryClick?.("short", shortIds)}
@@ -458,7 +473,7 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
             <td colSpan={2} className="px-4 py-2 text-right text-muted-foreground font-medium">
               Short
             </td>
-            <td colSpan={8} className="px-4 py-2 text-right text-muted-foreground">
+            <td colSpan={6} className="px-4 py-2 text-right text-muted-foreground">
               {shortCount} trades
             </td>
             <td
@@ -468,7 +483,12 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
             >
               {formatProfit(shortPnl)}
             </td>
-            <td colSpan={3} />
+            <td colSpan={3} className="px-4 py-2 text-right text-muted-foreground">
+              —
+            </td>
+            <td className="px-4 py-2 text-right text-muted-foreground">
+              {shortCommission !== 0 ? formatProfit(-shortCommission) : "—"}
+            </td>
           </tr>
           <tr
             onClick={() => onSummaryClick?.("all", allIds)}
@@ -477,7 +497,7 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
             <td colSpan={2} className="px-4 py-3 text-right text-foreground">
               Total
             </td>
-            <td colSpan={8} className="px-4 py-3 text-right text-foreground">
+            <td colSpan={6} className="px-4 py-3 text-right text-foreground">
               {trades.length} trades
             </td>
             <td
@@ -487,7 +507,12 @@ export function DashboardTradeTable({ trades, startingBalance = 0, onRowClick, o
             >
               {formatProfit(totalPnl)}
             </td>
-            <td colSpan={3} />
+            <td colSpan={3} className="px-4 py-3 text-right text-muted-foreground">
+              —
+            </td>
+            <td className="px-4 py-3 text-right text-muted-foreground font-semibold">
+              {totalCommission !== 0 ? formatProfit(-totalCommission) : "—"}
+            </td>
           </tr>
         </tbody>
       </table>

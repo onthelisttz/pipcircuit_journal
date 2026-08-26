@@ -318,6 +318,72 @@ export function AssetAnalysis({ data, onCellClick }: AssetAnalysisProps) {
                   </td>
                 </tr>
               ))}
+              {(() => {
+                const totals = data.reduce(
+                  (acc, row) => ({
+                    count: acc.count + row.count,
+                    wins: acc.wins + row.wins,
+                    losses: acc.losses + row.losses,
+                    profit: acc.profit + row.profit,
+                    fee: acc.fee + row.fee,
+                    bestTrade: Math.max(acc.bestTrade, row.bestTrade),
+                    worstTrade: Math.min(acc.worstTrade, row.worstTrade),
+                    totalDurationMs: acc.totalDurationMs + row.avgDurationMs * row.count,
+                    totalWeightedGain: acc.totalWeightedGain + row.avgGainPercent * row.count,
+                    totalWinWeighted: acc.totalWinWeighted + row.avgWin * row.wins,
+                    totalLossWeighted: acc.totalLossWeighted + row.avgLoss * row.losses,
+                  }),
+                  { count: 0, wins: 0, losses: 0, profit: 0, fee: 0, bestTrade: -Infinity, worstTrade: Infinity, totalDurationMs: 0, totalWeightedGain: 0, totalWinWeighted: 0, totalLossWeighted: 0 }
+                );
+                const decidedTrades = totals.wins + totals.losses;
+                const winRate = totals.count > 0 ? (totals.wins / totals.count) * 100 : 0;
+                const avgGainPercent = totals.count > 0 ? totals.totalWeightedGain / totals.count : 0;
+                const avgWin = totals.wins > 0 ? totals.totalWinWeighted / totals.wins : 0;
+                const avgLoss = totals.losses > 0 ? totals.totalLossWeighted / totals.losses : 0;
+                const avgDurationMs = totals.count > 0 ? totals.totalDurationMs / totals.count : 0;
+
+                return (
+                  <tr className="border-t-2 border-border bg-muted/30 font-semibold">
+                    <td className="px-3 py-2.5 text-foreground">Total</td>
+                    <td className="px-3 py-2.5 text-muted-foreground">{totals.count}</td>
+                    <td className="px-3 py-2.5 text-green-600 dark:text-green-400">{totals.wins}</td>
+                    <td className="px-3 py-2.5 text-red-600 dark:text-red-400">{totals.losses}</td>
+                    <td className="px-3 py-2.5 text-muted-foreground">{winRate.toFixed(1)}%</td>
+                    <td
+                      className={`px-3 py-2.5 font-semibold ${
+                        totals.profit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
+                      }`}
+                    >
+                      {formatMoney(totals.profit)}
+                    </td>
+                    <td
+                      className={`px-3 py-2.5 font-semibold ${
+                        avgGainPercent >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
+                      }`}
+                    >
+                      {avgGainPercent === 0 ? "—" : `${avgGainPercent.toFixed(1)}%`}
+                    </td>
+                    <td className="px-3 py-2.5 text-green-600 dark:text-green-400">
+                      {avgWin > 0 ? formatMoney(avgWin) : "—"}
+                    </td>
+                    <td className="px-3 py-2.5 text-red-600 dark:text-red-400">
+                      {avgLoss < 0 ? formatMoney(avgLoss) : "—"}
+                    </td>
+                    <td className="px-3 py-2.5 text-green-600 dark:text-green-400">
+                      {totals.bestTrade > -Infinity ? formatMoney(totals.bestTrade) : "—"}
+                    </td>
+                    <td className="px-3 py-2.5 text-red-600 dark:text-red-400">
+                      {totals.worstTrade < Infinity ? formatMoney(totals.worstTrade) : "—"}
+                    </td>
+                    <td className="px-3 py-2.5 text-muted-foreground">
+                      {formatDuration(avgDurationMs)}
+                    </td>
+                    <td className="px-3 py-2.5 text-muted-foreground">
+                      {formatMoney(totals.fee)}
+                    </td>
+                  </tr>
+                );
+              })()}
             </tbody>
           </table>
         </div>

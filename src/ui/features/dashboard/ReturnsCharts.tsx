@@ -32,6 +32,8 @@ interface PeriodReturn {
   tradeCount: number;
   winning: number;
   losing: number;
+  winningTrades?: number;
+  losingTrades?: number;
 }
 
 function ReturnsTooltipContent({
@@ -51,24 +53,31 @@ function ReturnsTooltipContent({
   const winning = p.winning ?? 0;
   const losing = p.losing ?? 0;
   const net = p.profit ?? winning + losing;
-  const total = Math.abs(winning) + Math.abs(losing);
-  const winningPct = total > 0 ? ((winning / total) * 100).toFixed(1) : "0";
-  const losingPct = total > 0 ? ((Math.abs(losing) / total) * 100).toFixed(1) : "0";
-  const netPct = total > 0 ? ((net / total) * 100).toFixed(1) : "0";
+  const winCount = p.winningTrades ?? 0;
+  const lossCount = p.losingTrades ?? 0;
+  const totalTrades = p.tradeCount ?? 0;
 
   return (
     <div
       className="rounded-lg border border-border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md"
-      style={{ minWidth: "160px" }}
+      style={{ minWidth: "180px" }}
     >
-      <p className="font-medium mb-1.5">{period}: {net >= 0 ? "+" : ""}{net.toFixed(2)}$ ({netPct}%)</p>
+      <p className="font-medium mb-1.5">{period}</p>
       <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
         <span className="inline-block w-2 h-2 rounded-sm bg-current" />
-        Winning: +{winning.toFixed(2)}$ ({winningPct}%)
+        Wins: {winCount} &middot; +{winning.toFixed(2)}$
       </div>
       <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
         <span className="inline-block w-2 h-2 rounded-sm bg-current" />
-        Losing: {losing.toFixed(2)}$ (-{losingPct}%)
+        Losses: {lossCount} &middot; {losing.toFixed(2)}$
+      </div>
+      <div className="mt-1 border-t border-border pt-1">
+        <span className="text-xs text-muted-foreground">{totalTrades} trades</span>
+        <span
+          className={`ml-2 font-semibold ${net >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
+        >
+          P&L: {net >= 0 ? "+" : ""}{net.toFixed(2)}$
+        </span>
       </div>
     </div>
   );
