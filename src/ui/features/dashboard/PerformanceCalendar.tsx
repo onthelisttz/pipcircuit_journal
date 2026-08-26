@@ -203,13 +203,13 @@ export function PerformanceCalendar({
                 <span className="shrink-0 rounded-full bg-muted/80 px-3 py-1 text-[11px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
                   {monthSummary.trades} trades
                 </span>
+                )}
 
                 <span className="shrink-0 rounded-full bg-muted/80 px-3 py-1 text-[11px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
                   <span className="text-emerald-600 dark:text-emerald-400">{monthSummary.winningTrades}W</span>
                   <span className="text-muted-foreground mx-0.5">/</span>
                   <span className="text-red-600 dark:text-red-400">{monthSummary.losingTrades}L</span>
                 </span>
-                )}
 
                 <span className="shrink-0 rounded-full bg-muted/80 px-3 py-1 text-[11px] font-medium text-foreground sm:px-3 sm:py-1.5 sm:text-xs">
                   {monthSummary.winRate.toFixed(0)}% win rate
