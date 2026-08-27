@@ -17,7 +17,7 @@ import {
 } from "date-fns";
 import { Area, AreaChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
-import { useCalendarMonthReturns } from "@ui/hooks";
+import { useCalendarMonthReturns, useTradesByQuery } from "@ui/hooks";
 import { useTradePanel } from "@ui/providers";
 import { cn } from "@lib/utils";
 import type { Direction } from "@domain/enums";
@@ -154,16 +154,44 @@ function BalanceTooltip({ active, payload, onOpen }: BalanceTooltipProps) {
   );
 }
 
+function TrendSparkline({ trend, isProfit }: { trend?: number[]; isProfit: boolean }) {
+  if (!trend || trend.length < 2) return null;
+
+  const width = 100;
+  const height = 20;
+  const min = Math.min(...trend);
+  const max = Math.max(...trend);
+  const range = max - min || 1;
+  const stepX = width / (trend.length - 1);
+  const y = (value: number) => height - 3 - ((value - min) / range) * (height - 6);
+  const points = trend.map((value, index) => `${(index * stepX).toFixed(1)},${y(value).toFixed(1)}`).join(" ");
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-[20px] w-full" preserveAspectRatio="none">
+      <polyline
+        points={points}
+        fill="none"
+        strokeWidth={1.6}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={cn(isProfit ? "stroke-emerald-500" : "stroke-red-500")}
+        opacity={0.85}
+      />
+    </svg>
+  );
+}
+
 interface DayCellProps {
   date: Date;
   data?: DayReturn;
+  trend?: number[];
   inMonth: boolean;
   today: boolean;
   weekend: boolean;
   onOpen: (filter: Filter) => void;
 }
 
-function DayCell({ date, data, inMonth, today, weekend, onOpen }: DayCellProps) {
+function DayCell({ date, data, trend, inMonth, today, weekend, onOpen }: DayCellProps) {
   const hasTrades = Boolean(data && data.tradeCount > 0);
   const isProfit = hasTrades && (data!.profit >= 0);
   const winning = data?.winning ?? 0;
@@ -221,33 +249,42 @@ function DayCell({ date, data, inMonth, today, weekend, onOpen }: DayCellProps) 
             title="View total trades"
             onClick={() => onOpen("all")}
             className={cn(
-              "my-auto flex flex-1 items-center justify-center text-center text-base font-extrabold leading-none tabular-nums transition-opacity hover:opacity-80",
+              "flex flex-1 items-center justify-center text-center text-base font-extrabold leading-none tabular-nums transition-opacity hover:opacity-80",
               isProfit ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
             )}
           >
             {formatMoney(data!.profit)}
           </button>
-          <div className="mt-auto flex items-center justify-between gap-1.5">
-            {(data!.winningTrades ?? 0) > 0 && (
-              <button
-                type="button"
-                title="View winning trades"
-                onClick={() => onOpen("wins")}
-                className="text-[10.5px] font-semibold text-emerald-600 transition-opacity hover:opacity-80 dark:text-emerald-400"
-              >
-                {data!.winningTrades}w <b className="font-bold tabular-nums">{formatSigned(winning)}</b>
-              </button>
-            )}
-            {(data!.losingTrades ?? 0) > 0 && (
-              <button
-                type="button"
-                title="View losing trades"
-                onClick={() => onOpen("losses")}
-                className="text-[10.5px] font-semibold text-red-600 transition-opacity hover:opacity-80 dark:text-red-400"
-              >
-                {data!.losingTrades}l <b className="font-bold tabular-nums">{formatSigned(losing)}</b>
-              </button>
-            )}
+          <div className="mt-auto">
+            <div className="flex items-center justify-between gap-1.5">
+              {(data!.winningTrades ?? 0) > 0 && (
+                <button
+                  type="button"
+                  title="View winning trades"
+                  onClick={() => onOpen("wins")}
+                  className="text-[10.5px] font-semibold text-emerald-600 transition-opacity hover:opacity-80 dark:text-emerald-400"
+                >
+                  {data!.winningTrades}w <b className="font-bold tabular-nums">{formatSigned(winning)}</b>
+                </button>
+              )}
+              {(data!.losingTrades ?? 0) > 0 && (
+                <button
+                  type="button"
+                  title="View losing trades"
+                  onClick={() => onOpen("losses")}
+                  className="text-[10.5px] font-semibold text-red-600 transition-opacity hover:opacity-80 dark:text-red-400"
+                >
+                  {data!.losingTrades}l <b className="font-bold tabular-nums">{formatSigned(losing)}</b>
+                </button>
+              )}
+            </div>
+            <span
+              aria-hidden="true"
+              className={cn("mt-1.5 block h-px w-full", isProfit ? "bg-emerald-500/40" : "bg-red-500/40")}
+            />
+            <div className="mt-1">
+              <TrendSparkline trend={trend} isProfit={isProfit} />
+            </div>
           </div>
         </>
       ) : (
@@ -262,11 +299,12 @@ function DayCell({ date, data, inMonth, today, weekend, onOpen }: DayCellProps) 
 interface WeekCellProps {
   weekIndex: number;
   total: { profit: number; trades: number; wins: number; losses: number; wonAmount: number; lostAmount: number };
+  trend?: number[];
   hasTrades: boolean;
   onOpen: (filter: Filter) => void;
 }
 
-function WeekCell({ weekIndex, total, hasTrades, onOpen }: WeekCellProps) {
+function WeekCell({ weekIndex, total, trend, hasTrades, onOpen }: WeekCellProps) {
   const isProfit = hasTrades && total.profit >= 0;
 
   return (
@@ -308,33 +346,42 @@ function WeekCell({ weekIndex, total, hasTrades, onOpen }: WeekCellProps) {
             title="View total trades"
             onClick={() => onOpen("all")}
             className={cn(
-              "my-auto flex flex-1 items-center justify-center text-center text-base font-extrabold leading-none tabular-nums transition-opacity hover:opacity-80",
+              "flex flex-1 items-center justify-center text-center text-base font-extrabold leading-none tabular-nums transition-opacity hover:opacity-80",
               isProfit ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
             )}
           >
             {formatMoney(total.profit)}
           </button>
-          <div className="mt-auto flex items-center justify-between gap-1.5">
-            {total.wins > 0 && (
-              <button
-                type="button"
-                title="View winning trades"
-                onClick={() => onOpen("wins")}
-                className="text-[10.5px] font-semibold text-emerald-600 transition-opacity hover:opacity-80 dark:text-emerald-400"
-              >
-                {total.wins}w <b className="font-bold tabular-nums">{formatSigned(total.wonAmount, 0)}</b>
-              </button>
-            )}
-            {total.losses > 0 && (
-              <button
-                type="button"
-                title="View losing trades"
-                onClick={() => onOpen("losses")}
-                className="text-[10.5px] font-semibold text-red-600 transition-opacity hover:opacity-80 dark:text-red-400"
-              >
-                {total.losses}l <b className="font-bold tabular-nums">{formatSigned(total.lostAmount, 0)}</b>
-              </button>
-            )}
+          <div className="mt-auto">
+            <div className="flex items-center justify-between gap-1.5">
+              {total.wins > 0 && (
+                <button
+                  type="button"
+                  title="View winning trades"
+                  onClick={() => onOpen("wins")}
+                  className="text-[10.5px] font-semibold text-emerald-600 transition-opacity hover:opacity-80 dark:text-emerald-400"
+                >
+                  {total.wins}w <b className="font-bold tabular-nums">{formatSigned(total.wonAmount, 0)}</b>
+                </button>
+              )}
+              {total.losses > 0 && (
+                <button
+                  type="button"
+                  title="View losing trades"
+                  onClick={() => onOpen("losses")}
+                  className="text-[10.5px] font-semibold text-red-600 transition-opacity hover:opacity-80 dark:text-red-400"
+                >
+                  {total.losses}l <b className="font-bold tabular-nums">{formatSigned(total.lostAmount, 0)}</b>
+                </button>
+              )}
+            </div>
+            <span
+              aria-hidden="true"
+              className={cn("mt-1.5 block h-px w-full", isProfit ? "bg-emerald-500/40" : "bg-red-500/40")}
+            />
+            <div className="mt-1">
+              <TrendSparkline trend={trend} isProfit={isProfit} />
+            </div>
           </div>
         </>
       ) : (
@@ -456,6 +503,59 @@ export function PerformanceCalendar({
 
     return points;
   }, [byDate, daysInMonth, viewMonth]);
+
+  const monthTradesQuery = useMemo<TradeQuery | null>(() => {
+    const query: TradeQuery = {
+      accountId,
+      from: startOfDay(startOfMonth(viewMonth)),
+      to: endOfDay(endOfMonth(viewMonth)),
+    };
+    if (symbols.length > 0) query.symbols = symbols;
+    if (direction !== "Both") query.direction = direction;
+    if (advancedQuery) {
+      if (advancedQuery.ratingValues?.length) query.ratingValues = advancedQuery.ratingValues;
+      if (advancedQuery.mindsets?.length) query.mindsets = advancedQuery.mindsets;
+      if (advancedQuery.tagIds?.length) query.tagIds = advancedQuery.tagIds;
+    }
+    return query;
+  }, [accountId, symbols, direction, advancedQuery, viewMonth]);
+
+  const { trades: monthTrades } = useTradesByQuery(monthTradesQuery);
+
+  const dayTrends = useMemo(() => {
+    const map = new Map<string, number[]>();
+    const closed = monthTrades
+      .filter((trade) => trade.closeTime)
+      .slice()
+      .sort((a, b) => a.closeTime!.getTime() - b.closeTime!.getTime());
+
+    for (const trade of closed) {
+      const net = trade.netProfit ?? trade.grossProfit ?? 0;
+      const key = format(trade.closeTime!, "yyyy-MM-dd");
+      const trend = map.get(key) ?? [0];
+      trend.push(parseFloat((trend[trend.length - 1] + net).toFixed(4)));
+      map.set(key, trend);
+    }
+
+    return map;
+  }, [monthTrades]);
+
+  const weekTrends = useMemo(
+    () =>
+      weeks.map((weekDays) => {
+        let trend = [0];
+
+        for (const day of weekDays) {
+          const dayTrend = dayTrends.get(format(day, "yyyy-MM-dd"));
+          if (!dayTrend || dayTrend.length < 2) continue;
+          const base = trend[trend.length - 1];
+          trend = [...trend, ...dayTrend.slice(1).map((value) => parseFloat((base + value).toFixed(4)))];
+        }
+
+        return trend;
+      }),
+    [dayTrends, weeks]
+  );
 
   const xTicks = useMemo(() => {
     if (curvePoints.length === 0) return undefined;
@@ -744,6 +844,7 @@ export function PerformanceCalendar({
                           key={key}
                           date={day}
                           data={byDate.get(key)}
+                          trend={dayTrends.get(key)}
                           inMonth={isSameMonth(day, viewMonth)}
                           today={isToday(day)}
                           weekend={isWeekend(day)}
@@ -754,6 +855,7 @@ export function PerformanceCalendar({
                     <WeekCell
                       weekIndex={weekIndex}
                       total={weekTotal}
+                      trend={weekTrends[weekIndex]}
                       hasTrades={hasWeekTrades}
                       onOpen={(filter) => openWeekTrades(weekDays[0], weekDays[6], filter)}
                     />
