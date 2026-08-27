@@ -339,45 +339,6 @@ export default function DashboardPage() {
             direction={filters.direction}
             advancedQuery={advancedQuery}
             initialMonth={filters.from}
-            onDayClick={
-              panelQuery
-                ? (date) =>
-                  openPanel({
-                    title: `Trades on ${date.toLocaleDateString()}`,
-                    query: {
-                      ...panelQuery,
-                      from: startOfDay(date),
-                      to: endOfDay(date),
-                    },
-                  })
-                : undefined
-            }
-            onWeekClick={
-              panelQuery
-                ? (weekStart, weekEnd) =>
-                  openPanel({
-                    title: `Trades ${weekStart.toLocaleDateString()} – ${weekEnd.toLocaleDateString()}`,
-                    query: {
-                      ...panelQuery,
-                      from: startOfDay(weekStart),
-                      to: endOfDay(weekEnd),
-                    },
-                  })
-                : undefined
-            }
-            onMonthClick={
-              panelQuery
-                ? (monthStart, monthEnd) =>
-                  openPanel({
-                    title: `Trades in ${monthStart.toLocaleDateString(undefined, { month: "long", year: "numeric" })}`,
-                    query: {
-                      ...panelQuery,
-                      from: startOfDay(monthStart),
-                      to: endOfDay(monthEnd),
-                    },
-                  })
-                : undefined
-            }
           />
 
           <div className="grid gap-4 lg:grid-cols-2">
