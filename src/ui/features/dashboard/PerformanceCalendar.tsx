@@ -172,7 +172,7 @@ function DayCell({ date, data, inMonth, today, weekend, onOpen }: DayCellProps) 
   return (
     <div
       className={cn(
-        "relative flex min-h-[120px] flex-col rounded-[13px] border bg-card p-2 transition-all sm:min-h-[136px] sm:p-2.5",
+        "relative flex min-h-[104px] flex-col rounded-[13px] border bg-card p-2 transition-all sm:min-h-[112px] sm:p-2.5",
         !inMonth && "border-transparent opacity-30",
         inMonth && !hasTrades && "border-border",
         inMonth &&
@@ -272,7 +272,7 @@ function WeekCell({ weekIndex, total, hasTrades, onOpen }: WeekCellProps) {
   return (
     <div
       className={cn(
-        "relative flex min-h-[120px] flex-col rounded-[13px] border p-2 transition-all sm:min-h-[136px] sm:p-2.5",
+        "relative flex min-h-[104px] flex-col rounded-[13px] border p-2 transition-all sm:min-h-[112px] sm:p-2.5",
         "border-primary/20 bg-primary/[0.05]",
         hasTrades &&
           isProfit &&
@@ -718,7 +718,7 @@ export function PerformanceCalendar({
       <div className="border-t border-border p-3 sm:p-4">
         <div className="overflow-x-auto">
           <div className="min-w-[820px]">
-            <div className="grid grid-cols-[repeat(7,minmax(86px,1fr))_100px] items-stretch gap-2 sm:gap-3">
+            <div className="grid grid-cols-[repeat(8,minmax(86px,1fr))] items-stretch gap-2 sm:gap-3">
               {WEEKDAY_LABELS.map((label) => (
                 <div
                   key={label}
