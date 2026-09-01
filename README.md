@@ -20,7 +20,7 @@ pipCircuit helps serious retail traders track, analyze, and improve their tradin
 - **Live Position Management** — Connect to cTrader for real-time position monitoring, drag-and-drop SL/TP on chart, price alerts, and quick order entry from the crosshair.
 - **Market Observations** — Dedicated observation system for noting market conditions with categorized entries and calendar-based daily journaling.
 - **Offline-First & Cross-Device Sync** — Local IndexedDB (Dexie) as primary data store with Supabase cloud sync for seamless cross-device usage. Full sync orchestration with conflict resolution and progress tracking.
-- **PWA Support** — Installable as a desktop/mobile app with service worker caching and offline access.
+- **PWA Support** — Installable as a desktop/mobile app with service worker caching and offline access..
 
 ---
 
